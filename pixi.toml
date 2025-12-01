@@ -1,0 +1,29 @@
+[project]
+authors = ["looooo <sppedflyer@gmail.com>"]
+channels = ["conda-forge", "freecad/label/dev"]
+description = "Add a short description here"
+name = "OpenGlider"
+platforms = ["osx-arm64", "linux-aarch64", "linux-64", "osx-64", "win-64"]
+version = "0.8.1"
+
+[pypi-dependencies]
+openglider = { path = ".", editable = true }
+
+[dependencies]
+pip = "*"
+svgwrite = "*"
+numpy = "*"
+scipy = "*"
+ezdxf = "*"
+ezodf = "*"
+meshpy = "*"
+lxml = "*"
+pyexcel-ods3 = "*"
+matplotlib = "*"
+parabem = "*"
+pylint = "*"
+freecad = ">=1.0.0,<1.1.0"
+
+[tasks]
+test = "python testall.py"
+lint = "pylint $(git ls-files '*.py')"

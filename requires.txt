@@ -1,0 +1,6 @@
+svgwrite
+numpy
+scipy
+ezdxf
+ezodf
+meshpy
