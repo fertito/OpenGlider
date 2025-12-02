@@ -17,6 +17,7 @@ from . import (
     design_tool,
     features,
     line_tool,
+    holedesign_tool,
 )
 from . import panel_method as pm
 from . import shape_tool, span_mapping
@@ -546,6 +547,26 @@ class GliderHoleFeatureCommand(GliderFeatureCommand):
         features.HoleFeature(feature, self.glider_obj)
         vp = features.VHoleFeature(feature.ViewObject)
         vp.updateData()
+
+
+class HoleDesignCommand(BaseCommand):
+    def GetResources(self):
+        return {
+            "Pixmap": "hole_design_command.svg",
+            "MenuText": "Hole Design",
+            "ToolTip": "Graphically design holes in ribs",
+        }
+
+    def tool(self, obj):
+        return holedesign_tool.HoleDesignTool(obj)
+
+    def IsActive(self):
+        # Only active if a HoleFeature is selected
+        selection = FreeCADGui.Selection.getSelection()
+        if len(selection) == 1 and hasattr(selection[0], "Proxy"):
+             if "hole_width_ns" in selection[0].PropertiesList:
+                return True
+        return False
 
 
 class GliderScaleFeatureCommand(GliderFeatureCommand):
