@@ -381,6 +381,7 @@ class HoleFeature(BaseFeature):
                         )
         return glider
 
+
     def addProperties(self):
         # General properties
         self.addProperty("holes", True, "hole", "Enable/disable hole creation")
