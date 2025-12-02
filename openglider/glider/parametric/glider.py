@@ -61,6 +61,51 @@ class ParametricGlider(object):
         self.glide = glide
         self.elements = elements or {}
 
+        # Hole properties
+        self.holes = True
+        self.num_holes_ns = 3
+        self.hole_height_ns = 0.7
+        self.hole_width_ns = 0.3
+        self.vertical_shift_ns = 0.0
+        self.rotation_ns = 0.0
+        self.num_holes_s = 1
+        self.hole_height_s = 0.5
+        self.hole_width_s = 0.2
+        self.vertical_shift_s = 0.0
+        self.rotation_s = 0.0
+        self.max_hole_pos = 0.8
+        self.min_hole_pos = 0.2
+
+    def apply_holes(self, glider):
+        if not self.holes:
+            return
+
+        suspended_ribs = {att.rib for att in glider.lineset.attachment_points if hasattr(att, 'rib')}
+
+        for rib in glider.ribs:
+            is_suspended = rib in suspended_ribs
+
+            if is_suspended:
+                num_holes, hole_width, hole_height, vertical_shift, rotation = (
+                    self.num_holes_s, self.hole_width_s, self.hole_height_s, self.vertical_shift_s, self.rotation_s
+                )
+            else:
+                num_holes, hole_width, hole_height, vertical_shift, rotation = (
+                    self.num_holes_ns, self.hole_width_ns, self.hole_height_ns, self.vertical_shift_ns, self.rotation_ns
+                )
+
+            for i in range(num_holes):
+                pos_x = (i + 1.0) / (num_holes + 1.0)
+                if self.min_hole_pos < pos_x < self.max_hole_pos:
+                    rib.holes.append(
+                        RibHole(
+                            pos_x,
+                            size=np.array([hole_width, hole_height]),
+                            vertical_shift=vertical_shift,
+                            rotation=rotation,
+                        )
+                    )
+
     def __json__(self):
         return {
             "shape": self.shape,
@@ -467,6 +512,7 @@ class ParametricGlider(object):
         glider.rename_parts()
 
         glider.lineset = self.lineset.return_lineset(glider, self.v_inf)
+        self.apply_holes(glider)
         glider.lineset.glider = glider
         glider.lineset.calculate_sag = False
         for _ in range(3):
