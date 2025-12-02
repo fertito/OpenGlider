@@ -42,6 +42,7 @@ class GliderWorkbench(Gui.Workbench):
         "GliderSharkFeatureCommand",
         "GliderSingleSkinRibFeatureCommand",
         "GliderHoleFeatureCommand",
+        "HoleDesignCommand",
         "GliderFlapFeatureCommand",
         "GliderScaleFeatureCommand",
         "GliderBallooningMultiplierFeatureCommand",
@@ -98,6 +99,7 @@ class GliderWorkbench(Gui.Workbench):
             tools.GliderSingleSkinRibFeatureCommand(),
         )
         Gui.addCommand("GliderHoleFeatureCommand", tools.GliderHoleFeatureCommand())
+        Gui.addCommand("HoleDesignCommand", tools.HoleDesignCommand())
         Gui.addCommand("GliderFlapFeatureCommand", tools.GliderFlapFeatureCommand())
         Gui.addCommand("GliderScaleFeatureCommand", tools.GliderScaleFeatureCommand())
         Gui.addCommand(
