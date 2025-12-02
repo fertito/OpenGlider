@@ -17,6 +17,7 @@ from . import (
     design_tool,
     features,
     line_tool,
+    holedesign_tool,
 )
 from . import panel_method as pm
 from . import shape_tool, span_mapping
