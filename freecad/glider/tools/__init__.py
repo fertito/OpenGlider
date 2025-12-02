@@ -564,7 +564,7 @@ class HoleDesignCommand(BaseCommand):
         # Only active if a HoleFeature is selected
         selection = FreeCADGui.Selection.getSelection()
         if len(selection) == 1 and hasattr(selection[0], "Proxy"):
-             if "hole_width" in selection[0].PropertiesList:
+             if "hole_width_ns" in selection[0].PropertiesList:
                 return True
         return False
 

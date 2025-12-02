@@ -1,11 +1,11 @@
 import os
 import FreeCAD as App
 import FreeCADGui as Gui
-from PySide import QtGui, QtCore
+from PySide import QtCore
 from openglider.glider.rib import RibHole
 import numpy as np
+import Part
 
-# This class will be instantiated by a command in __init__.py
 class HoleDesignTool(object):
     def __init__(self, obj):
         self.obj = obj
@@ -18,176 +18,137 @@ class HoleDesignTool(object):
             )
         )
 
-        # --- Graphics View Setup ---
-        self.scene = QtGui.QGraphicsScene()
-        self.form.profileView.setScene(self.scene)
-        self.profile_item = None
-        self.attachment_items = []
-        self.hole_items = []
-        # -------------------------
+        self.glider_obj = self.obj.parent
+        self.preview_objects = []
 
         # --- Connections ---
         self.form.applyButton.clicked.connect(self.accept)
-        self.form.numHolesSpinBox.valueChanged.connect(self.update_preview)
-        self.form.holeWidthSpinBox.valueChanged.connect(self.update_preview)
-        self.form.holeHeightSpinBox.valueChanged.connect(self.update_preview)
-        self.form.verticalShiftSpinBox.valueChanged.connect(self.update_preview)
-        self.form.rotationSpinBox.valueChanged.connect(self.update_preview)
-        # -------------------
+        # Non-suspended
+        self.form.numHolesSpinBox_ns.valueChanged.connect(self.update_preview)
+        self.form.holeWidthSpinBox_ns.valueChanged.connect(self.update_preview)
+        self.form.holeHeightSpinBox_ns.valueChanged.connect(self.update_preview)
+        self.form.verticalShiftSpinBox_ns.valueChanged.connect(self.update_preview)
+        self.form.rotationSpinBox_ns.valueChanged.connect(self.update_preview)
+        # Suspended
+        self.form.numHolesSpinBox_s.valueChanged.connect(self.update_preview)
+        self.form.holeWidthSpinBox_s.valueChanged.connect(self.update_preview)
+        self.form.holeHeightSpinBox_s.valueChanged.connect(self.update_preview)
+        self.form.verticalShiftSpinBox_s.valueChanged.connect(self.update_preview)
+        self.form.rotationSpinBox_s.valueChanged.connect(self.update_preview)
 
+        self.form.tabWidget.currentChanged.connect(self.update_preview)
+
+        self.glider_obj.ViewObject.hide()
         self.update_form()
-        self.draw_profile_and_attachments()
         self.update_preview()
 
-    def get_glider_and_rib(self):
-        """Finds the parent glider and a representative rib for visualization."""
+    def get_representative_rib(self, suspended=False):
         try:
-            feature_obj = Gui.Selection.getSelection()[0]
-            glider_obj = feature_obj.parent
-            if not hasattr(glider_obj, "Proxy") or not hasattr(glider_obj.Proxy, "getGliderInstance"):
-                return None, None
+            glider_instance = self.glider_obj.Proxy.getGliderInstance()
+            suspended_ribs = {att.rib for att in glider_instance.lineset.attachment_points if hasattr(att, 'rib')}
 
-            glider_instance = glider_obj.Proxy.getGliderInstance()
-
-            # In auto mode, find the first non-suspended rib to use as a preview
-            if feature_obj.auto_holes:
-                suspended_ribs = {att.rib for att in glider_instance.lineset.attachment_points if hasattr(att, 'rib')}
-                for rib in glider_instance.ribs:
-                    if rib not in suspended_ribs:
-                        return glider_instance, rib # Return the first non-suspended rib
-
-            # In manual mode, or if auto mode finds nothing, use the first selected rib
-            elif feature_obj.ribs:
-                rib_index = feature_obj.ribs[0]
-                if rib_index < len(glider_instance.ribs):
-                    return glider_instance, glider_instance.ribs[rib_index]
-
+            for rib in glider_instance.ribs:
+                is_suspended = rib in suspended_ribs
+                if suspended and is_suspended:
+                    return rib
+                if not suspended and not is_suspended:
+                    return rib
         except Exception as e:
-            App.Console.PrintError(f"Error getting glider/rib for preview: {e}\\n")
+            App.Console.PrintError(f"Error getting representative rib: {e}\\n")
+        return None
 
-        return None, None # Default if no suitable rib is found
+    def update_preview(self):
+        for obj in self.preview_objects:
+            try: App.ActiveDocument.removeObject(obj.Name)
+            except: pass
+        self.preview_objects = []
 
-    def draw_profile_and_attachments(self):
-        self.scene.clear()
-        self.profile_item = None
-        self.attachment_items = []
+        is_suspended_tab = self.form.tabWidget.currentIndex() == 1
+        rib = self.get_representative_rib(suspended=is_suspended_tab)
 
-        glider, rib = self.get_glider_and_rib()
         if not rib:
+            # Maybe show a text message in the 3D view
             return
 
         # Draw profile
-        profile_data = rib.profile_2d.data
-        path = QtGui.QPainterPath()
-        path.moveTo(profile_data[0][0], -profile_data[0][1])
-        for point in profile_data[1:]:
-            path.lineTo(point[0], -point[1])
-        path.closeSubpath()
+        profile_points = [App.Vector(p[0], p[1], 0) for p in rib.profile_2d.data]
+        profile_obj = App.ActiveDocument.addObject("Part::Feature", "ProfilePreview")
+        profile_obj.Shape = Part.makePolygon(profile_points + [profile_points[0]])
+        self.preview_objects.append(profile_obj)
 
-        self.profile_item = self.scene.addPath(path, QtGui.QPen(QtCore.Qt.black))
-
-        # Draw attachment points
-        attachment_points = glider.get_rib_attachment_points(rib)
-        for ap in attachment_points:
-            pos_on_profile = rib.profile_2d.profilepoint(ap.rib_pos)
-            ellipse = self.scene.addEllipse(
-                pos_on_profile[0] - 0.01, -pos_on_profile[1] - 0.01, 0.02, 0.02,
-                QtGui.QPen(QtCore.Qt.red), QtGui.QBrush(QtCore.Qt.red)
+        if is_suspended_tab:
+            num_holes, hole_width, hole_height, vertical_shift, rotation = (
+                self.form.numHolesSpinBox_s.value(),
+                self.form.holeWidthSpinBox_s.value(),
+                self.form.holeHeightSpinBox_s.value(),
+                self.form.verticalShiftSpinBox_s.value(),
+                self.form.rotationSpinBox_s.value(),
             )
-            self.attachment_items.append(ellipse)
+        else:
+            num_holes, hole_width, hole_height, vertical_shift, rotation = (
+                self.form.numHolesSpinBox_ns.value(),
+                self.form.holeWidthSpinBox_ns.value(),
+                self.form.holeHeightSpinBox_ns.value(),
+                self.form.verticalShiftSpinBox_ns.value(),
+                self.form.rotationSpinBox_ns.value(),
+            )
 
-        # Fit view
-        self.form.profileView.fitInView(self.scene.itemsBoundingRect(), QtCore.Qt.KeepAspectRatio)
-
-    def update_preview(self):
-        # Clear only the holes
-        for item in self.hole_items:
-            self.scene.removeItem(item)
-        self.hole_items = []
-
-        glider, rib = self.get_glider_and_rib()
-        if not rib:
-            return
-
-        num_holes = self.form.numHolesSpinBox.value()
-        hole_width = self.form.holeWidthSpinBox.value()
-        hole_height = self.form.holeHeightSpinBox.value()
-        vertical_shift = self.form.verticalShiftSpinBox.value()
-        rotation = self.form.rotationSpinBox.value()
-
-        # Distribute holes evenly for preview
         for i in range(num_holes):
-            pos_x = (i + 1) / (num_holes + 1)
+            pos_x = (i + 1.0) / (num_holes + 1.0)
+            camber_point = rib.profile_2d.profilepoint(pos_x, 0.0)
+            hole_center = App.Vector(camber_point[0], camber_point[1] + vertical_shift, 0)
+            ellipse = Part.makeEllipse(hole_width / 2, hole_height / 2, hole_center)
+            ellipse.rotate(hole_center, App.Vector(0, 0, 1), rotation)
+            hole_obj = App.ActiveDocument.addObject("Part::Feature", f"HolePreview_{i}")
+            hole_obj.Shape = ellipse
+            self.preview_objects.append(hole_obj)
 
-            # Find center point on camber line for the hole
-            camber_point = rib.profile_2d.profilepoint(pos_x, 0.0) # h=0.0 for camber line
-
-            hole = RibHole(
-                pos_x,
-                size=np.array([hole_width, hole_height]),
-                vertical_shift=vertical_shift,
-                rotation=rotation
-            )
-
-            # For simplicity, we draw an ellipse. A more accurate representation
-            # would require projecting the hole shape onto the 2D profile plane.
-            ellipse = QtGui.QGraphicsEllipseItem(
-                -hole.size[0]/2, -hole.size[1]/2, hole.size[0], hole.size[1]
-            )
-            ellipse.setPos(camber_point[0], -camber_point[1] - hole.vertical_shift)
-            ellipse.setRotation(-hole.rotation) # Rotation in QGraphicsView is counter-clockwise
-            ellipse.setPen(QtGui.QPen(QtCore.Qt.blue))
-
-            self.scene.addItem(ellipse)
-            self.hole_items.append(ellipse)
-
+        App.ActiveDocument.recompute()
+        Gui.SendMsgToActiveView("ViewFit")
 
     def update_form(self):
-        selection = Gui.Selection.getSelection()
-        if not selection or not hasattr(selection[0], "Proxy") or not hasattr(selection[0].Proxy, "obj"):
-            return
+        self.form.numHolesSpinBox_ns.setValue(self.obj.num_holes_ns)
+        self.form.holeWidthSpinBox_ns.setValue(self.obj.hole_width_ns)
+        self.form.holeHeightSpinBox_ns.setValue(self.obj.hole_height_ns)
+        self.form.verticalShiftSpinBox_ns.setValue(self.obj.vertical_shift_ns)
+        self.form.rotationSpinBox_ns.setValue(self.obj.rotation_ns)
 
-        feature_obj = selection[0]
-        if "hole_width" in feature_obj.PropertiesList:
-            self.form.holeWidthSpinBox.setValue(feature_obj.hole_width)
-            self.form.holeHeightSpinBox.setValue(feature_obj.hole_height)
-            self.form.verticalShiftSpinBox.setValue(feature_obj.vertical_shift)
-            self.form.rotationSpinBox.setValue(feature_obj.rotation)
-            self.form.numHolesSpinBox.setValue(feature_obj.num_holes)
-
+        self.form.numHolesSpinBox_s.setValue(self.obj.num_holes_s)
+        self.form.holeWidthSpinBox_s.setValue(self.obj.hole_width_s)
+        self.form.holeHeightSpinBox_s.setValue(self.obj.hole_height_s)
+        self.form.verticalShiftSpinBox_s.setValue(self.obj.vertical_shift_s)
+        self.form.rotationSpinBox_s.setValue(self.obj.rotation_s)
 
     def apply_changes(self):
-        selection = Gui.Selection.getSelection()
-        if not selection:
-            App.Console.PrintWarning("Please select a HoleFeature object to apply changes.\\n")
-            return
+        self.obj.holes = True
+        self.obj.num_holes_ns = self.form.numHolesSpinBox_ns.value()
+        self.obj.hole_width_ns = self.form.holeWidthSpinBox_ns.value()
+        self.obj.hole_height_ns = self.form.holeHeightSpinBox_ns.value()
+        self.obj.vertical_shift_ns = self.form.verticalShiftSpinBox_ns.value()
+        self.obj.rotation_ns = self.form.rotationSpinBox_ns.value()
 
-        feature_obj = selection[0]
-        if not "hole_width" in feature_obj.PropertiesList:
-            App.Console.PrintWarning("Selected object is not a valid HoleFeature.\\n")
-            return
+        self.obj.num_holes_s = self.form.numHolesSpinBox_s.value()
+        self.obj.hole_width_s = self.form.holeWidthSpinBox_s.value()
+        self.obj.hole_height_s = self.form.holeHeightSpinBox_s.value()
+        self.obj.vertical_shift_s = self.form.verticalShiftSpinBox_s.value()
+        self.obj.rotation_s = self.form.rotationSpinBox_s.value()
 
+        App.Console.PrintMessage("Hole properties updated.\\n")
 
-        feature_obj.holes = True # Enable hole creation
-        feature_obj.num_holes = self.form.numHolesSpinBox.value()
-        feature_obj.hole_width = self.form.holeWidthSpinBox.value()
-        feature_obj.hole_height = self.form.holeHeightSpinBox.value()
-        feature_obj.vertical_shift = self.form.verticalShiftSpinBox.value()
-        feature_obj.rotation = self.form.rotationSpinBox.value()
-
-        # The original HoleFeature automatically finds attachment points.
-        # We just need to trigger a recompute.
+    def cleanup(self):
+        for obj in self.preview_objects:
+            try: App.ActiveDocument.removeObject(obj.Name)
+            except: pass
+        self.glider_obj.ViewObject.show()
         App.ActiveDocument.recompute()
-        App.Console.PrintMessage("Hole properties updated. Recomputing glider...\\n")
 
     def accept(self):
         self.apply_changes()
+        self.cleanup()
         Gui.Control.closeDialog(self)
         return True
 
     def reject(self):
+        self.cleanup()
         Gui.Control.closeDialog(self)
         return True
-
-    def get_form(self):
-        return self.form
