@@ -55,12 +55,40 @@ class Cell(CachedObject):
         self.diagonals = diagonals or []
         self.straps = straps or []
         self.ballooning = ballooning
-        self.panels = panels or []
+        self.panels = panels
         self.rigidfoils = rigidfoils or []
         self.name = name
+        self.glider = None
 
         for kwarg, value in kwargs.items():
             setattr(self, kwarg, value)
+
+        if self.panels is None:
+            self.panels = self.get_panels()
+
+    def get_panels(self):
+
+        if self.suspended:
+            return []
+
+        # create a singleskin panel for the whole cell
+        return [
+            Panel(
+                {"left": -1.0, "right": -1.0, "type": Panel.CUT_TYPES.singleskin},
+                {"left": 1.0, "right": 1.0, "type": Panel.CUT_TYPES.singleskin},
+            )
+        ]
+
+    @property
+    def suspended(self):
+        """
+        Check if the cell is suspended by lines
+        """
+        if self.glider:
+            for att in self.glider.lineset.attachment_points:
+                if hasattr(att, "cell") and att.cell == self:
+                    return True
+        return False
 
     def __json__(self):
         return {
