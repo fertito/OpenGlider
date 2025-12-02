@@ -97,7 +97,11 @@ class HoleDesignTool(object):
             pos_x = (i + 1.0) / (num_holes + 1.0)
             camber_point = rib.profile_2d.profilepoint(pos_x, 0.0)
             hole_center = App.Vector(camber_point[0], camber_point[1] + vertical_shift, 0)
-            ellipse = Part.makeEllipse(hole_width / 2, hole_height / 2, hole_center)
+
+            # Correct way to create an ellipse
+            ellipse_geom = Part.Ellipse(hole_center, hole_width / 2, hole_height / 2)
+            ellipse = ellipse_geom.toShape()
+
             ellipse.rotate(hole_center, App.Vector(0, 0, 1), rotation)
             hole_obj = App.ActiveDocument.addObject("Part::Feature", f"HolePreview_{i}")
             hole_obj.Shape = ellipse
