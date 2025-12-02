@@ -17,6 +17,7 @@ from . import (
     design_tool,
     features,
     line_tool,
+    holedesign_tool,
 )
 from . import panel_method as pm
 from . import shape_tool, span_mapping
@@ -532,20 +533,24 @@ class GliderFlapFeatureCommand(GliderFeatureCommand):
         vp.updateData()
 
 
-class GliderHoleFeatureCommand(GliderFeatureCommand):
+class HoleDesignCommand(BaseCommand):
     def GetResources(self):
         return {
-            "Pixmap": "hole_feature.svg",
-            "MenuText": "create holes",
-            "ToolTip": "create holes (single-skin)",
+            "Pixmap": "hole_design_command.svg",
+            "MenuText": "Hole Design",
+            "ToolTip": "Graphically design holes in ribs",
         }
 
-    def Activated(self):
-        feature = FreeCAD.ActiveDocument.addObject("App::FeaturePython", "holeFeature")
-        self.glider_obj.ViewObject.Visibility = False
-        features.HoleFeature(feature, self.glider_obj)
-        vp = features.VHoleFeature(feature.ViewObject)
-        vp.updateData()
+    def tool(self, obj):
+        return holedesign_tool.HoleDesignTool(obj)
+
+    def IsActive(self):
+        # Active if a glider object is selected
+        selection = FreeCADGui.Selection.getSelection()
+        if len(selection) == 1 and hasattr(selection[0], "Proxy"):
+            if hasattr(selection[0].Proxy, 'parametric_glider'):
+                return True
+        return False
 
 
 class GliderScaleFeatureCommand(GliderFeatureCommand):
