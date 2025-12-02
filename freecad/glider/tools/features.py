@@ -343,41 +343,58 @@ class HoleFeature(BaseFeature):
     def getGliderInstance(self):
         glider = copy.deepcopy(self.obj.parent.Proxy.getGliderInstance())
 
-        ribs = [rib for i, rib in enumerate(glider.ribs) if i in self.obj.ribs]
-        new_ribs = []
+        # --- Automatic Hole Placement ---
+        if self.obj.auto_holes:
+            suspended_ribs = set()
+            for att in glider.lineset.attachment_points:
+                if hasattr(att, 'rib'):
+                    suspended_ribs.add(att.rib)
+
+            ribs_to_modify = [rib for rib in glider.ribs if rib not in suspended_ribs]
+        else:
+            # Manual mode
+            ribs_to_modify = [glider.ribs[i] for i in self.obj.ribs if i < len(glider.ribs)]
+        # --------------------------------
 
         hole_size = np.array([self.obj.hole_width, self.obj.hole_height])
-        if self.obj.holes:
-            for i, att_pnt in enumerate(glider.lineset.attachment_points):
-                if (
-                    att_pnt.rib in ribs
-                    and att_pnt.rib_pos > self.obj.min_hole_pos
-                    and att_pnt.rib_pos < self.obj.max_hole_pos
-                ):
-                    att_pnt.rib.holes.append(
-                        RibHole(
-                            att_pnt.rib_pos,
-                            size=hole_size,
-                            vertical_shift=self.obj.vertical_shift,
-                            rotation=self.obj.rotation,
-                        )
-                    )
 
+        if self.obj.holes:
+            # Clear existing holes from all ribs to ensure a clean slate
+            for rib in glider.ribs:
+                rib.holes = []
+
+            # Generate holes based on a fixed number, evenly distributed
+            if self.obj.num_holes > 0:
+                for rib in ribs_to_modify:
+                    for i in range(self.obj.num_holes):
+                        pos_x = (i + 1.0) / (self.obj.num_holes + 1.0)
+                        if self.obj.min_hole_pos < pos_x < self.obj.max_hole_pos:
+                            rib.holes.append(
+                                RibHole(
+                                    pos_x,
+                                    size=hole_size,
+                                    vertical_shift=self.obj.vertical_shift,
+                                    rotation=self.obj.rotation,
+                                )
+                            )
         return glider
 
+
     def addProperties(self):
-        self.addProperty("ribs", [], "hole", "docs", int)
-        self.addProperty("holes", False, "hole", "create holes in the rib")
-        self.addProperty("hole_height", 0.7, "hole", "height of ellipse")
-        self.addProperty("hole_width", 0.3, "hole", "width of ellipse")
+        self.addProperty("auto_holes", True, "hole", "Automatically create holes in non-suspended ribs")
+        self.addProperty("ribs", [], "hole", "Ribs to apply holes to (if auto_holes is false)", int)
+        self.addProperty("holes", True, "hole", "Enable/disable hole creation")
+        self.addProperty("num_holes", 3, "hole", "Number of holes to create")
+        self.addProperty("hole_height", 0.7, "hole", "Height of the hole ellipse")
+        self.addProperty("hole_width", 0.3, "hole", "Width of the hole ellipse")
         self.addProperty(
-            "max_hole_pos", 1.0, "hole", "maximal relative position of hole"
+            "max_hole_pos", 0.8, "hole", "Maximum relative position for holes (0-1)"
         )
-        self.addProperty("vertical_shift", 0.2, "hole", "relative vertical shift")
+        self.addProperty("vertical_shift", 0.0, "hole", "Relative vertical shift from camber line")
         self.addProperty(
-            "min_hole_pos", 0.2, "hole", "minimal relative position of hole"
+            "min_hole_pos", 0.2, "hole", "Minimal relative position for holes (0-1)"
         )
-        self.addProperty("rotation", 0.0, "hole", "docs")
+        self.addProperty("rotation", 0.0, "hole", "Rotation of the hole ellipse")
 
 
 class VHoleFeature(OGGliderVP):
