@@ -68,8 +68,14 @@ class HoleDesignTool(BaseTool):
         self.tabWidget.addTab(self.tab_ns, "Non-Suspended")
         self.tabWidget.addTab(self.tab_s, "Suspended")
 
-        self.layout.addWidget(self.tabWidget, 0, 0, 1, 2)
-        self.layout.addWidget(self.applyButton, 1, 1)
+        # Add widgets to the main QFormLayout
+        self.layout.addRow(self.tabWidget)
+
+        # Add the apply button on its own row, right-aligned
+        button_layout = QtGui.QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(self.applyButton)
+        self.layout.addRow(button_layout)
 
         for spinbox in [self.holeWidthSpinBox_ns, self.holeHeightSpinBox_ns, self.verticalShiftSpinBox_ns, self.rotationSpinBox_ns,
                         self.holeWidthSpinBox_s, self.holeHeightSpinBox_s, self.verticalShiftSpinBox_s, self.rotationSpinBox_s]:
