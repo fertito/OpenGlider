@@ -12,6 +12,7 @@ class HoleDesignTool(BaseTool):
     def __init__(self, obj):
         super(HoleDesignTool, self).__init__(obj)
         self.preview_root = coin.SoSeparator()
+        self.setup_widget()
         self.setup_pivy()
 
     def setup_widget(self):
