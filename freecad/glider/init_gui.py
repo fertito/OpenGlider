@@ -34,6 +34,7 @@ class GliderWorkbench(Gui.Workbench):
         "CutCommand",
         "ColorCommand",
         "Gl2dExport",
+        "HoleDesignCommand",
     ]
 
     featureBox = [
@@ -41,7 +42,6 @@ class GliderWorkbench(Gui.Workbench):
         "GliderBallooningFeatureCommand",
         "GliderSharkFeatureCommand",
         "GliderSingleSkinRibFeatureCommand",
-        "HoleDesignCommand",
         "GliderFlapFeatureCommand",
         "GliderScaleFeatureCommand",
         "GliderBallooningMultiplierFeatureCommand",
