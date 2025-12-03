@@ -86,13 +86,17 @@ class ParametricGlider(object):
             is_suspended = rib in suspended_ribs
 
             if is_suspended:
-                num_holes, hole_width, hole_height, vertical_shift, rotation = (
+                num_holes, hole_width_factor, hole_height_factor, vertical_shift_factor, rotation = (
                     self.num_holes_s, self.hole_width_s, self.hole_height_s, self.vertical_shift_s, self.rotation_s
                 )
             else:
-                num_holes, hole_width, hole_height, vertical_shift, rotation = (
+                num_holes, hole_width_factor, hole_height_factor, vertical_shift_factor, rotation = (
                     self.num_holes_ns, self.hole_width_ns, self.hole_height_ns, self.vertical_shift_ns, self.rotation_ns
                 )
+
+            hole_width = hole_width_factor * rib.chord
+            hole_height = hole_height_factor * rib.chord
+            vertical_shift = vertical_shift_factor * rib.chord
 
             for i in range(num_holes):
                 pos_x = (i + 1.0) / (num_holes + 1.0)

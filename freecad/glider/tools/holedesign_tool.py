@@ -6,22 +6,20 @@ import numpy as np
 from pivy import coin
 import os
 
-from .tools import BaseTool, Line_old, text_field, input_field
-
 class HoleDesignTool(BaseTool):
     widget_name = "Hole Design"
 
     def __init__(self, obj):
         super(HoleDesignTool, self).__init__(obj)
 
-        # UI Elements
-        self.ribTypeComboBox = QtGui.QComboBox()
-        self.numHolesSpinBox = QtGui.QSpinBox()
-        self.holeWidthSpinBox = QtGui.QDoubleSpinBox()
-        self.holeHeightSpinBox = QtGui.QDoubleSpinBox()
-        self.verticalShiftSpinBox = QtGui.QDoubleSpinBox()
-        self.rotationSpinBox = QtGui.QDoubleSpinBox()
-        self.applyButton = QtGui.QPushButton("Apply")
+        # UI Elements with parent widget specified
+        self.ribTypeComboBox = QtGui.QComboBox(self.base_widget)
+        self.numHolesSpinBox = QtGui.QSpinBox(self.base_widget)
+        self.holeWidthSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.holeHeightSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.verticalShiftSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.rotationSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.applyButton = QtGui.QPushButton("Apply", self.base_widget)
 
         self.preview_root = coin.SoSeparator()
         self.setup_widget()
@@ -158,8 +156,8 @@ class HoleDesignTool(BaseTool):
             widget.blockSignals(True)
 
         self.numHolesSpinBox.setValue(getattr(pg, f'num_holes{suffix}', 3 if not is_suspended else 1))
-        self.holeWidthSpinBox.setValue(getattr(pg, f'hole_width{suffix}', 0.3))
-        self.holeHeightSpinBox.setValue(getattr(pg, f'hole_height{suffix}', 0.7))
+        self.holeWidthSpinBox.setValue(getattr(pg, f'hole_width{suffix}', 0.1))
+        self.holeHeightSpinBox.setValue(getattr(pg, f'hole_height{suffix}', 0.05))
         self.verticalShiftSpinBox.setValue(getattr(pg, f'vertical_shift{suffix}', 0.0))
         self.rotationSpinBox.setValue(getattr(pg, f'rotation{suffix}', 0.0))
 
