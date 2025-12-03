@@ -31,6 +31,7 @@ class GliderWorkbench(Gui.Workbench):
         "CellCommand",
         "LineCommand",
         "LineObserveCommand",
+        "HoleDesignCommand",
         "CutCommand",
         "ColorCommand",
         "Gl2dExport",
