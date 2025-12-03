@@ -15,22 +15,12 @@ class HoleDesignTool(BaseTool):
         super(HoleDesignTool, self).__init__(obj)
 
         # UI Elements
-        self.tabWidget = QtGui.QTabWidget()
-        self.tab_ns = QtGui.QWidget()
-        self.tab_s = QtGui.QWidget()
-
-        self.numHolesSpinBox_ns = QtGui.QSpinBox()
-        self.holeWidthSpinBox_ns = QtGui.QDoubleSpinBox()
-        self.holeHeightSpinBox_ns = QtGui.QDoubleSpinBox()
-        self.verticalShiftSpinBox_ns = QtGui.QDoubleSpinBox()
-        self.rotationSpinBox_ns = QtGui.QDoubleSpinBox()
-
-        self.numHolesSpinBox_s = QtGui.QSpinBox()
-        self.holeWidthSpinBox_s = QtGui.QDoubleSpinBox()
-        self.holeHeightSpinBox_s = QtGui.QDoubleSpinBox()
-        self.verticalShiftSpinBox_s = QtGui.QDoubleSpinBox()
-        self.rotationSpinBox_s = QtGui.QDoubleSpinBox()
-
+        self.ribTypeComboBox = QtGui.QComboBox()
+        self.numHolesSpinBox = QtGui.QSpinBox()
+        self.holeWidthSpinBox = QtGui.QDoubleSpinBox()
+        self.holeHeightSpinBox = QtGui.QDoubleSpinBox()
+        self.verticalShiftSpinBox = QtGui.QDoubleSpinBox()
+        self.rotationSpinBox = QtGui.QDoubleSpinBox()
         self.applyButton = QtGui.QPushButton("Apply")
 
         self.preview_root = coin.SoSeparator()
@@ -38,68 +28,43 @@ class HoleDesignTool(BaseTool):
         self.setup_pivy()
 
     def setup_widget(self):
+        # Add items to combo box
+        self.ribTypeComboBox.addItems(["Non-Suspended", "Suspended"])
 
-        # Non-Suspended Tab Layout
-        layout_ns = QtGui.QGridLayout(self.tab_ns)
-        layout_ns.addWidget(QtGui.QLabel("Number of Holes"), 0, 0)
-        layout_ns.addWidget(self.numHolesSpinBox_ns, 0, 1)
-        layout_ns.addWidget(QtGui.QLabel("Hole Width"), 1, 0)
-        layout_ns.addWidget(self.holeWidthSpinBox_ns, 1, 1)
-        layout_ns.addWidget(QtGui.QLabel("Hole Height"), 2, 0)
-        layout_ns.addWidget(self.holeHeightSpinBox_ns, 2, 1)
-        layout_ns.addWidget(QtGui.QLabel("Vertical Shift"), 3, 0)
-        layout_ns.addWidget(self.verticalShiftSpinBox_ns, 3, 1)
-        layout_ns.addWidget(QtGui.QLabel("Rotation"), 4, 0)
-        layout_ns.addWidget(self.rotationSpinBox_ns, 4, 1)
+        # Add widgets to the QFormLayout provided by BaseTool
+        self.layout.addRow("Rib Type", self.ribTypeComboBox)
+        self.layout.addRow("Number of Holes", self.numHolesSpinBox)
+        self.layout.addRow("Hole Width (%)", self.holeWidthSpinBox)
+        self.layout.addRow("Hole Height (%)", self.holeHeightSpinBox)
+        self.layout.addRow("Vertical Shift (%)", self.verticalShiftSpinBox)
+        self.layout.addRow("Rotation (deg)", self.rotationSpinBox)
 
-        # Suspended Tab Layout
-        layout_s = QtGui.QGridLayout(self.tab_s)
-        layout_s.addWidget(QtGui.QLabel("Number of Holes"), 0, 0)
-        layout_s.addWidget(self.numHolesSpinBox_s, 0, 1)
-        layout_s.addWidget(QtGui.QLabel("Hole Width"), 1, 0)
-        layout_s.addWidget(self.holeWidthSpinBox_s, 1, 1)
-        layout_s.addWidget(QtGui.QLabel("Hole Height"), 2, 0)
-        layout_s.addWidget(self.holeHeightSpinBox_s, 2, 1)
-        layout_s.addWidget(QtGui.QLabel("Vertical Shift"), 3, 0)
-        layout_s.addWidget(self.verticalShiftSpinBox_s, 3, 1)
-        layout_s.addWidget(QtGui.QLabel("Rotation"), 4, 0)
-        layout_s.addWidget(self.rotationSpinBox_s, 4, 1)
-
-        self.tabWidget.addTab(self.tab_ns, "Non-Suspended")
-        self.tabWidget.addTab(self.tab_s, "Suspended")
-
-        # Add widgets to the main QFormLayout
-        self.layout.addRow(self.tabWidget)
-
-        # Add the apply button on its own row, right-aligned
+        # Right-align the apply button
         button_layout = QtGui.QHBoxLayout()
         button_layout.addStretch()
         button_layout.addWidget(self.applyButton)
         self.layout.addRow(button_layout)
 
-        for spinbox in [self.holeWidthSpinBox_ns, self.holeHeightSpinBox_ns, self.verticalShiftSpinBox_ns, self.rotationSpinBox_ns,
-                        self.holeWidthSpinBox_s, self.holeHeightSpinBox_s, self.verticalShiftSpinBox_s, self.rotationSpinBox_s]:
+        # Configure spinboxes
+        for spinbox in [self.holeWidthSpinBox, self.holeHeightSpinBox, self.verticalShiftSpinBox]:
             spinbox.setSingleStep(0.01)
             spinbox.setDecimals(3)
-            spinbox.setMinimum(-10.0)
-            spinbox.setMaximum(10.0)
+            spinbox.setMinimum(0.0)
+            spinbox.setMaximum(1.0) # Relative to chord
+        self.rotationSpinBox.setSingleStep(1.0)
+        self.rotationSpinBox.setMinimum(-180)
+        self.rotationSpinBox.setMaximum(180)
 
-        self.update_form_values()
+        # Load initial values
+        self.update_form_from_glider_data()
 
         # Connections
-        self.tabWidget.currentChanged.connect(self.update_preview)
-        self.numHolesSpinBox_ns.valueChanged.connect(self.update_data_and_preview)
-        self.holeWidthSpinBox_ns.valueChanged.connect(self.update_data_and_preview)
-        self.holeHeightSpinBox_ns.valueChanged.connect(self.update_data_and_preview)
-        self.verticalShiftSpinBox_ns.valueChanged.connect(self.update_data_and_preview)
-        self.rotationSpinBox_ns.valueChanged.connect(self.update_data_and_preview)
-
-        self.numHolesSpinBox_s.valueChanged.connect(self.update_data_and_preview)
-        self.holeWidthSpinBox_s.valueChanged.connect(self.update_data_and_preview)
-        self.holeHeightSpinBox_s.valueChanged.connect(self.update_data_and_preview)
-        self.verticalShiftSpinBox_s.valueChanged.connect(self.update_data_and_preview)
-        self.rotationSpinBox_s.valueChanged.connect(self.update_data_and_preview)
-
+        self.ribTypeComboBox.currentIndexChanged.connect(self.on_rib_type_change)
+        self.numHolesSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
+        self.holeWidthSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
+        self.holeHeightSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
+        self.verticalShiftSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
+        self.rotationSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
         self.applyButton.clicked.connect(self.accept)
 
     def setup_pivy(self):
@@ -115,10 +80,17 @@ class HoleDesignTool(BaseTool):
                 return rib
         return None
 
+    def on_rib_type_change(self):
+        # First, save the current UI values to the correct glider attributes
+        self.update_glider_data_and_preview(switch=True)
+        # Then, load the values for the newly selected rib type
+        self.update_form_from_glider_data()
+        self.update_preview()
+
     def update_preview(self, *args):
         self.preview_root.removeAllChildren()
 
-        is_suspended = self.tabWidget.currentIndex() == 1
+        is_suspended = self.ribTypeComboBox.currentIndex() == 1
         rib = self.get_representative_rib(suspended=is_suspended)
         if not rib: return
 
@@ -130,9 +102,9 @@ class HoleDesignTool(BaseTool):
         glider_instance = self.obj.Proxy.getGliderInstance()
         attachment_points = glider_instance.get_rib_attachment_points(rib)
         for ap in attachment_points:
-            point_2d = rib.profile_2d.profilepoint(ap.rib_pos, 0.0) # Get point on the camber line
+            # Align on the bottom surface (intrados)
+            point_2d = rib.profile_2d.align([ap.rib_pos, -1.0])
 
-            # Create a small circle marker
             marker_sep = coin.SoSeparator()
             translation = coin.SoTranslation()
             translation.translation.setValue(point_2d[0], point_2d[1], 0)
@@ -146,22 +118,27 @@ class HoleDesignTool(BaseTool):
             marker_sep.addChild(sphere)
             self.preview_root.addChild(marker_sep)
 
-        params = self.get_params_from_tab(is_suspended)
+        # Get current parameters from the UI
+        num_holes = self.numHolesSpinBox.value()
+        hole_width = self.holeWidthSpinBox.value() * rib.chord
+        hole_height = self.holeHeightSpinBox.value() * rib.chord
+        vertical_shift = self.verticalShiftSpinBox.value() * rib.chord
+        rotation = self.rotationSpinBox.value()
 
-        for i in range(params['num_holes']):
-            pos_x = (i + 1.0) / (params['num_holes'] + 1.0)
+        for i in range(num_holes):
+            pos_x = (i + 1.0) / (num_holes + 1.0)
             camber_point = rib.profile_2d.profilepoint(pos_x, 0.0)
-            hole_center = np.array([camber_point[0], camber_point[1] + params['vertical_shift']])
+            hole_center = np.array([camber_point[0], camber_point[1] + vertical_shift])
 
             ellipse_points = []
             for angle in np.linspace(0, 2 * np.pi, 50):
-                x = params['hole_width']/2 * np.cos(angle)
-                y = params['hole_height']/2 * np.sin(angle)
+                x = hole_width/2 * np.cos(angle)
+                y = hole_height/2 * np.sin(angle)
                 ellipse_points.append([x, y])
 
             ellipse_poly = np.array(ellipse_points)
-            rot_matrix = np.array([[np.cos(np.deg2rad(params['rotation'])), -np.sin(np.deg2rad(params['rotation']))],
-                                   [np.sin(np.deg2rad(params['rotation'])), np.cos(np.deg2rad(params['rotation']))]])
+            rot_matrix = np.array([[np.cos(np.deg2rad(rotation)), -np.sin(np.deg2rad(rotation))],
+                                   [np.sin(np.deg2rad(rotation)), np.cos(np.deg2rad(rotation))]])
             ellipse_poly = ellipse_poly.dot(rot_matrix)
             ellipse_poly += hole_center
 
@@ -170,54 +147,45 @@ class HoleDesignTool(BaseTool):
 
         self.view.draw()
 
-    def get_params_from_tab(self, is_suspended):
-        if is_suspended:
-            return {
-                "num_holes": self.numHolesSpinBox_s.value(),
-                "hole_width": self.holeWidthSpinBox_s.value(),
-                "hole_height": self.holeHeightSpinBox_s.value(),
-                "vertical_shift": self.verticalShiftSpinBox_s.value(),
-                "rotation": self.rotationSpinBox_s.value(),
-            }
-        else:
-            return {
-                "num_holes": self.numHolesSpinBox_ns.value(),
-                "hole_width": self.holeWidthSpinBox_ns.value(),
-                "hole_height": self.holeHeightSpinBox_ns.value(),
-                "vertical_shift": self.verticalShiftSpinBox_ns.value(),
-                "rotation": self.rotationSpinBox_ns.value(),
-            }
-
-    def update_form_values(self):
+    def update_form_from_glider_data(self):
         pg = self.parametric_glider
-        self.numHolesSpinBox_ns.setValue(getattr(pg, 'num_holes_ns', 3))
-        self.holeWidthSpinBox_ns.setValue(getattr(pg, 'hole_width_ns', 0.3))
-        self.holeHeightSpinBox_ns.setValue(getattr(pg, 'hole_height_ns', 0.7))
-        self.verticalShiftSpinBox_ns.setValue(getattr(pg, 'vertical_shift_ns', 0.0))
-        self.rotationSpinBox_ns.setValue(getattr(pg, 'rotation_ns', 0.0))
+        is_suspended = self.ribTypeComboBox.currentIndex() == 1
 
-        self.numHolesSpinBox_s.setValue(getattr(pg, 'num_holes_s', 1))
-        self.holeWidthSpinBox_s.setValue(getattr(pg, 'hole_width_s', 0.2))
-        self.holeHeightSpinBox_s.setValue(getattr(pg, 'hole_height_s', 0.5))
-        self.verticalShiftSpinBox_s.setValue(getattr(pg, 'vertical_shift_s', 0.0))
-        self.rotationSpinBox_s.setValue(getattr(pg, 'rotation_s', 0.0))
+        suffix = "_s" if is_suspended else "_ns"
 
-    def update_data_and_preview(self, *args):
+        # Block signals to prevent feedback loops
+        for widget in [self.numHolesSpinBox, self.holeWidthSpinBox, self.holeHeightSpinBox, self.verticalShiftSpinBox, self.rotationSpinBox]:
+            widget.blockSignals(True)
+
+        self.numHolesSpinBox.setValue(getattr(pg, f'num_holes{suffix}', 3 if not is_suspended else 1))
+        self.holeWidthSpinBox.setValue(getattr(pg, f'hole_width{suffix}', 0.3))
+        self.holeHeightSpinBox.setValue(getattr(pg, f'hole_height{suffix}', 0.7))
+        self.verticalShiftSpinBox.setValue(getattr(pg, f'vertical_shift{suffix}', 0.0))
+        self.rotationSpinBox.setValue(getattr(pg, f'rotation{suffix}', 0.0))
+
+        # Unblock signals
+        for widget in [self.numHolesSpinBox, self.holeWidthSpinBox, self.holeHeightSpinBox, self.verticalShiftSpinBox, self.rotationSpinBox]:
+            widget.blockSignals(False)
+
+    def update_glider_data_and_preview(self, *args, switch=False):
         pg = self.parametric_glider
-        pg.num_holes_ns = self.numHolesSpinBox_ns.value()
-        pg.hole_width_ns = self.holeWidthSpinBox_ns.value()
-        pg.hole_height_ns = self.holeHeightSpinBox_ns.value()
-        pg.vertical_shift_ns = self.verticalShiftSpinBox_ns.value()
-        pg.rotation_ns = self.rotationSpinBox_ns.value()
 
-        pg.num_holes_s = self.numHolesSpinBox_s.value()
-        pg.hole_width_s = self.holeWidthSpinBox_s.value()
-        pg.hole_height_s = self.holeHeightSpinBox_s.value()
-        pg.vertical_shift_s = self.verticalShiftSpinBox_s.value()
-        pg.rotation_s = self.rotationSpinBox_s.value()
+        # When switching tabs, we need to know which set of data to save.
+        # The index gives the *new* tab, so we save to the *opposite* of the current one if switching.
+        current_idx = self.ribTypeComboBox.currentIndex()
+        is_suspended = (current_idx == 1 and not switch) or \
+                       (current_idx == 0 and switch)
+
+        suffix = "_s" if is_suspended else "_ns"
+
+        setattr(pg, f'num_holes{suffix}', self.numHolesSpinBox.value())
+        setattr(pg, f'hole_width{suffix}', self.holeWidthSpinBox.value())
+        setattr(pg, f'hole_height{suffix}', self.holeHeightSpinBox.value())
+        setattr(pg, f'vertical_shift{suffix}', self.verticalShiftSpinBox.value())
+        setattr(pg, f'rotation{suffix}', self.rotationSpinBox.value())
 
         self.update_preview()
 
     def accept(self):
-        self.update_data_and_preview()
+        self.update_glider_data_and_preview()
         super(HoleDesignTool, self).accept()
