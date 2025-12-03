@@ -4,31 +4,39 @@ from PySide import QtCore, QtGui
 from openglider.glider.rib import RibHole
 import numpy as np
 from pivy import coin
-import os
 
 class HoleDesignTool(BaseTool):
     widget_name = "Hole Design"
+    _ui_file = "holedesign.ui"
 
     def __init__(self, obj):
         super(HoleDesignTool, self).__init__(obj)
-        ui_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ui", "holedesign.ui")
-        self.form = Gui.PySideUic.loadUi(ui_file)
-        self.layout.addWidget(self.form)
-
         self.preview_root = coin.SoSeparator()
-        self.setup_pivy()
         self.setup_widget()
+        self.setup_pivy()
 
     def setup_widget(self):
-        self.update_form_values()
-        # Connections
-        self.form.tabWidget.currentChanged.connect(self.update_preview)
+        # Find all widgets and store them as class attributes
+        self.tabWidget = self.base_widget.findChild(QtCore.QObject, "tabWidget")
+        self.applyButton = self.base_widget.findChild(QtCore.QObject, "applyButton")
+
         for tab_name in ["ns", "s"]:
-            getattr(self.form, f"numHolesSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
-            getattr(self.form, f"holeWidthSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
-            getattr(self.form, f"holeHeightSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
-            getattr(self.form, f"verticalShiftSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
-            getattr(self.form, f"rotationSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
+            setattr(self, f"numHolesSpinBox_{tab_name}", self.base_widget.findChild(QtCore.QObject, f"numHolesSpinBox_{tab_name}"))
+            setattr(self, f"holeWidthSpinBox_{tab_name}", self.base_widget.findChild(QtCore.QObject, f"holeWidthSpinBox_{tab_name}"))
+            setattr(self, f"holeHeightSpinBox_{tab_name}", self.base_widget.findChild(QtCore.QObject, f"holeHeightSpinBox_{tab_name}"))
+            setattr(self, f"verticalShiftSpinBox_{tab_name}", self.base_widget.findChild(QtCore.QObject, f"verticalShiftSpinBox_{tab_name}"))
+            setattr(self, f"rotationSpinBox_{tab_name}", self.base_widget.findChild(QtCore.QObject, f"rotationSpinBox_{tab_name}"))
+
+        self.update_form_values()
+
+        # Connections
+        self.tabWidget.currentChanged.connect(self.update_preview)
+        for tab_name in ["ns", "s"]:
+            getattr(self, f"numHolesSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
+            getattr(self, f"holeWidthSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
+            getattr(self, f"holeHeightSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
+            getattr(self, f"verticalShiftSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
+            getattr(self, f"rotationSpinBox_{tab_name}").valueChanged.connect(self.update_data_and_preview)
 
     def setup_pivy(self):
         self.task_separator.addChild(self.preview_root)
@@ -46,7 +54,7 @@ class HoleDesignTool(BaseTool):
     def update_preview(self, *args):
         self.preview_root.removeAllChildren()
 
-        is_suspended = self.form.tabWidget.currentIndex() == 1
+        is_suspended = self.tabWidget.currentIndex() == 1
         rib = self.get_representative_rib(suspended=is_suspended)
         if not rib: return
 
@@ -78,48 +86,48 @@ class HoleDesignTool(BaseTool):
     def get_params_from_tab(self, is_suspended):
         if is_suspended:
             return {
-                "num_holes": self.form.numHolesSpinBox_s.value(),
-                "hole_width": self.form.holeWidthSpinBox_s.value(),
-                "hole_height": self.form.holeHeightSpinBox_s.value(),
-                "vertical_shift": self.form.verticalShiftSpinBox_s.value(),
-                "rotation": self.form.rotationSpinBox_s.value(),
+                "num_holes": getattr(self, "numHolesSpinBox_s").value(),
+                "hole_width": getattr(self, "holeWidthSpinBox_s").value(),
+                "hole_height": getattr(self, "holeHeightSpinBox_s").value(),
+                "vertical_shift": getattr(self, "verticalShiftSpinBox_s").value(),
+                "rotation": getattr(self, "rotationSpinBox_s").value(),
             }
         else:
             return {
-                "num_holes": self.form.numHolesSpinBox_ns.value(),
-                "hole_width": self.form.holeWidthSpinBox_ns.value(),
-                "hole_height": self.form.holeHeightSpinBox_ns.value(),
-                "vertical_shift": self.form.verticalShiftSpinBox_ns.value(),
-                "rotation": self.form.rotationSpinBox_ns.value(),
+                "num_holes": getattr(self, "numHolesSpinBox_ns").value(),
+                "hole_width": getattr(self, "holeWidthSpinBox_ns").value(),
+                "hole_height": getattr(self, "holeHeightSpinBox_ns").value(),
+                "vertical_shift": getattr(self, "verticalShiftSpinBox_ns").value(),
+                "rotation": getattr(self, "rotationSpinBox_ns").value(),
             }
 
     def update_form_values(self):
         pg = self.parametric_glider
-        self.form.numHolesSpinBox_ns.setValue(getattr(pg, 'num_holes_ns', 3))
-        self.form.holeWidthSpinBox_ns.setValue(getattr(pg, 'hole_width_ns', 0.3))
-        self.form.holeHeightSpinBox_ns.setValue(getattr(pg, 'hole_height_ns', 0.7))
-        self.form.verticalShiftSpinBox_ns.setValue(getattr(pg, 'vertical_shift_ns', 0.0))
-        self.form.rotationSpinBox_ns.setValue(getattr(pg, 'rotation_ns', 0.0))
+        getattr(self, "numHolesSpinBox_ns").setValue(getattr(pg, 'num_holes_ns', 3))
+        getattr(self, "holeWidthSpinBox_ns").setValue(getattr(pg, 'hole_width_ns', 0.3))
+        getattr(self, "holeHeightSpinBox_ns").setValue(getattr(pg, 'hole_height_ns', 0.7))
+        getattr(self, "verticalShiftSpinBox_ns").setValue(getattr(pg, 'vertical_shift_ns', 0.0))
+        getattr(self, "rotationSpinBox_ns").setValue(getattr(pg, 'rotation_ns', 0.0))
 
-        self.form.numHolesSpinBox_s.setValue(getattr(pg, 'num_holes_s', 1))
-        self.form.holeWidthSpinBox_s.setValue(getattr(pg, 'hole_width_s', 0.2))
-        self.form.holeHeightSpinBox_s.setValue(getattr(pg, 'hole_height_s', 0.5))
-        self.form.verticalShiftSpinBox_s.setValue(getattr(pg, 'vertical_shift_s', 0.0))
-        self.form.rotationSpinBox_s.setValue(getattr(pg, 'rotation_s', 0.0))
+        getattr(self, "numHolesSpinBox_s").setValue(getattr(pg, 'num_holes_s', 1))
+        getattr(self, "holeWidthSpinBox_s").setValue(getattr(pg, 'hole_width_s', 0.2))
+        getattr(self, "holeHeightSpinBox_s").setValue(getattr(pg, 'hole_height_s', 0.5))
+        getattr(self, "verticalShiftSpinBox_s").setValue(getattr(pg, 'vertical_shift_s', 0.0))
+        getattr(self, "rotationSpinBox_s").setValue(getattr(pg, 'rotation_s', 0.0))
 
     def update_data_and_preview(self, *args):
         pg = self.parametric_glider
-        pg.num_holes_ns = self.form.numHolesSpinBox_ns.value()
-        pg.hole_width_ns = self.form.holeWidthSpinBox_ns.value()
-        pg.hole_height_ns = self.form.holeHeightSpinBox_ns.value()
-        pg.vertical_shift_ns = self.form.verticalShiftSpinBox_ns.value()
-        pg.rotation_ns = self.form.rotationSpinBox_ns.value()
+        pg.num_holes_ns = getattr(self, "numHolesSpinBox_ns").value()
+        pg.hole_width_ns = getattr(self, "holeWidthSpinBox_ns").value()
+        pg.hole_height_ns = getattr(self, "holeHeightSpinBox_ns").value()
+        pg.vertical_shift_ns = getattr(self, "verticalShiftSpinBox_ns").value()
+        pg.rotation_ns = getattr(self, "rotationSpinBox_ns").value()
 
-        pg.num_holes_s = self.form.numHolesSpinBox_s.value()
-        pg.hole_width_s = self.form.holeWidthSpinBox_s.value()
-        pg.hole_height_s = self.form.holeHeightSpinBox_s.value()
-        pg.vertical_shift_s = self.form.verticalShiftSpinBox_s.value()
-        pg.rotation_s = self.form.rotationSpinBox_s.value()
+        pg.num_holes_s = getattr(self, "numHolesSpinBox_s").value()
+        pg.hole_width_s = getattr(self, "holeWidthSpinBox_s").value()
+        pg.hole_height_s = getattr(self, "holeHeightSpinBox_s").value()
+        pg.vertical_shift_s = getattr(self, "verticalShiftSpinBox_s").value()
+        pg.rotation_s = getattr(self, "rotationSpinBox_s").value()
 
         self.update_preview()
 
