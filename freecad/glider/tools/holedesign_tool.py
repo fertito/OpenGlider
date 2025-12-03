@@ -52,8 +52,7 @@ class HoleDesignTool(BaseTool):
         rib = self.get_representative_rib(suspended=is_suspended)
         if not rib: return
 
-        profile_points = list(rib.profile_2d.data)
-        self.preview_root.addChild(Line_old(profile_points + [profile_points[0]], width=2).object)
+        self.preview_root.addChild(Line_old(rib.profile_2d.data, width=2, closed=True).object)
 
         params = self.get_params_from_tab(is_suspended)
 
@@ -74,8 +73,7 @@ class HoleDesignTool(BaseTool):
             ellipse_poly = ellipse_poly.dot(rot_matrix)
             ellipse_poly += hole_center
 
-            ellipse_points_closed = list(ellipse_poly)
-            self.preview_root.addChild(Line_old(ellipse_points_closed + [ellipse_points_closed[0]], color='blue').object)
+            self.preview_root.addChild(Line_old(ellipse_poly, closed=True, color='blue').object)
 
         self.view.draw()
 
