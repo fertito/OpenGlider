@@ -228,13 +228,14 @@ class AttachmentPoint(Node):
 
 
 class RibHole(object):
-    def __init__(self, pos, size=0.5, vertical_shift=0.0, rotation=0.0):
+    def __init__(self, pos, size=0.5, vertical_shift=0.0, rotation=0.0, shape='ellipse'):
         self.pos = pos
         if isinstance(size, (list, tuple)):
             size = np.array(list(size))
         self.size = size
         self.vertical_shift = vertical_shift
         self.rotation = rotation  # rotation about p1
+        self.shape = shape
 
     def get_3d(self, rib, num=20):
         hole = self.get_points(rib, num=num)
@@ -248,13 +249,16 @@ class RibHole(object):
         # return Polygon(p1, p2, num=num, scale=self.size, is_center=False)[0]
 
     def get_points(self, rib, num=80):
+        if self.shape == 'ellipse':
+            phi = np.linspace(0, np.pi * 2, num + 1)
+            points = np.array([np.cos(phi), np.sin(phi)]).T
+        else: # rounded rectangle
+            points = self.create_rounded_rectangle(num)
+
         prof = rib.profile_2d
         p1 = prof[prof(self.pos)]
         p2 = prof[prof(-self.pos)]
 
-        phi = np.linspace(0, np.pi * 2, num + 1)
-        points = np.array([np.cos(phi), np.sin(phi)]).T
-        # delta = (p2 - p1) / 2 * self.vertical_shift + (p1 + p2) / 2
         move_1 = Translation(p1)
         move_2 = Translation((p2 - p1) / 2 * (1 + self.vertical_shift))
         rot = Rotation(self.rotation)
@@ -262,6 +266,29 @@ class RibHole(object):
         points = (scale * move_2 * rot * move_1).apply(points)
 
         return PolyLine2D(points, name=f"{rib.name}-hole")
+
+    def create_rounded_rectangle(self, num, radius_ratio=0.25):
+        # Create a rounded rectangle with width and height of 1
+        radius = min(self.size) * radius_ratio
+        w = 0.5 - radius
+        h = 0.5 - radius
+
+        points = []
+        num_corner = num // 4
+        # Top right corner
+        for angle in np.linspace(0, np.pi/2, num_corner):
+            points.append((w + radius * np.cos(angle), h + radius * np.sin(angle)))
+        # Top left corner
+        for angle in np.linspace(np.pi/2, np.pi, num_corner):
+            points.append((-w + radius * np.cos(angle), h + radius * np.sin(angle)))
+        # Bottom left corner
+        for angle in np.linspace(np.pi, 3*np.pi/2, num_corner):
+            points.append((-w + radius * np.cos(angle), -h + radius * np.sin(angle)))
+        # Bottom right corner
+        for angle in np.linspace(3*np.pi/2, 2*np.pi, num_corner):
+            points.append((w + radius * np.cos(angle), -h + radius * np.sin(angle)))
+
+        return np.array(points)
 
     def get_center(self, rib, scale=True):
         prof = rib.profile_2d
@@ -281,6 +308,7 @@ class RibHole(object):
             "size": self.size,
             "vertical_shift": self.vertical_shift,
             "rotation": self.rotation,
+            "shape": self.shape,
         }
 
 
