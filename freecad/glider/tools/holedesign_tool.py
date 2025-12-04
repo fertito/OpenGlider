@@ -14,6 +14,7 @@ class HoleDesignTool(BaseTool):
 
         # UI Elements with parent widget specified
         self.ribTypeComboBox = QtGui.QComboBox(self.base_widget)
+        self.holeShapeComboBox = QtGui.QComboBox(self.base_widget)
         self.numHolesSpinBox = QtGui.QSpinBox(self.base_widget)
         self.holeWidthSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.holeHeightSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
@@ -28,9 +29,11 @@ class HoleDesignTool(BaseTool):
     def setup_widget(self):
         # Add items to combo box
         self.ribTypeComboBox.addItems(["Non-Suspended", "Suspended"])
+        self.holeShapeComboBox.addItems(["Ellipse", "Rounded Rectangle"])
 
         # Add widgets to the QFormLayout provided by BaseTool
         self.layout.addRow("Rib Type", self.ribTypeComboBox)
+        self.layout.addRow("Hole Shape", self.holeShapeComboBox)
         self.layout.addRow("Number of Holes", self.numHolesSpinBox)
         self.layout.addRow("Hole Width (%)", self.holeWidthSpinBox)
         self.layout.addRow("Hole Height (%)", self.holeHeightSpinBox)
@@ -58,6 +61,7 @@ class HoleDesignTool(BaseTool):
 
         # Connections
         self.ribTypeComboBox.currentIndexChanged.connect(self.on_rib_type_change)
+        self.holeShapeComboBox.currentIndexChanged.connect(self.update_glider_data_and_preview)
         self.numHolesSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
         self.holeWidthSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
         self.holeHeightSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
@@ -140,20 +144,45 @@ class HoleDesignTool(BaseTool):
             camber_point = rib.profile_2d.profilepoint(pos_x, 0.0)
             hole_center = np.array([camber_point[0], camber_point[1] + vertical_shift])
 
-            ellipse_points = []
-            for angle in np.linspace(0, 2 * np.pi, 50):
-                x = hole_width / 2 * np.cos(angle)
-                y = hole_height / 2 * np.sin(angle)
-                ellipse_points.append([x, y])
+            hole_shape_index = self.holeShapeComboBox.currentIndex()
+            if hole_shape_index == 0: # Ellipse
+                shape_points = []
+                for angle in np.linspace(0, 2 * np.pi, 50):
+                    x = hole_width / 2 * np.cos(angle)
+                    y = hole_height / 2 * np.sin(angle)
+                    shape_points.append([x, y])
+            else: # Rounded Rectangle
+                shape_points = self.create_rounded_rectangle(hole_width, hole_height)
 
-            ellipse_poly = np.array(ellipse_points)
+            shape_poly = np.array(shape_points)
             rot_matrix = np.array([[np.cos(np.deg2rad(rotation)), -np.sin(np.deg2rad(rotation))],
                                    [np.sin(np.deg2rad(rotation)), np.cos(np.deg2rad(rotation))]])
-            ellipse_poly = ellipse_poly.dot(rot_matrix)
-            ellipse_poly += hole_center
+            shape_poly = shape_poly.dot(rot_matrix)
+            shape_poly += hole_center
 
-            ellipse_points_closed = list(ellipse_poly)
-            self.preview_root.addChild(Line_old(ellipse_points_closed + [ellipse_points_closed[0]], color='blue').object)
+            shape_points_closed = list(shape_poly)
+            self.preview_root.addChild(Line_old(shape_points_closed + [shape_points_closed[0]], color='blue').object)
+
+    def create_rounded_rectangle(self, width, height, radius_ratio=0.25):
+        radius = min(width, height) * radius_ratio
+        w = width / 2 - radius
+        h = height / 2 - radius
+
+        points = []
+        # Top right corner
+        for angle in np.linspace(0, np.pi/2, 10):
+            points.append((w + radius * np.cos(angle), h + radius * np.sin(angle)))
+        # Top left corner
+        for angle in np.linspace(np.pi/2, np.pi, 10):
+            points.append((-w + radius * np.cos(angle), h + radius * np.sin(angle)))
+        # Bottom left corner
+        for angle in np.linspace(np.pi, 3*np.pi/2, 10):
+            points.append((-w + radius * np.cos(angle), -h + radius * np.sin(angle)))
+        # Bottom right corner
+        for angle in np.linspace(3*np.pi/2, 2*np.pi, 10):
+            points.append((w + radius * np.cos(angle), -h + radius * np.sin(angle)))
+
+        return points
 
     def update_form_from_glider_data(self):
         pg = self.parametric_glider
@@ -162,17 +191,18 @@ class HoleDesignTool(BaseTool):
         suffix = "_s" if is_suspended else "_ns"
 
         # Block signals to prevent feedback loops
-        for widget in [self.numHolesSpinBox, self.holeWidthSpinBox, self.holeHeightSpinBox, self.verticalShiftSpinBox, self.rotationSpinBox]:
+        for widget in [self.holeShapeComboBox, self.numHolesSpinBox, self.holeWidthSpinBox, self.holeHeightSpinBox, self.verticalShiftSpinBox, self.rotationSpinBox]:
             widget.blockSignals(True)
 
-        self.numHolesSpinBox.setValue(getattr(pg, f'num_holes{suffix}', 3 if not is_suspended else 1))
-        self.holeWidthSpinBox.setValue(getattr(pg, f'hole_width{suffix}', 0.1))
-        self.holeHeightSpinBox.setValue(getattr(pg, f'hole_height{suffix}', 0.05))
+        self.holeShapeComboBox.setCurrentIndex(getattr(pg, f'hole_shape{suffix}', 0))
+        self.numHolesSpinBox.setValue(getattr(pg, f'num_holes{suffix}', 30))
+        self.holeWidthSpinBox.setValue(getattr(pg, f'hole_width{suffix}', 0.003))
+        self.holeHeightSpinBox.setValue(getattr(pg, f'hole_height{suffix}', 0.8))
         self.verticalShiftSpinBox.setValue(getattr(pg, f'vertical_shift{suffix}', 0.0))
         self.rotationSpinBox.setValue(getattr(pg, f'rotation{suffix}', 0.0))
 
         # Unblock signals
-        for widget in [self.numHolesSpinBox, self.holeWidthSpinBox, self.holeHeightSpinBox, self.verticalShiftSpinBox, self.rotationSpinBox]:
+        for widget in [self.holeShapeComboBox, self.numHolesSpinBox, self.holeWidthSpinBox, self.holeHeightSpinBox, self.verticalShiftSpinBox, self.rotationSpinBox]:
             widget.blockSignals(False)
 
     def update_glider_data_and_preview(self, *args, switch=False):
@@ -186,6 +216,7 @@ class HoleDesignTool(BaseTool):
 
         suffix = "_s" if is_suspended else "_ns"
 
+        setattr(pg, f'hole_shape{suffix}', self.holeShapeComboBox.currentIndex())
         setattr(pg, f'num_holes{suffix}', self.numHolesSpinBox.value())
         setattr(pg, f'hole_width{suffix}', self.holeWidthSpinBox.value())
         setattr(pg, f'hole_height{suffix}', self.holeHeightSpinBox.value())

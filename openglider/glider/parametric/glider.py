@@ -63,14 +63,17 @@ class ParametricGlider(object):
 
         # Hole properties
         self.holes = True
-        self.num_holes_ns = 3
-        self.hole_height_ns = 0.07
-        self.hole_width_ns = 0.1
+        self.hole_shape_ns = 0  # Default to Ellipse
+        self.num_holes_ns = 30
+        self.hole_width_ns = 0.003
+        self.hole_height_ns = 0.8
         self.vertical_shift_ns = 0.0
         self.rotation_ns = 0.0
-        self.num_holes_s = 1
-        self.hole_height_s = 0.05
-        self.hole_width_s = 0.08
+
+        self.hole_shape_s = 0  # Default to Ellipse
+        self.num_holes_s = 30
+        self.hole_width_s = 0.003
+        self.hole_height_s = 0.8
         self.vertical_shift_s = 0.0
         self.rotation_s = 0.0
         self.max_hole_pos = 0.8
@@ -86,20 +89,30 @@ class ParametricGlider(object):
             is_suspended = rib in suspended_ribs
 
             if is_suspended:
-                num_holes, hole_width_factor, hole_height_factor, vertical_shift_factor, rotation = (
-                    self.num_holes_s, self.hole_width_s, self.hole_height_s, self.vertical_shift_s, self.rotation_s
+                shape_idx, num_holes, w_factor, h_factor, v_shift_factor, rotation = (
+                    getattr(self, 'hole_shape_s', 0), self.num_holes_s, self.hole_width_s,
+                    self.hole_height_s, self.vertical_shift_s, self.rotation_s
                 )
             else:
-                num_holes, hole_width_factor, hole_height_factor, vertical_shift_factor, rotation = (
-                    self.num_holes_ns, self.hole_width_ns, self.hole_height_ns, self.vertical_shift_ns, self.rotation_ns
+                shape_idx, num_holes, w_factor, h_factor, v_shift_factor, rotation = (
+                    getattr(self, 'hole_shape_ns', 0), self.num_holes_ns, self.hole_width_ns,
+                    self.hole_height_ns, self.vertical_shift_ns, self.rotation_ns
                 )
 
-            hole_width = hole_width_factor * rib.chord
-            hole_height = hole_height_factor * rib.chord
-            vertical_shift = vertical_shift_factor * rib.chord
+            hole_shape = 'ellipse' if shape_idx == 0 else 'rounded_rectangle'
 
             for i in range(num_holes):
                 pos_x = (i + 1.0) / (num_holes + 1.0)
+
+                # Calculate local thickness for hole height
+                upper = rib.profile_2d.profilepoint(-pos_x)
+                lower = rib.profile_2d.profilepoint(pos_x)
+                local_thickness = upper[1] - lower[1]
+
+                hole_width = w_factor * rib.chord
+                hole_height = h_factor * local_thickness
+                vertical_shift = v_shift_factor * rib.chord
+
                 if self.min_hole_pos < pos_x < self.max_hole_pos:
                     rib.holes.append(
                         RibHole(
@@ -107,6 +120,7 @@ class ParametricGlider(object):
                             size=np.array([hole_width, hole_height]),
                             vertical_shift=vertical_shift,
                             rotation=rotation,
+                            shape=hole_shape
                         )
                     )
 
