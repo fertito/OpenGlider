@@ -18,6 +18,7 @@ from openglider.glider.parametric.fitglider import fit_glider_3d
 from openglider.utils.distribution import Distribution
 from openglider.utils.table import Table
 from openglider.utils import ZipCmp
+from openglider.utils.geometry import is_inside_triangle
 
 
 class ParametricGlider(object):
@@ -79,11 +80,17 @@ class ParametricGlider(object):
         self.max_hole_pos = 0.8
         self.min_hole_pos = 0.2
 
+        # No-hole zone parameters for suspended ribs
+        self.hole_free_base_width_s = 0.1  # 10% of chord
+        self.hole_free_angle_s = 30.0  # degrees
+
     def apply_holes(self, glider):
         if not self.holes:
             return
 
         suspended_ribs = {att.rib for att in glider.lineset.attachment_points if hasattr(att, 'rib')}
+
+        NO_HOLE_ZONE_BASE_CHORD_FRACTION = 0.05
 
         for rib in glider.ribs:
             is_suspended = rib in suspended_ribs
@@ -93,36 +100,118 @@ class ParametricGlider(object):
                     getattr(self, 'hole_shape_s', 0), self.num_holes_s, self.hole_width_s,
                     self.hole_height_s, self.vertical_shift_s, self.rotation_s
                 )
+                no_hole_zones = []
+                attachment_points = glider.get_rib_attachment_points(rib)
+                for ap in attachment_points:
+                    # Point on the lower surface (intrados)
+                    v1 = rib.profile_2d.align([ap.rib_pos, -1.0])
+
+                    # Calculate the other two vertices of the triangle
+                    base_half_width = self.hole_free_base_width_s * rib.chord / 2.0
+                    triangle_height = base_half_width / np.tan(np.deg2rad(self.hole_free_angle_s))
+
+                    # Find the direction vector from lower to upper surface
+                    upper_point = rib.profile_2d.align([ap.rib_pos, 1.0])
+                    direction_vec = upper_point - v1
+                    norm_direction_vec = np.linalg.norm(direction_vec)
+                    if norm_direction_vec > 1e-9:
+                        direction_vec /= norm_direction_vec
+                    else:
+                        direction_vec = np.array([0, 1]) # Default to vertical
+
+                    # Apex point of the triangle
+                    apex = v1 + direction_vec * triangle_height
+
+                    # Base vertices
+                    # Get a vector perpendicular to the direction vector in the 2D plane
+                    perp_vec = np.array([-direction_vec[1], direction_vec[0]])
+                    v2 = apex + perp_vec * base_half_width
+                    v3 = apex - perp_vec * base_half_width
+
+                    no_hole_zones.append((v1, v2, v3))
             else:
                 shape_idx, num_holes, w_factor, h_factor, v_shift_factor, rotation = (
                     getattr(self, 'hole_shape_ns', 0), self.num_holes_ns, self.hole_width_ns,
                     self.hole_height_ns, self.vertical_shift_ns, self.rotation_ns
                 )
+                no_hole_zones = []
 
             hole_shape = 'ellipse' if shape_idx == 0 else 'rounded_rectangle'
 
-            for i in range(num_holes):
-                pos_x = (i + 1.0) / (num_holes + 1.0)
+            # Define the initial allowable range for holes
+            allowed_ranges = [(self.min_hole_pos, self.max_hole_pos)]
 
-                # Calculate local thickness for hole height
-                upper = rib.profile_2d.profilepoint(-pos_x)
-                lower = rib.profile_2d.profilepoint(pos_x)
-                local_thickness = upper[1] - lower[1]
+            if is_suspended:
+                # For suspended ribs, subtract the no-hole zones from the allowable ranges
 
-                hole_width = w_factor * rib.chord
-                hole_height = h_factor * local_thickness
-                vertical_shift = v_shift_factor * rib.chord
+                # First, determine the x-range occupied by each triangular no-hole zone
+                zone_x_ranges = []
+                for v1, v2, v3 in no_hole_zones:
+                    min_x = min(v1[0], v2[0], v3[0])
+                    max_x = max(v1[0], v2[0], v3[0])
+                    zone_x_ranges.append((min_x, max_x))
 
-                if self.min_hole_pos < pos_x < self.max_hole_pos:
+                # Sort zones by their starting x-position
+                zone_x_ranges.sort()
+
+                new_allowed_ranges = []
+                for allowed_start, allowed_end in allowed_ranges:
+                    current_pos = allowed_start
+                    for zone_start, zone_end in zone_x_ranges:
+                        if current_pos < zone_start:
+                            new_allowed_ranges.append((current_pos, zone_start))
+                        current_pos = max(current_pos, zone_end)
+                    if current_pos < allowed_end:
+                        new_allowed_ranges.append((current_pos, allowed_end))
+                allowed_ranges = new_allowed_ranges
+
+            # Calculate the total length of all allowable ranges
+            total_allowable_length = sum(end - start for start, end in allowed_ranges)
+
+            if total_allowable_length <= 0:
+                continue
+
+            # Distribute holes evenly across the allowable ranges
+            num_placed_holes = 0
+            for start, end in allowed_ranges:
+                range_length = end - start
+                range_ratio = range_length / total_allowable_length
+                num_holes_in_range = round(num_holes * range_ratio)
+
+                if num_holes_in_range == 0:
+                    continue
+
+                for i in range(num_holes_in_range):
+                    pos_x = start + (i + 1.0) * (range_length / (num_holes_in_range + 1))
+
+                    # Calculate local thickness for hole height
+                    upper = rib.profile_2d.profilepoint(-pos_x)
+                    lower = rib.profile_2d.profilepoint(pos_x)
+                    local_thickness = upper[1] - lower[1]
+
+                    if local_thickness < 1e-6:
+                        continue
+
+                    # Final check to ensure the hole center is not inside the triangle
+                    hole_center = lower + (upper - lower) / 2 * (1 + v_shift_factor)
+                    if is_suspended and any(is_inside_triangle(hole_center, *zone) for zone in no_hole_zones):
+                        continue
+
+                    # Corrected size calculation for RibHole
+                    width_param = (w_factor * rib.chord) / local_thickness
+                    height_param = h_factor
+                    hole_size = np.array([width_param, height_param])
+
                     rib.holes.append(
                         RibHole(
                             pos_x,
-                            size=np.array([hole_width, hole_height]),
-                            vertical_shift=vertical_shift,
+                            size=hole_size,
+                            vertical_shift=v_shift_factor,
                             rotation=rotation,
                             shape=hole_shape
                         )
                     )
+                    num_placed_holes += 1
 
     def __json__(self):
         return {
