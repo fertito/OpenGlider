@@ -2,6 +2,7 @@ from .tools import BaseTool, Line_old
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui
 from openglider.glider.rib import RibHole
+from openglider.utils.geometry import is_inside_triangle
 import numpy as np
 from pivy import coin
 import os
@@ -97,29 +98,37 @@ class HoleDesignTool(BaseTool):
         if not rib: return
 
         profile_points = list(rib.profile_2d.data)
-        # Manually close the polygon by appending the start point
         self.preview_root.addChild(Line_old(profile_points + [profile_points[0]], width=2).object)
 
-        # Draw attachment points only for suspended ribs
+        no_hole_zones = []
         if is_suspended:
             glider_instance = self.obj.Proxy.getGliderInstance()
             attachment_points = glider_instance.get_rib_attachment_points(rib)
             for ap in attachment_points:
-                # Align on the bottom surface (intrados)
-                point_2d = rib.profile_2d.align([ap.rib_pos, -1.0])
-
-                marker_sep = coin.SoSeparator()
-                translation = coin.SoTranslation()
-                translation.translation.setValue(point_2d[0], point_2d[1], 0)
-                color = coin.SoMaterial()
-                color.diffuseColor.setValue(1, 0, 0) # Red
+                # Visualize attachment point
+                ap_pos_on_surface = rib.profile_2d.align([ap.rib_pos, -1.0])
+                marker = coin.SoSeparator()
+                trans = coin.SoTranslation()
+                trans.translation.setValue(ap_pos_on_surface[0], ap_pos_on_surface[1], 0)
+                mat = coin.SoMaterial()
+                mat.diffuseColor.setValue(1, 0, 0) # Red
                 sphere = coin.SoSphere()
-                sphere.radius = 0.005 # Small radius for the marker
+                sphere.radius = 0.005
+                marker.addChild(trans)
+                marker.addChild(mat)
+                marker.addChild(sphere)
+                self.preview_root.addChild(marker)
 
-                marker_sep.addChild(translation)
-                marker_sep.addChild(color)
-                marker_sep.addChild(sphere)
-                self.preview_root.addChild(marker_sep)
+                # Define and draw no-hole zones
+                v1 = ap_pos_on_surface
+                base_half_width = 0.05 * rib.chord
+                # Use align to find points on the upper surface
+                v2 = rib.profile_2d.align([ap.rib_pos - base_half_width / rib.chord, 1.0])
+                v3 = rib.profile_2d.align([ap.rib_pos + base_half_width / rib.chord, 1.0])
+                no_hole_zones.append((v1, v2, v3))
+
+                zone_points = [v1, v2, v3, v1] # Closed loop for visualization
+                self.preview_root.addChild(Line_old(zone_points, color='red', width=1, style='dashed').object)
 
         # Get current parameters from the UI
         num_holes = self.numHolesSpinBox.value()
@@ -127,24 +136,25 @@ class HoleDesignTool(BaseTool):
         hole_height_perc = self.holeHeightSpinBox.value()
         vertical_shift_perc = self.verticalShiftSpinBox.value()
         rotation = self.rotationSpinBox.value()
-
-        # Calculate dimensions that are constant for all holes
-        hole_width = hole_width_perc * rib.chord
-        vertical_shift = vertical_shift_perc * rib.chord
+        hole_shape_index = self.holeShapeComboBox.currentIndex()
 
         for i in range(num_holes):
             pos_x = (i + 1.0) / (num_holes + 1.0)
 
-            # Calculate local thickness to determine hole height
             upper_point = rib.profile_2d.profilepoint(-pos_x)
             lower_point = rib.profile_2d.profilepoint(pos_x)
             local_thickness = upper_point[1] - lower_point[1]
+
+            if local_thickness < 1e-6: continue
+
+            hole_center = lower_point + (upper_point - lower_point) / 2 * (1 + vertical_shift_perc)
+
+            if is_suspended and any(is_inside_triangle(hole_center, *zone) for zone in no_hole_zones):
+                continue
+
+            hole_width = hole_width_perc * rib.chord
             hole_height = hole_height_perc * local_thickness
 
-            camber_point = rib.profile_2d.profilepoint(pos_x, 0.0)
-            hole_center = np.array([camber_point[0], camber_point[1] + vertical_shift])
-
-            hole_shape_index = self.holeShapeComboBox.currentIndex()
             if hole_shape_index == 0: # Ellipse
                 shape_points = []
                 for angle in np.linspace(0, 2 * np.pi, 50):

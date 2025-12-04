@@ -18,6 +18,7 @@ from openglider.glider.parametric.fitglider import fit_glider_3d
 from openglider.utils.distribution import Distribution
 from openglider.utils.table import Table
 from openglider.utils import ZipCmp
+from openglider.utils.geometry import is_inside_triangle
 
 
 class ParametricGlider(object):
@@ -85,6 +86,8 @@ class ParametricGlider(object):
 
         suspended_ribs = {att.rib for att in glider.lineset.attachment_points if hasattr(att, 'rib')}
 
+        NO_HOLE_ZONE_BASE_CHORD_FRACTION = 0.05
+
         for rib in glider.ribs:
             is_suspended = rib in suspended_ribs
 
@@ -93,36 +96,58 @@ class ParametricGlider(object):
                     getattr(self, 'hole_shape_s', 0), self.num_holes_s, self.hole_width_s,
                     self.hole_height_s, self.vertical_shift_s, self.rotation_s
                 )
+                no_hole_zones = []
+                attachment_points = glider.get_rib_attachment_points(rib)
+                for ap in attachment_points:
+                    ap_pos = ap.rib_pos
+                    v1 = rib.profile_2d.align([ap_pos, -1.0])
+                    v2 = rib.profile_2d.align([ap_pos - NO_HOLE_ZONE_BASE_CHORD_FRACTION, 1.0])
+                    v3 = rib.profile_2d.align([ap_pos + NO_HOLE_ZONE_BASE_CHORD_FRACTION, 1.0])
+                    no_hole_zones.append((v1, v2, v3))
             else:
                 shape_idx, num_holes, w_factor, h_factor, v_shift_factor, rotation = (
                     getattr(self, 'hole_shape_ns', 0), self.num_holes_ns, self.hole_width_ns,
                     self.hole_height_ns, self.vertical_shift_ns, self.rotation_ns
                 )
+                no_hole_zones = []
 
             hole_shape = 'ellipse' if shape_idx == 0 else 'rounded_rectangle'
 
             for i in range(num_holes):
                 pos_x = (i + 1.0) / (num_holes + 1.0)
 
+                if not (self.min_hole_pos < pos_x < self.max_hole_pos):
+                    continue
+
                 # Calculate local thickness for hole height
                 upper = rib.profile_2d.profilepoint(-pos_x)
                 lower = rib.profile_2d.profilepoint(pos_x)
                 local_thickness = upper[1] - lower[1]
 
-                hole_width = w_factor * rib.chord
-                hole_height = h_factor * local_thickness
-                vertical_shift = v_shift_factor * rib.chord
+                if local_thickness < 1e-6:
+                    continue
 
-                if self.min_hole_pos < pos_x < self.max_hole_pos:
-                    rib.holes.append(
-                        RibHole(
-                            pos_x,
-                            size=np.array([hole_width, hole_height]),
-                            vertical_shift=vertical_shift,
-                            rotation=rotation,
-                            shape=hole_shape
-                        )
+                # Check if hole center is in a no-hole zone
+                if is_suspended:
+                    hole_center = lower + (upper - lower) / 2 * (1 + v_shift_factor)
+                    in_no_hole_zone = any(is_inside_triangle(hole_center, *zone) for zone in no_hole_zones)
+                    if in_no_hole_zone:
+                        continue
+
+                # Corrected size calculation for RibHole
+                width_param = (w_factor * rib.chord) / local_thickness
+                height_param = h_factor
+                hole_size = np.array([width_param, height_param])
+
+                rib.holes.append(
+                    RibHole(
+                        pos_x,
+                        size=hole_size,
+                        vertical_shift=v_shift_factor,
+                        rotation=rotation,
+                        shape=hole_shape
                     )
+                )
 
     def __json__(self):
         return {
