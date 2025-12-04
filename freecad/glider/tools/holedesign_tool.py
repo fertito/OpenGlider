@@ -96,42 +96,54 @@ class HoleDesignTool(BaseTool):
         # Manually close the polygon by appending the start point
         self.preview_root.addChild(Line_old(profile_points + [profile_points[0]], width=2).object)
 
-        # Draw attachment points
-        glider_instance = self.obj.Proxy.getGliderInstance()
-        attachment_points = glider_instance.get_rib_attachment_points(rib)
-        for ap in attachment_points:
-            # Align on the bottom surface (intrados)
-            point_2d = rib.profile_2d.align([ap.rib_pos, -1.0])
+        # Draw attachment points only for suspended ribs
+        if is_suspended:
+            glider_instance = self.obj.Proxy.getGliderInstance()
+            attachment_points = glider_instance.get_rib_attachment_points(rib)
+            for ap in attachment_points:
+                # Align on the bottom surface (intrados)
+                point_2d = rib.profile_2d.align([ap.rib_pos, -1.0])
 
-            marker_sep = coin.SoSeparator()
-            translation = coin.SoTranslation()
-            translation.translation.setValue(point_2d[0], point_2d[1], 0)
-            color = coin.SoMaterial()
-            color.diffuseColor.setValue(1, 0, 0) # Red
-            sphere = coin.SoSphere()
-            sphere.radius = 0.005 # Small radius for the marker
+                marker_sep = coin.SoSeparator()
+                translation = coin.SoTranslation()
+                translation.translation.setValue(point_2d[0], point_2d[1], 0)
+                color = coin.SoMaterial()
+                color.diffuseColor.setValue(1, 0, 0) # Red
+                sphere = coin.SoSphere()
+                sphere.radius = 0.005 # Small radius for the marker
 
-            marker_sep.addChild(translation)
-            marker_sep.addChild(color)
-            marker_sep.addChild(sphere)
-            self.preview_root.addChild(marker_sep)
+                marker_sep.addChild(translation)
+                marker_sep.addChild(color)
+                marker_sep.addChild(sphere)
+                self.preview_root.addChild(marker_sep)
 
         # Get current parameters from the UI
         num_holes = self.numHolesSpinBox.value()
-        hole_width = self.holeWidthSpinBox.value() * rib.chord
-        hole_height = self.holeHeightSpinBox.value() * rib.chord
-        vertical_shift = self.verticalShiftSpinBox.value() * rib.chord
+        hole_width_perc = self.holeWidthSpinBox.value()
+        hole_height_perc = self.holeHeightSpinBox.value()
+        vertical_shift_perc = self.verticalShiftSpinBox.value()
         rotation = self.rotationSpinBox.value()
+
+        # Calculate dimensions that are constant for all holes
+        hole_width = hole_width_perc * rib.chord
+        vertical_shift = vertical_shift_perc * rib.chord
 
         for i in range(num_holes):
             pos_x = (i + 1.0) / (num_holes + 1.0)
+
+            # Calculate local thickness to determine hole height
+            upper_point = rib.profile_2d.profilepoint(-pos_x)
+            lower_point = rib.profile_2d.profilepoint(pos_x)
+            local_thickness = upper_point[1] - lower_point[1]
+            hole_height = hole_height_perc * local_thickness
+
             camber_point = rib.profile_2d.profilepoint(pos_x, 0.0)
             hole_center = np.array([camber_point[0], camber_point[1] + vertical_shift])
 
             ellipse_points = []
             for angle in np.linspace(0, 2 * np.pi, 50):
-                x = hole_width/2 * np.cos(angle)
-                y = hole_height/2 * np.sin(angle)
+                x = hole_width / 2 * np.cos(angle)
+                y = hole_height / 2 * np.sin(angle)
                 ellipse_points.append([x, y])
 
             ellipse_poly = np.array(ellipse_points)
