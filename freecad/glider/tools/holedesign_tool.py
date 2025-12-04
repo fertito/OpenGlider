@@ -300,6 +300,10 @@ class HoleDesignTool(BaseTool):
             pg.vertical_shift_ns = self.verticalShiftSpinBox.value()
             pg.rotation_ns = self.rotationSpinBox.value()
 
+        if is_suspended:
+            pg.hole_free_base_width_s = self.noHoleBaseWidthSpinBox.value()
+            pg.hole_free_angle_s = self.noHoleAngleSpinBox.value()
+
         self.update_preview()
 
     def accept(self):
