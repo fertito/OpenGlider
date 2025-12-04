@@ -5,12 +5,16 @@ from openglider.glider.rib import RibHole
 import numpy as np
 from pivy import coin
 import os
+import FreeCAD
 
 class HoleDesignTool(BaseTool):
     widget_name = "Hole Design"
 
     def __init__(self, obj):
+        FreeCAD.Console.PrintMessage("--- HoleDesignTool: __init__ started ---\\n")
         super(HoleDesignTool, self).__init__(obj)
+        FreeCAD.Console.PrintMessage(f"BaseTool init complete. self.base_widget: {self.base_widget}, self.layout: {self.layout}\\n")
+        FreeCAD.Console.PrintMessage(f"Initial self.form from BaseTool: {self.form}\\n")
 
         # UI Elements with parent widget specified
         self.ribTypeComboBox = QtGui.QComboBox(self.base_widget)
@@ -20,12 +24,19 @@ class HoleDesignTool(BaseTool):
         self.verticalShiftSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.rotationSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.applyButton = QtGui.QPushButton("Apply", self.base_widget)
+        FreeCAD.Console.PrintMessage("UI widgets created.\\n")
 
         self.preview_root = coin.SoSeparator()
         self.setup_widget()
+        FreeCAD.Console.PrintMessage("setup_widget complete.\\n")
         self.setup_pivy()
+        FreeCAD.Console.PrintMessage("setup_pivy complete.\\n")
+        FreeCAD.Console.PrintMessage(f"Final self.form before exiting __init__: {self.form}\\n")
+        FreeCAD.Console.PrintMessage("--- HoleDesignTool: __init__ finished ---\\n")
+
 
     def setup_widget(self):
+        FreeCAD.Console.PrintMessage("--- setup_widget started ---\\n")
         # Add items to combo box
         self.ribTypeComboBox.addItems(["Non-Suspended", "Suspended"])
 
@@ -42,6 +53,7 @@ class HoleDesignTool(BaseTool):
         button_layout.addStretch()
         button_layout.addWidget(self.applyButton)
         self.layout.addRow(button_layout)
+        FreeCAD.Console.PrintMessage("Widgets added to layout.\\n")
 
         # Configure spinboxes
         for spinbox in [self.holeWidthSpinBox, self.holeHeightSpinBox, self.verticalShiftSpinBox]:
@@ -64,6 +76,8 @@ class HoleDesignTool(BaseTool):
         self.verticalShiftSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
         self.rotationSpinBox.valueChanged.connect(self.update_glider_data_and_preview)
         self.applyButton.clicked.connect(self.accept)
+        FreeCAD.Console.PrintMessage(f"self.form in setup_widget: {self.form}\\n")
+        FreeCAD.Console.PrintMessage("--- setup_widget finished ---\\n")
 
     def setup_pivy(self):
         self.task_separator.addChild(self.preview_root)
