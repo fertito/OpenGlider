@@ -64,13 +64,13 @@ class ParametricGlider(object):
         # Hole properties
         self.holes = True
         self.num_holes_ns = 3
-        self.hole_height_ns = 0.7
-        self.hole_width_ns = 0.3
+        self.hole_height_ns = 0.07
+        self.hole_width_ns = 0.1
         self.vertical_shift_ns = 0.0
         self.rotation_ns = 0.0
         self.num_holes_s = 1
-        self.hole_height_s = 0.5
-        self.hole_width_s = 0.2
+        self.hole_height_s = 0.05
+        self.hole_width_s = 0.08
         self.vertical_shift_s = 0.0
         self.rotation_s = 0.0
         self.max_hole_pos = 0.8
