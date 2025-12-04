@@ -180,7 +180,7 @@ class HoleDesignTool(BaseTool):
                 no_hole_zones.append((v1, v2, v3))
 
                 zone_points = [v1, v2, v3, v1] # Closed loop for visualization
-                self.preview_root.addChild(Line_old(zone_points, color='red', width=1, style='dashed').object)
+                self.preview_root.addChild(Line_old(zone_points, color='red', width=1).object)
 
         # Get current parameters from the UI
         num_holes = self.numHolesSpinBox.value()
@@ -278,20 +278,27 @@ class HoleDesignTool(BaseTool):
     def update_glider_data_and_preview(self, *args, switch=False):
         pg = self.parametric_glider
 
-        # When switching tabs, we need to know which set of data to save.
-        # The index gives the *new* tab, so we save to the *opposite* of the current one if switching.
+        # Determine which tab's data to save
         current_idx = self.ribTypeComboBox.currentIndex()
         is_suspended = (current_idx == 1 and not switch) or \
                        (current_idx == 0 and switch)
 
-        suffix = "_s" if is_suspended else "_ns"
-
-        setattr(pg, f'hole_shape{suffix}', self.holeShapeComboBox.currentIndex())
-        setattr(pg, f'num_holes{suffix}', self.numHolesSpinBox.value())
-        setattr(pg, f'hole_width{suffix}', self.holeWidthSpinBox.value())
-        setattr(pg, f'hole_height{suffix}', self.holeHeightSpinBox.value())
-        setattr(pg, f'vertical_shift{suffix}', self.verticalShiftSpinBox.value())
-        setattr(pg, f'rotation{suffix}', self.rotationSpinBox.value())
+        if is_suspended:
+            pg.hole_shape_s = self.holeShapeComboBox.currentIndex()
+            pg.num_holes_s = self.numHolesSpinBox.value()
+            pg.hole_width_s = self.holeWidthSpinBox.value()
+            pg.hole_height_s = self.holeHeightSpinBox.value()
+            pg.vertical_shift_s = self.verticalShiftSpinBox.value()
+            pg.rotation_s = self.rotationSpinBox.value()
+            pg.hole_free_base_width_s = self.noHoleBaseWidthSpinBox.value()
+            pg.hole_free_angle_s = self.noHoleAngleSpinBox.value()
+        else:
+            pg.hole_shape_ns = self.holeShapeComboBox.currentIndex()
+            pg.num_holes_ns = self.numHolesSpinBox.value()
+            pg.hole_width_ns = self.holeWidthSpinBox.value()
+            pg.hole_height_ns = self.holeHeightSpinBox.value()
+            pg.vertical_shift_ns = self.verticalShiftSpinBox.value()
+            pg.rotation_ns = self.rotationSpinBox.value()
 
         if is_suspended:
             pg.hole_free_base_width_s = self.noHoleBaseWidthSpinBox.value()
