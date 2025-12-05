@@ -91,7 +91,10 @@ class HoleDesignTool(BaseTool):
         self.applyButton.clicked.connect(self.accept)
 
         # Set initial visibility of no-hole zone controls
-        self.on_rib_type_change(self.ribTypeComboBox.currentIndex())
+        is_suspended = self.ribTypeComboBox.currentIndex() == 1
+        self.noHoleZoneLabel.setVisible(is_suspended)
+        self.noHoleAngleSpinBox.setVisible(is_suspended)
+        self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
 
     def setup_pivy(self):
         self.task_separator.addChild(self.preview_root)

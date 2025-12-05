@@ -188,7 +188,7 @@ class ParametricGlider(object):
 
                 # Corrected size calculation for RibHole
                 # RibHole expects size factors relative to the available height
-                width_param = (w_factor * rib.chord) / available_height
+                width_param = (w_factor * rib.chord) / available_height if available_height > 1e-6 else 0
                 height_param = h_factor
                 hole_size = np.array([width_param, height_param])
 
