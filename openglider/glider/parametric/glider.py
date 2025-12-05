@@ -120,8 +120,9 @@ class ParametricGlider(object):
                     # Find intersection of these lines with the upper surface (extrados)
                     extrados_poly = rib.profile_2d.get_extrados_poly()
 
-                    v2 = extrados_poly.line_intersection(v1, v1 + dir2 * rib.chord)
-                    v3 = extrados_poly.line_intersection(v1, v1 + dir3 * rib.chord)
+                    far_factor = rib.chord * 100
+                    v2 = extrados_poly.line_intersection(v1, v1 + dir2 * far_factor)
+                    v3 = extrados_poly.line_intersection(v1, v1 + dir3 * far_factor)
 
                     if v2 is not None and v3 is not None:
                         no_hole_zones.append((v1, v2, v3))
@@ -140,18 +141,49 @@ class ParametricGlider(object):
             if num_holes == 0:
                 continue
 
-            potential_positions = np.linspace(start_pos, end_pos, num_holes)
+            allowed_ranges = [(start_pos, end_pos)]
 
-            for pos_x in potential_positions:
-                upper = rib.profile_2d.profilepoint(-pos_x)
-                lower = rib.profile_2d.profilepoint(pos_x)
+            if is_suspended and no_hole_zones:
+                zone_x_ranges = []
+                nose_x = rib.profile_2d.data[rib.profile_2d.noseindex][0]
 
-                # First, check if the natural center of the hole is inside a no-hole zone
-                natural_center = (upper + lower) / 2.0
-                if is_suspended and any(is_inside_triangle(natural_center, *zone) for zone in no_hole_zones):
+                for v1, v2, v3 in no_hole_zones:
+                    min_x_abs = min(v1[0], v2[0], v3[0])
+                    max_x_abs = max(v1[0], v2[0], v3[0])
+                    min_x_perc = (min_x_abs - nose_x) / rib.chord
+                    max_x_perc = (max_x_abs - nose_x) / rib.chord
+                    zone_x_ranges.append((min_x_perc, max_x_perc))
+
+                zone_x_ranges.sort()
+
+                new_allowed_ranges = []
+                current_pos = allowed_ranges[0][0]
+                for zone_start, zone_end in zone_x_ranges:
+                    if current_pos < zone_start:
+                        new_allowed_ranges.append((current_pos, zone_start))
+                    current_pos = max(current_pos, zone_end)
+                if current_pos < allowed_ranges[0][1]:
+                    new_allowed_ranges.append((current_pos, allowed_ranges[0][1]))
+                allowed_ranges = new_allowed_ranges
+
+            total_allowable_length = sum(end - start for start, end in allowed_ranges)
+            if total_allowable_length <= 1e-6:
+                continue
+
+            for start, end in allowed_ranges:
+                range_length = end - start
+                if range_length <= 0: continue
+
+                num_holes_in_range = int(round(num_holes * (range_length / total_allowable_length)))
+                if num_holes_in_range == 0:
                     continue
 
-                local_thickness = upper[1] - lower[1]
+                potential_positions = np.linspace(start, end, num_holes_in_range)
+
+                for pos_x in potential_positions:
+                    upper = rib.profile_2d.profilepoint(-pos_x)
+                    lower = rib.profile_2d.profilepoint(pos_x)
+                    local_thickness = upper[1] - lower[1]
                 if local_thickness < 1e-6:
                     continue
 

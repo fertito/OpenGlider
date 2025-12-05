@@ -250,7 +250,7 @@ class RibHole(object):
         return PolyLine2D(points)
         # return Polygon(p1, p2, num=num, scale=self.size, is_center=False)[0]
 
-    def get_points(self, rib, num=80):
+    def get_points(self, rib, num=80, available_height=None):
         prof = rib.profile_2d
         p1 = prof[prof(self.pos)]  # Lower surface point
         p2 = prof[prof(-self.pos)] # Upper surface point
@@ -261,7 +261,10 @@ class RibHole(object):
         if local_thickness < 1e-9:
             return PolyLine2D([], name=f"{rib.name}-hole")
 
-        height_base = self.available_height if self.available_height is not None else local_thickness
+        # The caller may pass available_height directly.
+        # Prioritize the passed argument, but fall back to the instance attribute.
+        effective_ah = available_height if available_height is not None else getattr(self, 'available_height', None)
+        height_base = effective_ah if effective_ah is not None else local_thickness
 
         # Calculate final hole dimensions
         final_width = self.size[0] * height_base
