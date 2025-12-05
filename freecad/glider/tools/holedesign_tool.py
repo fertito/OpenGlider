@@ -2,6 +2,7 @@ from .tools import BaseTool, Line_old
 import FreeCADGui as Gui
 from PySide import QtCore, QtGui
 from openglider.glider.rib import RibHole
+from openglider.utils.geometry import is_inside_triangle
 import numpy as np
 from pivy import coin
 import os
