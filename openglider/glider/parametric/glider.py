@@ -145,10 +145,10 @@ class ParametricGlider(object):
             for i in range(num_holes):
                 pos_x = start + (i + 0.5) * (range_length / num_holes)
 
-                    # Calculate local thickness for hole height
-                    upper = rib.profile_2d.profilepoint(-pos_x)
-                    lower = rib.profile_2d.profilepoint(pos_x)
-                    local_thickness = upper[1] - lower[1]
+                # Calculate local thickness for hole height
+                upper = rib.profile_2d.profilepoint(-pos_x)
+                lower = rib.profile_2d.profilepoint(pos_x)
+                local_thickness = upper[1] - lower[1]
 
                 if local_thickness < 1e-6:
                     continue
@@ -168,7 +168,7 @@ class ParametricGlider(object):
                                     y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
                                     # Check if the intersection point is below the hole's natural center
                                     if y_intersect > lower[1] and is_inside_triangle(np.array([hole_center_x, y_intersect]), v1, v2, v3):
-                                         max_y_no_hole = max(max_y_no_hole, y_intersect)
+                                        max_y_no_hole = max(max_y_no_hole, y_intersect)
 
                     if max_y_no_hole > -float('inf'):
                         new_lower_bound = np.array([hole_center_x, max_y_no_hole])
