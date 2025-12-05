@@ -195,42 +195,43 @@ class ParametricGlider(object):
                     upper = rib.profile_2d.profilepoint(-pos_x)
                     lower = rib.profile_2d.profilepoint(pos_x)
                     local_thickness = upper[1] - lower[1]
-                if local_thickness < 1e-6:
-                    continue
+                    if local_thickness < 1e-6:
+                        continue
 
-                new_lower_bound = lower
-                if is_suspended:
-                    hole_center_x = (upper[0] + lower[0]) / 2.0
-                    max_y_no_hole = -float('inf')
+                    new_lower_bound = lower
+                    if is_suspended:
+                        hole_center_x = (upper[0] + lower[0]) / 2.0
+                        max_y_no_hole = -float('inf')
 
-                    for v1, v2, v3 in no_hole_zones:
-                        if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
-                            for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
-                                if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
-                                    y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
-                                    if y_intersect > lower[1]: # Check if the intersection is above the lower profile line
-                                         max_y_no_hole = max(max_y_no_hole, y_intersect)
+                        for v1, v2, v3 in no_hole_zones:
+                            if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
+                                for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
+                                    if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
+                                        y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
+                                        if y_intersect > lower[1]: # Check if the intersection is above the lower profile line
+                                             max_y_no_hole = max(max_y_no_hole, y_intersect)
 
-                    if max_y_no_hole > -float('inf'):
-                        new_lower_bound = np.array([hole_center_x, max_y_no_hole])
+                        if max_y_no_hole > -float('inf'):
+                            new_lower_bound = np.array([hole_center_x, max_y_no_hole])
 
-                available_height = upper[1] - new_lower_bound[1]
-                if available_height < 1e-4:
-                    continue
+                    available_height = upper[1] - new_lower_bound[1]
+                    if available_height < 1e-4:
+                        continue
 
-                adjusted_vertical_shift = (new_lower_bound[1] - lower[1]) / local_thickness + v_shift_factor * (available_height / local_thickness)
+                    adjusted_vertical_shift = (new_lower_bound[1] - lower[1]) / local_thickness + v_shift_factor * (available_height / local_thickness)
 
-                width_param = (w_factor * rib.chord) / available_height if available_height > 1e-6 else 0
-                height_param = h_factor
+                    width_param = (w_factor * rib.chord) / available_height if available_height > 1e-6 else 0
+                    height_param = h_factor
 
-                rib.holes.append(
-                    RibHole(
-                        pos_x,
-                        size=np.array([width_param, height_param]),
-                        vertical_shift=adjusted_vertical_shift,
-                        rotation=0.0,
-                        shape=hole_shape,
-                        available_height=available_height
+                    rib.holes.append(
+                        RibHole(
+                            pos_x,
+                            size=np.array([width_param, height_param]),
+                            vertical_shift=adjusted_vertical_shift,
+                            rotation=0.0,
+                            shape=hole_shape,
+                            available_height=available_height
+                        )
                     )
                 )
 

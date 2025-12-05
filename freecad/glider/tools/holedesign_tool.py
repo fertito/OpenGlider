@@ -256,50 +256,50 @@ class HoleDesignTool(BaseTool):
                 upper_point = rib.profile_2d.profilepoint(-pos_x)
                 lower_point = rib.profile_2d.profilepoint(pos_x)
                 local_thickness = upper_point[1] - lower_point[1]
-            if local_thickness < 1e-6:
-                continue
+                if local_thickness < 1e-6:
+                    continue
 
-            new_lower_bound = lower_point
-            if is_suspended:
-                hole_center_x = (upper_point[0] + lower_point[0]) / 2.0
-                max_y_no_hole = -float('inf')
+                new_lower_bound = lower_point
+                if is_suspended:
+                    hole_center_x = (upper_point[0] + lower_point[0]) / 2.0
+                    max_y_no_hole = -float('inf')
 
-                for v1, v2, v3 in no_hole_zones:
-                    if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
-                        for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
-                            if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
-                                y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
-                                if y_intersect > lower_point[1]:
-                                    max_y_no_hole = max(max_y_no_hole, y_intersect)
+                    for v1, v2, v3 in no_hole_zones:
+                        if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
+                            for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
+                                if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
+                                    y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
+                                    if y_intersect > lower_point[1]:
+                                        max_y_no_hole = max(max_y_no_hole, y_intersect)
 
-                if max_y_no_hole > -float('inf'):
-                    new_lower_bound = np.array([hole_center_x, max_y_no_hole])
+                    if max_y_no_hole > -float('inf'):
+                        new_lower_bound = np.array([hole_center_x, max_y_no_hole])
 
-            available_height = upper_point[1] - new_lower_bound[1]
-            if available_height < 1e-4:
-                continue
+                available_height = upper_point[1] - new_lower_bound[1]
+                if available_height < 1e-4:
+                    continue
 
-            hole_center = new_lower_bound + (upper_point - new_lower_bound) / 2 * (1 + vertical_shift_perc)
-            hole_height = hole_height_perc * available_height
-            hole_width = hole_width_perc * rib.chord
+                hole_center = new_lower_bound + (upper_point - new_lower_bound) / 2 * (1 + vertical_shift_perc)
+                hole_height = hole_height_perc * available_height
+                hole_width = hole_width_perc * rib.chord
 
-            if hole_height <= 0 or hole_width <= 0:
-                continue
+                if hole_height <= 0 or hole_width <= 0:
+                    continue
 
-            if hole_shape_index == 0: # Ellipse
-                shape_points = []
-                for angle in np.linspace(0, 2 * np.pi, 50):
-                    x = hole_width / 2 * np.cos(angle)
-                    y = hole_height / 2 * np.sin(angle)
-                    shape_points.append([x, y])
-            else: # Rounded Rectangle
-                shape_points = self.create_rounded_rectangle(hole_width, hole_height)
+                if hole_shape_index == 0: # Ellipse
+                    shape_points = []
+                    for angle in np.linspace(0, 2 * np.pi, 50):
+                        x = hole_width / 2 * np.cos(angle)
+                        y = hole_height / 2 * np.sin(angle)
+                        shape_points.append([x, y])
+                else: # Rounded Rectangle
+                    shape_points = self.create_rounded_rectangle(hole_width, hole_height)
 
-            shape_poly = np.array(shape_points)
-            shape_poly += hole_center
+                shape_poly = np.array(shape_points)
+                shape_poly += hole_center
 
-            shape_points_closed = list(shape_poly)
-            self.preview_root.addChild(Line_old(shape_points_closed + [shape_points_closed[0]], color='blue').object)
+                shape_points_closed = list(shape_poly)
+                self.preview_root.addChild(Line_old(shape_points_closed + [shape_points_closed[0]], color='blue').object)
 
     def create_rounded_rectangle(self, width, height, radius_ratio=0.25):
         radius = min(width, height) * radius_ratio
