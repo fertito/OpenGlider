@@ -228,7 +228,7 @@ class AttachmentPoint(Node):
 
 
 class RibHole(object):
-    def __init__(self, pos, size=0.5, vertical_shift=0.0, rotation=0.0, shape='ellipse'):
+    def __init__(self, pos, size=0.5, vertical_shift=0.0, rotation=0.0, shape='ellipse', available_height=None):
         self.pos = pos
         if isinstance(size, (list, tuple, np.ndarray)):
             self.size = np.array(list(size))
@@ -237,19 +237,19 @@ class RibHole(object):
         self.vertical_shift = vertical_shift
         self.rotation = rotation  # rotation about p1
         self.shape = shape
+        self.available_height = available_height
 
     def get_3d(self, rib, num=20):
-        hole = self.get_points(rib, num=num)
+        hole = self.get_points(rib, num=num, available_height=self.available_height)
         return rib.align_all(set_dimension(hole, 3))
 
     def get_flattened(self, rib, num=80, scale=True):
-        points = self.get_points(rib, num).data
+        points = self.get_points(rib, num, available_height=self.available_height).data
         if scale:
             points *= rib.chord
         return PolyLine2D(points)
-        # return Polygon(p1, p2, num=num, scale=self.size, is_center=False)[0]
 
-    def get_points(self, rib, num=80):
+    def get_points(self, rib, num=80, available_height=None):
         prof = rib.profile_2d
         p1 = prof[prof(self.pos)]  # Lower surface point
         p2 = prof[prof(-self.pos)] # Upper surface point
@@ -260,11 +260,13 @@ class RibHole(object):
         if local_thickness < 1e-9:
             return PolyLine2D([], name=f"{rib.name}-hole")
 
+        height_base = available_height if available_height is not None else local_thickness
+
         # Calculate final hole dimensions
-        # self.size[0] (width_param) = (w_factor * rib.chord) / local_thickness
+        # self.size[0] (width_param) = (w_factor * rib.chord) / height_base
         # self.size[1] (height_param) = h_factor
-        final_width = self.size[0] * local_thickness
-        final_height = self.size[1] * local_thickness
+        final_width = self.size[0] * height_base
+        final_height = self.size[1] * height_base
 
         # Generate shape centered at (0,0)
         if self.shape == 'ellipse':

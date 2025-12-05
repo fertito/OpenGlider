@@ -81,7 +81,6 @@ class ParametricGlider(object):
         self.min_hole_pos = 0.2
 
         # No-hole zone parameters for suspended ribs
-        self.hole_free_base_width_s = 0.1  # 10% of chord
         self.hole_free_angle_s = 30.0  # degrees
 
     def apply_holes(self, glider):
@@ -103,32 +102,31 @@ class ParametricGlider(object):
                 no_hole_zones = []
                 attachment_points = glider.get_rib_attachment_points(rib)
                 for ap in attachment_points:
-                    # Point on the lower surface (intrados)
-                    v1 = rib.profile_2d.align([ap.rib_pos, -1.0])
+                    v1 = rib.profile_2d.align([ap.rib_pos, -1.0]) # Apex on intrados
 
-                    # Calculate the other two vertices of the triangle
-                    base_half_width = self.hole_free_base_width_s * rib.chord / 2.0
-                    triangle_height = base_half_width / np.tan(np.deg2rad(self.hole_free_angle_s))
+                    angle_rad = np.deg2rad(self.hole_free_angle_s)
 
-                    # Find the direction vector from lower to upper surface
+                    # Define two lines starting from v1, going up at +/- angle
+                    # We need a reference direction. Use the local vertical.
                     upper_point = rib.profile_2d.align([ap.rib_pos, 1.0])
-                    direction_vec = upper_point - v1
-                    norm_direction_vec = np.linalg.norm(direction_vec)
-                    if norm_direction_vec > 1e-9:
-                        direction_vec /= norm_direction_vec
-                    else:
-                        direction_vec = np.array([0, 1]) # Default to vertical
+                    local_vertical = upper_point - v1
+                    if np.linalg.norm(local_vertical) < 1e-9: continue # Skip if profile is flat
+                    local_vertical /= np.linalg.norm(local_vertical)
 
-                    # Apex point of the triangle
-                    apex = v1 + direction_vec * triangle_height
+                    # Rotate the local vertical to get the triangle leg directions
+                    angle_offset = np.arctan2(local_vertical[1], local_vertical[0])
 
-                    # Base vertices
-                    # Get a vector perpendicular to the direction vector in the 2D plane
-                    perp_vec = np.array([-direction_vec[1], direction_vec[0]])
-                    v2 = apex + perp_vec * base_half_width
-                    v3 = apex - perp_vec * base_half_width
+                    dir2 = np.array([np.cos(angle_offset - angle_rad), np.sin(angle_offset - angle_rad)])
+                    dir3 = np.array([np.cos(angle_offset + angle_rad), np.sin(angle_offset + angle_rad)])
 
-                    no_hole_zones.append((v1, v2, v3))
+                    # Find intersection of these lines with the upper surface (extrados)
+                    extrados_poly = rib.profile_2d.get_extrados_poly()
+
+                    v2 = extrados_poly.line_intersection(v1, v1 + dir2 * rib.chord)
+                    v3 = extrados_poly.line_intersection(v1, v1 + dir3 * rib.chord)
+
+                    if v2 is not None and v3 is not None:
+                        no_hole_zones.append((v1, v2, v3))
             else:
                 shape_idx, num_holes, w_factor, h_factor, v_shift_factor, rotation = (
                     getattr(self, 'hole_shape_ns', 0), self.num_holes_ns, self.hole_width_ns,
@@ -192,13 +190,30 @@ class ParametricGlider(object):
                     if local_thickness < 1e-6:
                         continue
 
-                    # Final check to ensure the hole center is not inside the triangle
-                    hole_center = lower + (upper - lower) / 2 * (1 + v_shift_factor)
+                    new_lower_bound = lower
+                    if is_suspended:
+                        hole_center_x = (upper[0] + lower[0]) / 2.0
+                        max_y_no_hole = -float('inf')
+
+                        for v1, v2, v3 in no_hole_zones:
+                            if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
+                                for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
+                                    if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
+                                        y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
+                                        if is_inside_triangle(np.array([hole_center_x, y_intersect]), v1, v2, v3):
+                                            max_y_no_hole = max(max_y_no_hole, y_intersect)
+
+                        if max_y_no_hole != -float('inf'):
+                            new_lower_bound = np.array([hole_center_x, max_y_no_hole])
+
+                    available_height = upper[1] - new_lower_bound[1]
+                    hole_center = new_lower_bound + (upper - new_lower_bound) / 2 * (1 + v_shift_factor)
+
                     if is_suspended and any(is_inside_triangle(hole_center, *zone) for zone in no_hole_zones):
                         continue
 
                     # Corrected size calculation for RibHole
-                    width_param = (w_factor * rib.chord) / local_thickness
+                    width_param = (w_factor * rib.chord) / available_height
                     height_param = h_factor
                     hole_size = np.array([width_param, height_param])
 
@@ -208,7 +223,8 @@ class ParametricGlider(object):
                             size=hole_size,
                             vertical_shift=v_shift_factor,
                             rotation=rotation,
-                            shape=hole_shape
+                            shape=hole_shape,
+                            available_height=available_height
                         )
                     )
                     num_placed_holes += 1
