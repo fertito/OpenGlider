@@ -145,10 +145,10 @@ class ParametricGlider(object):
             for i in range(num_holes):
                 pos_x = start + (i + 0.5) * (range_length / num_holes)
 
-                # Calculate local thickness for hole height
-                upper = rib.profile_2d.profilepoint(-pos_x)
-                lower = rib.profile_2d.profilepoint(pos_x)
-                local_thickness = upper[1] - lower[1]
+                    # Calculate local thickness for hole height
+                    upper = rib.profile_2d.profilepoint(-pos_x)
+                    lower = rib.profile_2d.profilepoint(pos_x)
+                    local_thickness = upper[1] - lower[1]
 
                 if local_thickness < 1e-6:
                     continue

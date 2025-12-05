@@ -75,6 +75,22 @@ class HoleDesignTool(BaseTool):
         self.noHoleAngleSpinBox.setMinimum(0)
         self.noHoleAngleSpinBox.setMaximum(90)
 
+        for spinbox in [self.minPosSpinBox, self.maxPosSpinBox]:
+            spinbox.setSingleStep(0.01)
+            spinbox.setDecimals(3)
+            spinbox.setMinimum(0.0)
+            spinbox.setMaximum(1.0)
+
+        self.noHoleAngleSpinBox.setSingleStep(1.0)
+        self.noHoleAngleSpinBox.setMinimum(0)
+        self.noHoleAngleSpinBox.setMaximum(90)
+
+        for spinbox in [self.subHoleWidthSpinBox, self.subHoleHeightSpinBox]:
+            spinbox.setSingleStep(0.01)
+            spinbox.setDecimals(3)
+            spinbox.setMinimum(0.0)
+            spinbox.setMaximum(1.0)
+
         # Load initial values
         self.update_form_from_glider_data()
 
