@@ -230,16 +230,27 @@ class HoleDesignTool(BaseTool):
         if total_allowable_length <= 1e-6:
             return
 
-        for start, end in allowed_ranges:
+        # A more robust way to distribute N holes across M ranges
+        holes_to_distribute = num_holes
+        for i, (start, end) in enumerate(allowed_ranges):
             range_length = end - start
             if range_length <= 0: continue
 
-            # Allocate number of holes proportional to the range length
-            num_holes_in_range = int(round(num_holes * (range_length / total_allowable_length)))
-            if num_holes_in_range == 0:
+            is_last_range = (i == len(allowed_ranges) - 1)
+            if is_last_range:
+                num_holes_in_range = holes_to_distribute
+            else:
+                num_holes_in_range = int(round(num_holes * (range_length / total_allowable_length)))
+
+            if num_holes_in_range <= 0:
                 continue
 
-            potential_positions = np.linspace(start, end, num_holes_in_range)
+            holes_to_distribute -= num_holes_in_range
+
+            if num_holes_in_range == 1:
+                potential_positions = [start + range_length / 2] # Center the single hole
+            else:
+                potential_positions = np.linspace(start, end, num_holes_in_range)
 
             for pos_x in potential_positions:
                 upper_point = rib.profile_2d.profilepoint(-pos_x)
