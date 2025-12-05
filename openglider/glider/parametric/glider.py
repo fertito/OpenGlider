@@ -87,6 +87,8 @@ class ParametricGlider(object):
 
         suspended_ribs = {att.rib for att in glider.lineset.attachment_points if hasattr(att, 'rib')}
 
+        NO_HOLE_ZONE_BASE_CHORD_FRACTION = 0.05
+
         for rib in glider.ribs:
             is_suspended = rib in suspended_ribs
 
