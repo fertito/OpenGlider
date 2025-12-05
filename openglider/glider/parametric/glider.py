@@ -18,6 +18,7 @@ from openglider.glider.parametric.fitglider import fit_glider_3d
 from openglider.utils.distribution import Distribution
 from openglider.utils.table import Table
 from openglider.utils import ZipCmp
+from openglider.utils.geometry import is_inside_triangle
 
 
 class ParametricGlider(object):
@@ -85,6 +86,8 @@ class ParametricGlider(object):
             return
 
         suspended_ribs = {att.rib for att in glider.lineset.attachment_points if hasattr(att, 'rib')}
+
+        NO_HOLE_ZONE_BASE_CHORD_FRACTION = 0.05
 
         for rib in glider.ribs:
             is_suspended = rib in suspended_ribs
@@ -230,6 +233,7 @@ class ParametricGlider(object):
                             available_height=available_height
                         )
                     )
+                )
 
     def __json__(self):
         return {
