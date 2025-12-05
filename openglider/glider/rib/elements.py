@@ -248,8 +248,9 @@ class RibHole(object):
         if scale:
             points *= rib.chord
         return PolyLine2D(points)
+        # return Polygon(p1, p2, num=num, scale=self.size, is_center=False)[0]
 
-    def get_points(self, rib, num=80, available_height=None):
+    def get_points(self, rib, num=80):
         prof = rib.profile_2d
         p1 = prof[prof(self.pos)]  # Lower surface point
         p2 = prof[prof(-self.pos)] # Upper surface point
@@ -260,11 +261,9 @@ class RibHole(object):
         if local_thickness < 1e-9:
             return PolyLine2D([], name=f"{rib.name}-hole")
 
-        height_base = available_height if available_height is not None else local_thickness
+        height_base = self.available_height if self.available_height is not None else local_thickness
 
         # Calculate final hole dimensions
-        # self.size[0] (width_param) = (w_factor * rib.chord) / height_base
-        # self.size[1] (height_param) = h_factor
         final_width = self.size[0] * height_base
         final_height = self.size[1] * height_base
 
@@ -280,7 +279,9 @@ class RibHole(object):
             shape_poly = self.create_rounded_rectangle(num, final_width, final_height)
 
         # Determine final center position
-        final_center = p1 + (p2 - p1) / 2 * (1 + self.vertical_shift)
+        # Note: self.vertical_shift is now an absolute shift in the local frame
+        final_center = p1 + (p2 - p1) / 2
+        final_center[1] += self.vertical_shift * local_thickness
 
         # Rotate and then translate the shape
         rotation_rad = np.deg2rad(self.rotation)
@@ -295,33 +296,34 @@ class RibHole(object):
 
     def create_rounded_rectangle(self, num, width, height, radius_ratio=0.25):
         radius = min(width, height) * radius_ratio
+        if radius > width / 2.0: radius = width / 2.0
+        if radius > height / 2.0: radius = height / 2.0
+
         w = width / 2.0 - radius
         h = height / 2.0 - radius
 
-        # If the radius is too large for the dimensions, create an ellipse instead
-        if w < 0 or h < 0:
-            points = []
-            for angle in np.linspace(0, 2 * np.pi, num + 1):
-                x = width / 2 * np.cos(angle)
-                y = height / 2 * np.sin(angle)
-                points.append([x, y])
-            return np.array(points)
-
         points = []
-        num_corner = max(1, num // 4)
+        num_corner = max(2, num // 4)
 
-        # Top right corner
-        for angle in np.linspace(0, np.pi / 2, num_corner):
-            points.append((w + radius * np.cos(angle), h + radius * np.sin(angle)))
-        # Top left corner
-        for angle in np.linspace(np.pi / 2, np.pi, num_corner):
-            points.append((-w + radius * np.cos(angle), h + radius * np.sin(angle)))
-        # Bottom left corner
-        for angle in np.linspace(np.pi, 3 * np.pi / 2, num_corner):
-            points.append((-w + radius * np.cos(angle), -h + radius * np.sin(angle)))
-        # Bottom right corner
-        for angle in np.linspace(3 * np.pi / 2, 2 * np.pi, num_corner):
-            points.append((w + radius * np.cos(angle), -h + radius * np.sin(angle)))
+        # Top right
+        center_x, center_y = w, h
+        for angle in np.linspace(0, np.pi/2, num_corner):
+            points.append((center_x + radius * np.cos(angle), center_y + radius * np.sin(angle)))
+
+        # Top left
+        center_x, center_y = -w, h
+        for angle in np.linspace(np.pi/2, np.pi, num_corner):
+            points.append((center_x + radius * np.cos(angle), center_y + radius * np.sin(angle)))
+
+        # Bottom left
+        center_x, center_y = -w, -h
+        for angle in np.linspace(np.pi, 3*np.pi/2, num_corner):
+            points.append((center_x + radius * np.cos(angle), center_y + radius * np.sin(angle)))
+
+        # Bottom right
+        center_x, center_y = w, -h
+        for angle in np.linspace(3*np.pi/2, 2*np.pi, num_corner):
+            points.append((center_x + radius * np.cos(angle), center_y + radius * np.sin(angle)))
 
         return np.array(points)
 
@@ -345,31 +347,6 @@ class RibHole(object):
             "rotation": self.rotation,
             "shape": self.shape,
         }
-
-
-class RibSquareHole:
-    def __init__(self, start, stop, height):
-        pass
-
-    def get_3d(self, rib, num=20):
-        hole = self.get_points(rib, num=num)
-        return rib.align_all(set_dimension(hole, 3))
-
-    def get_flattened(self, rib, num=80, scale=True):
-        points = self.get_points(rib, num).data
-        if scale:
-            points *= rib.chord
-        return PolyLine2D(points)
-        # return Polygon(p1, p2, num=num, scale=self.size, is_center=False)[0]
-
-    def get_points(self, rib, num=80):
-        points = []
-
-        return PolyLine2D(points, name=f"{rib.name}-hole")
-
-    def __json__(self):
-        return {}
-
 
 class Mylar(object):
     pass

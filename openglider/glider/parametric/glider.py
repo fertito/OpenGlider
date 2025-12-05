@@ -134,22 +134,24 @@ class ParametricGlider(object):
 
             hole_shape = 'ellipse' if shape_idx == 0 else 'rounded_rectangle'
 
-            # Distribute holes evenly across the allowable range
-            start = self.min_hole_pos
-            end = self.max_hole_pos
-            range_length = end - start
+            start_pos = self.min_hole_pos
+            end_pos = self.max_hole_pos
 
-            if range_length <= 0:
+            if num_holes == 0:
                 continue
 
-            for i in range(num_holes):
-                pos_x = start + (i + 0.5) * (range_length / num_holes)
+            potential_positions = np.linspace(start_pos, end_pos, num_holes)
 
-                # Calculate local thickness for hole height
+            for pos_x in potential_positions:
                 upper = rib.profile_2d.profilepoint(-pos_x)
                 lower = rib.profile_2d.profilepoint(pos_x)
-                local_thickness = upper[1] - lower[1]
 
+                # First, check if the natural center of the hole is inside a no-hole zone
+                natural_center = (upper + lower) / 2.0
+                if is_suspended and any(is_inside_triangle(natural_center, *zone) for zone in no_hole_zones):
+                    continue
+
+                local_thickness = upper[1] - lower[1]
                 if local_thickness < 1e-6:
                     continue
 
@@ -158,44 +160,30 @@ class ParametricGlider(object):
                     hole_center_x = (upper[0] + lower[0]) / 2.0
                     max_y_no_hole = -float('inf')
 
-                    # Find the highest point of any no-hole triangle at this x-position
                     for v1, v2, v3 in no_hole_zones:
-                        # Simple bounding box check first
                         if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
-                            # Check intersections with triangle sides
                             for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
                                 if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
                                     y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
-                                    # Check if the intersection point is below the hole's natural center
-                                    if y_intersect > lower[1] and is_inside_triangle(np.array([hole_center_x, y_intersect]), v1, v2, v3):
-                                        max_y_no_hole = max(max_y_no_hole, y_intersect)
+                                    if y_intersect > lower[1]: # Check if the intersection is above the lower profile line
+                                         max_y_no_hole = max(max_y_no_hole, y_intersect)
 
                     if max_y_no_hole > -float('inf'):
                         new_lower_bound = np.array([hole_center_x, max_y_no_hole])
 
                 available_height = upper[1] - new_lower_bound[1]
-
-                # If available height is negligible, skip this hole
                 if available_height < 1e-4:
                     continue
 
-                # The new center is halfway up the available space, plus user shift
-                new_center_y = new_lower_bound[1] + (available_height / 2) * (1 + v_shift_factor)
-                original_center_y = (lower[1] + upper[1]) / 2
+                adjusted_vertical_shift = (new_lower_bound[1] - lower[1]) / local_thickness + v_shift_factor * (available_height / local_thickness)
 
-                # Calculate the shift required from the original center, scaled by original thickness
-                adjusted_vertical_shift = (new_center_y - original_center_y) / local_thickness
-
-                # Corrected size calculation for RibHole
-                # RibHole expects size factors relative to the available height
                 width_param = (w_factor * rib.chord) / available_height if available_height > 1e-6 else 0
                 height_param = h_factor
-                hole_size = np.array([width_param, height_param])
 
                 rib.holes.append(
                     RibHole(
                         pos_x,
-                        size=hole_size,
+                        size=np.array([width_param, height_param]),
                         vertical_shift=adjusted_vertical_shift,
                         rotation=0.0,
                         shape=hole_shape,
@@ -600,7 +588,6 @@ class ParametricGlider(object):
                 glider.cells[cell_no].rigidfoils.append(PanelRigidFoil(**data))
 
         # RIB-ELEMENTS
-        # self.apply_holes(glider)
 
         glider.rename_parts()
 

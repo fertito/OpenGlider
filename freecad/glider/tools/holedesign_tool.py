@@ -189,18 +189,21 @@ class HoleDesignTool(BaseTool):
         hole_shape_index = self.holeShapeComboBox.currentIndex()
         min_pos = self.minPosSpinBox.value()
         max_pos = self.maxPosSpinBox.value()
-        range_length = max_pos - min_pos
 
-        if range_length <= 0:
+        if num_holes == 0:
             return
 
-        for i in range(num_holes):
-            pos_x = min_pos + (i + 0.5) * (range_length / num_holes)
+        potential_positions = np.linspace(min_pos, max_pos, num_holes)
 
+        for pos_x in potential_positions:
             upper_point = rib.profile_2d.profilepoint(-pos_x)
             lower_point = rib.profile_2d.profilepoint(pos_x)
-            local_thickness = upper_point[1] - lower_point[1]
 
+            natural_center = (upper_point + lower_point) / 2.0
+            if is_suspended and any(is_inside_triangle(natural_center, *zone) for zone in no_hole_zones):
+                continue
+
+            local_thickness = upper_point[1] - lower_point[1]
             if local_thickness < 1e-6:
                 continue
 
@@ -214,14 +217,13 @@ class HoleDesignTool(BaseTool):
                         for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
                             if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
                                 y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
-                                if is_inside_triangle(np.array([hole_center_x, y_intersect]), v1, v2, v3):
+                                if y_intersect > lower_point[1]:
                                     max_y_no_hole = max(max_y_no_hole, y_intersect)
 
                 if max_y_no_hole > -float('inf'):
                     new_lower_bound = np.array([hole_center_x, max_y_no_hole])
 
             available_height = upper_point[1] - new_lower_bound[1]
-
             if available_height < 1e-4:
                 continue
 
