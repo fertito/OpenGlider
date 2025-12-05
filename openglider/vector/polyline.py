@@ -304,6 +304,27 @@ class PolyLine2D(PolyLine):
             except np.linalg.LinAlgError:
                 continue
 
+    def line_intersection(self, p1, p2):
+        """Find the intersection of a line defined by p1 and p2 with the polyline."""
+        for i in range(len(self.data) - 1):
+            p3 = self.data[i]
+            p4 = self.data[i + 1]
+
+            # Using the formula from Wikipedia for line-line intersection
+            den = (p1[0] - p2[0]) * (p3[1] - p4[1]) - (p1[1] - p2[1]) * (p3[0] - p4[0])
+            if den == 0:
+                continue # Lines are parallel
+
+            t_num = (p1[0] - p3[0]) * (p3[1] - p4[1]) - (p1[1] - p3[1]) * (p3[0] - p4[0])
+            u_num = -((p1[0] - p2[0]) * (p1[1] - p3[1]) - (p1[1] - p2[1]) * (p1[0] - p3[0]))
+
+            t = t_num / den
+            u = u_num / den
+
+            if 0 <= u <= 1: # Check if the intersection is on the segment of the polyline
+                return p1 + t * (p2 - p1)
+        return None
+
     def cut_with_polyline(self, pl, startpoint=0):
         for i, (p1, p2) in enumerate(zip(pl[:-1], pl[1:])):
             l = norm(p2 - p1)
