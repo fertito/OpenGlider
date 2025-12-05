@@ -599,6 +599,7 @@ def draw_glider(
         for cell in glider.cells:
             for panel in cell.panels:
                 m = panel.get_mesh(cell, midribs, with_numpy=True)
+                color = (0.8, 0.8, 0.8)  # Default to gray
                 if panel.material_code:
                     color = hex_to_rgb(panel.material_code)
                 hull_panels_sep += [mesh_sep(m, color)]
