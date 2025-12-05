@@ -328,19 +328,24 @@ class RibHole(object):
         for angle in np.linspace(3*np.pi/2, 2*np.pi, num_corner):
             points.append((center_x + radius * np.cos(angle), center_y + radius * np.sin(angle)))
 
+        points.append(points[0]) # Close the loop
+
         return np.array(points)
 
     def get_center(self, rib, scale=True):
         prof = rib.profile_2d
         p1 = prof[prof(self.pos)]
         p2 = prof[prof(-self.pos)]
+        
+        local_thickness = np.linalg.norm(p2 - p1)
+        
+        final_center = p1 + (p2 - p1) / 2
+        final_center[1] += self.vertical_shift * local_thickness
+        
         if scale:
-            p1 *= rib.chord
-            p2 *= rib.chord
-        move_1 = Translation(p1)
-        move_2 = Translation((p2 - p1) / 2 * (1 + self.vertical_shift))
-        rot = Rotation(self.rotation)
-        return (move_2 * rot * move_1)([0.0, 0.0])
+            final_center *= rib.chord
+            
+        return final_center
 
     def __json__(self):
         return {

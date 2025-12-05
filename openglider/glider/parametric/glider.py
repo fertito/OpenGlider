@@ -48,6 +48,7 @@ class ParametricGlider(object):
         glide,
         zrot,
         elements=None,
+        **kwargs
     ):
         self.zrot = zrot or aoa
         self.shape: ParametricShape = shape
@@ -63,23 +64,29 @@ class ParametricGlider(object):
         self.elements = elements or {}
 
         # Hole properties
-        self.holes = True
-        self.hole_shape_ns = 0  # Default to Ellipse
-        self.num_holes_ns = 30
-        self.hole_width_ns = 0.003
-        self.hole_height_ns = 0.8
-        self.vertical_shift_ns = 0.0
+        self.holes = kwargs.get('holes', True)
+        self.hole_shape_ns = kwargs.get('hole_shape_ns', 0)  # Default to Ellipse
+        self.num_holes_ns = kwargs.get('num_holes_ns', 30)
+        self.hole_width_ns = kwargs.get('hole_width_ns', 0.003)
+        self.hole_height_ns = kwargs.get('hole_height_ns', 0.8)
+        self.vertical_shift_ns = kwargs.get('vertical_shift_ns', 0.0)
+        self.min_hole_pos_ns = kwargs.get('min_hole_pos_ns', 0.2)
+        self.max_hole_pos_ns = kwargs.get('max_hole_pos_ns', 0.8)
+        self.hole_height_mode_ns = kwargs.get('hole_height_mode_ns', 0)  # 0: Percent, 1: Margin
+        self.hole_margin_ns = kwargs.get('hole_margin_ns', 0.02)    # 20mm
 
-        self.hole_shape_s = 0  # Default to Ellipse
-        self.num_holes_s = 30
-        self.hole_width_s = 0.003
-        self.hole_height_s = 0.8
-        self.vertical_shift_s = 0.0
-        self.max_hole_pos = 0.8
-        self.min_hole_pos = 0.2
+        self.hole_shape_s = kwargs.get('hole_shape_s', 0)  # Default to Ellipse
+        self.num_holes_s = kwargs.get('num_holes_s', 30)
+        self.hole_width_s = kwargs.get('hole_width_s', 0.003)
+        self.hole_height_s = kwargs.get('hole_height_s', 0.8)
+        self.vertical_shift_s = kwargs.get('vertical_shift_s', 0.0)
+        self.min_hole_pos_s = kwargs.get('min_hole_pos_s', 0.2)
+        self.max_hole_pos_s = kwargs.get('max_hole_pos_s', 0.8)
+        self.hole_height_mode_s = kwargs.get('hole_height_mode_s', 0)   # 0: Percent, 1: Margin
+        self.hole_margin_s = kwargs.get('hole_margin_s', 0.02)     # 20mm
 
         # No-hole zone parameters for suspended ribs
-        self.hole_free_angle_s = 30.0  # degrees
+        self.hole_free_angle_s = kwargs.get('hole_free_angle_s', 30.0)  # degrees
 
     def apply_holes(self, glider):
         if not self.holes:
@@ -93,9 +100,10 @@ class ParametricGlider(object):
             is_suspended = rib in suspended_ribs
 
             if is_suspended:
-                shape_idx, num_holes, w_factor, h_factor, v_shift_factor = (
+                shape_idx, num_holes, w_factor, h_factor, v_shift_factor, start_pos, end_pos, hole_height_mode, hole_margin = (
                     getattr(self, 'hole_shape_s', 0), self.num_holes_s, self.hole_width_s,
-                    self.hole_height_s, self.vertical_shift_s
+                    self.hole_height_s, self.vertical_shift_s, self.min_hole_pos_s, self.max_hole_pos_s,
+                    self.hole_height_mode_s, self.hole_margin_s
                 )
                 no_hole_zones = []
                 attachment_points = glider.get_rib_attachment_points(rib)
@@ -127,44 +135,21 @@ class ParametricGlider(object):
                     if v2 is not None and v3 is not None:
                         no_hole_zones.append((v1, v2, v3))
             else:
-                shape_idx, num_holes, w_factor, h_factor, v_shift_factor = (
+                shape_idx, num_holes, w_factor, h_factor, v_shift_factor, start_pos, end_pos, hole_height_mode, hole_margin = (
                     getattr(self, 'hole_shape_ns', 0), self.num_holes_ns, self.hole_width_ns,
-                    self.hole_height_ns, self.vertical_shift_ns
+                    self.hole_height_ns, self.vertical_shift_ns, self.min_hole_pos_ns, self.max_hole_pos_ns,
+                    self.hole_height_mode_ns, self.hole_margin_ns
                 )
                 no_hole_zones = []
 
             hole_shape = 'ellipse' if shape_idx == 0 else 'rounded_rectangle'
-
-            start_pos = self.min_hole_pos
-            end_pos = self.max_hole_pos
 
             if num_holes == 0:
                 continue
 
             allowed_ranges = [(start_pos, end_pos)]
 
-            if is_suspended and no_hole_zones:
-                zone_x_ranges = []
-                nose_x = rib.profile_2d.data[rib.profile_2d.noseindex][0]
 
-                for v1, v2, v3 in no_hole_zones:
-                    min_x_abs = min(v1[0], v2[0], v3[0])
-                    max_x_abs = max(v1[0], v2[0], v3[0])
-                    min_x_perc = (min_x_abs - nose_x) / rib.chord
-                    max_x_perc = (max_x_abs - nose_x) / rib.chord
-                    zone_x_ranges.append((min_x_perc, max_x_perc))
-
-                zone_x_ranges.sort()
-
-                new_allowed_ranges = []
-                current_pos = allowed_ranges[0][0]
-                for zone_start, zone_end in zone_x_ranges:
-                    if current_pos < zone_start:
-                        new_allowed_ranges.append((current_pos, zone_start))
-                    current_pos = max(current_pos, zone_end)
-                if current_pos < allowed_ranges[0][1]:
-                    new_allowed_ranges.append((current_pos, allowed_ranges[0][1]))
-                allowed_ranges = new_allowed_ranges
 
             total_allowable_length = sum(end - start for start, end in allowed_ranges)
             if total_allowable_length <= 1e-6:
@@ -198,42 +183,74 @@ class ParametricGlider(object):
                     if local_thickness < 1e-6:
                         continue
 
-                    new_lower_bound = lower
                     if is_suspended:
                         hole_center_x = (upper[0] + lower[0]) / 2.0
-                        max_y_no_hole = -float('inf')
+                        min_y_ceiling = upper[1]
 
                         for v1, v2, v3 in no_hole_zones:
                             if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
                                 for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
                                     if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
                                         y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
-                                        if y_intersect > lower[1]: # Check if the intersection is above the lower profile line
-                                             max_y_no_hole = max(max_y_no_hole, y_intersect)
+                                        if y_intersect < min_y_ceiling: # Constrain ceiling from above
+                                             min_y_ceiling = min(min_y_ceiling, y_intersect)
 
-                        if max_y_no_hole > -float('inf'):
-                            new_lower_bound = np.array([hole_center_x, max_y_no_hole])
+                        available_height = min_y_ceiling - lower[1]
+                        hole_center_y = lower[1] + available_height / 2
+                        new_lower_bound = np.array([hole_center_x, lower[1]]) # Base for vertical shift calculation logic
+                        eff_upper_bound = np.array([hole_center_x, min_y_ceiling])
+                    else:
+                        available_height = upper[1] - lower[1]
+                        new_lower_bound = lower
+                        eff_upper_bound = upper
 
-                    available_height = upper[1] - new_lower_bound[1]
                     if available_height < 1e-4:
                         continue
 
-                    adjusted_vertical_shift = (new_lower_bound[1] - lower[1]) / local_thickness + v_shift_factor * (available_height / local_thickness)
+                    # vertical shift is relative to LOCAL THICKNESS if we wanted to maintain consistent offset logic,
+                    # but here we want to center in the AVAILABLE space usually.
+                    # The original code used new_lower_bound + (available_height)/2 * (1+shift).
+                    # Let's align with that.
+                    
+                    hole_center = np.array([hole_center_x if is_suspended else (upper[0]+lower[0])/2, lower[1] + available_height / 2])
+                    
+                    if not is_suspended: # Respect original shift logic for non-suspended
+                         hole_center = lower + (upper - lower) / 2 * (1 + v_shift_factor)
+
+                    # For suspended, we might want to respect vertical shift within the NEW available height?
+                    if is_suspended:
+                         hole_center[1] += available_height / 2 * v_shift_factor
+                    
+                    # Calculate final_vertical_shift relative to full local thickness
+                    full_thickness = upper[1] - lower[1]
+                    if full_thickness < 1e-6: continue
+                    
+                    original_center_y = (upper[1] + lower[1]) / 2.0
+                    final_vertical_shift = (hole_center[1] - original_center_y) / full_thickness
 
                     width_param = (w_factor * rib.chord) / available_height if available_height > 1e-6 else 0
-                    height_param = h_factor
+                    
+                    # Calculate height parameter based on mode
+                    # RibHole interprets size[1] as a factor of available_height (or local_thickness)
+                    if hole_height_mode == 1: # Margin mode
+                        target_height = available_height - 2 * hole_margin
+                        if target_height <= 0:
+                            continue
+                        height_param = target_height / available_height
+                    else: # Percent mode
+                        height_param = h_factor
 
                     rib.holes.append(
                         RibHole(
                             pos_x,
                             size=np.array([width_param, height_param]),
-                            vertical_shift=adjusted_vertical_shift,
+                            vertical_shift=final_vertical_shift,
                             rotation=0.0,
                             shape=hole_shape,
                             available_height=available_height
                         )
                     )
-                )
+
 
     def __json__(self):
         return {
@@ -249,6 +266,25 @@ class ParametricGlider(object):
             "speed": self.speed,
             "glide": self.glide,
             "elements": self.elements,
+            "hole_shape_ns": getattr(self, "hole_shape_ns", 0),
+            "num_holes_ns": getattr(self, "num_holes_ns", 30),
+            "hole_width_ns": getattr(self, "hole_width_ns", 0.003),
+            "hole_height_ns": getattr(self, "hole_height_ns", 0.8),
+            "vertical_shift_ns": getattr(self, "vertical_shift_ns", 0.0),
+            "min_hole_pos_ns": getattr(self, "min_hole_pos_ns", 0.2),
+            "max_hole_pos_ns": getattr(self, "max_hole_pos_ns", 0.8),
+            "hole_height_mode_ns": getattr(self, "hole_height_mode_ns", 0),
+            "hole_margin_ns": getattr(self, "hole_margin_ns", 0.02),
+            "hole_shape_s": getattr(self, "hole_shape_s", 0),
+            "num_holes_s": getattr(self, "num_holes_s", 30),
+            "hole_width_s": getattr(self, "hole_width_s", 0.003),
+            "hole_height_s": getattr(self, "hole_height_s", 0.8),
+            "vertical_shift_s": getattr(self, "vertical_shift_s", 0.0),
+            "min_hole_pos_s": getattr(self, "min_hole_pos_s", 0.2),
+            "max_hole_pos_s": getattr(self, "max_hole_pos_s", 0.8),
+            "hole_height_mode_s": getattr(self, "hole_height_mode_s", 0),
+            "hole_margin_s": getattr(self, "hole_margin_s", 0.02),
+            "hole_free_angle_s": getattr(self, "hole_free_angle_s", 30.0),
         }
 
     @classmethod

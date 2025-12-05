@@ -19,6 +19,8 @@ class HoleDesignTool(BaseTool):
         self.numHolesSpinBox = QtGui.QSpinBox(self.base_widget)
         self.holeWidthSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.holeHeightSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.holeHeightModeComboBox = QtGui.QComboBox(self.base_widget)
+        self.holeMarginSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.verticalShiftSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.minPosSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.maxPosSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
@@ -37,13 +39,16 @@ class HoleDesignTool(BaseTool):
         # Add items to combo box
         self.ribTypeComboBox.addItems(["Non-Suspended", "Suspended"])
         self.holeShapeComboBox.addItems(["Ellipse", "Rounded Rectangle"])
+        self.holeHeightModeComboBox.addItems(["Percentage", "Margin (mm)"])
 
         # Add widgets to the QFormLayout provided by BaseTool
         self.layout.addRow("Rib Type", self.ribTypeComboBox)
         self.layout.addRow("Hole Shape", self.holeShapeComboBox)
         self.layout.addRow("Number of Holes", self.numHolesSpinBox)
         self.layout.addRow("Hole Width (%)", self.holeWidthSpinBox)
+        self.layout.addRow("Height Mode", self.holeHeightModeComboBox)
         self.layout.addRow("Hole Height (%)", self.holeHeightSpinBox)
+        self.layout.addRow("Hole Margin (m)", self.holeMarginSpinBox)
         self.layout.addRow("Vertical Shift (%)", self.verticalShiftSpinBox)
         self.layout.addRow("Min Position (%)", self.minPosSpinBox)
         self.layout.addRow("Max Position (%)", self.maxPosSpinBox)
@@ -65,6 +70,12 @@ class HoleDesignTool(BaseTool):
             spinbox.setMinimum(0.0)
             spinbox.setMaximum(1.0) # Relative to chord
 
+        # Margin spinbox (in mm)
+        self.holeMarginSpinBox.setSingleStep(1.0) # 1mm steps
+        self.holeMarginSpinBox.setDecimals(1)
+        self.holeMarginSpinBox.setSuffix(" mm")
+        self.holeMarginSpinBox.setRange(0.0, 1000.0) # Reasonable max margin
+
         for spinbox in [self.minPosSpinBox, self.maxPosSpinBox]:
             spinbox.setSingleStep(0.01)
             spinbox.setDecimals(3)
@@ -83,7 +94,9 @@ class HoleDesignTool(BaseTool):
         self.holeShapeComboBox.currentIndexChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.numHolesSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.holeWidthSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.holeHeightModeComboBox.currentIndexChanged.connect(self.on_height_mode_change)
         self.holeHeightSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.holeMarginSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.verticalShiftSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.minPosSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.maxPosSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
@@ -108,6 +121,14 @@ class HoleDesignTool(BaseTool):
             if suspended == (rib in suspended_ribs):
                 return rib
         return None
+
+    def on_height_mode_change(self, index):
+        is_margin = index == 1
+        self.holeHeightSpinBox.setVisible(not is_margin)
+        self.layout.labelForField(self.holeHeightSpinBox).setVisible(not is_margin)
+        self.holeMarginSpinBox.setVisible(is_margin)
+        self.layout.labelForField(self.holeMarginSpinBox).setVisible(is_margin)
+        self.update_glider_data_and_preview(switch=False)
 
     def on_rib_type_change(self, new_index):
         # Save the data of the previous tab before switching
@@ -188,6 +209,8 @@ class HoleDesignTool(BaseTool):
         num_holes = self.numHolesSpinBox.value()
         hole_width_perc = self.holeWidthSpinBox.value()
         hole_height_perc = self.holeHeightSpinBox.value()
+        hole_height_mode = self.holeHeightModeComboBox.currentIndex()
+        hole_margin_m = self.holeMarginSpinBox.value() / 1000.0 # Convert mm to m for usage
         vertical_shift_perc = self.verticalShiftSpinBox.value()
         hole_shape_index = self.holeShapeComboBox.currentIndex()
         min_pos = self.minPosSpinBox.value()
@@ -197,33 +220,6 @@ class HoleDesignTool(BaseTool):
             return
 
         allowed_ranges = [(min_pos, max_pos)]
-
-        if is_suspended and no_hole_zones:
-            zone_x_ranges = []
-            # we need to project the triangle x-range onto the chord-percentage axis
-            nose_x = rib.profile_2d.data[rib.profile_2d.noseindex][0]
-
-            for v1, v2, v3 in no_hole_zones:
-                min_x_abs = min(v1[0], v2[0], v3[0])
-                max_x_abs = max(v1[0], v2[0], v3[0])
-
-                # convert absolute x coordinates to percentage of chord
-                min_x_perc = (min_x_abs - nose_x) / rib.chord
-                max_x_perc = (max_x_abs - nose_x) / rib.chord
-                zone_x_ranges.append((min_x_perc, max_x_perc))
-
-            zone_x_ranges.sort()
-
-            # Subtract the no-hole zones from the allowed range
-            new_allowed_ranges = []
-            current_pos = allowed_ranges[0][0]
-            for zone_start, zone_end in zone_x_ranges:
-                if current_pos < zone_start:
-                    new_allowed_ranges.append((current_pos, zone_start))
-                current_pos = max(current_pos, zone_end)
-            if current_pos < allowed_ranges[0][1]:
-                new_allowed_ranges.append((current_pos, allowed_ranges[0][1]))
-            allowed_ranges = new_allowed_ranges
 
         # Distribute holes across the allowed ranges
         total_allowable_length = sum(end - start for start, end in allowed_ranges)
@@ -262,25 +258,34 @@ class HoleDesignTool(BaseTool):
                 new_lower_bound = lower_point
                 if is_suspended:
                     hole_center_x = (upper_point[0] + lower_point[0]) / 2.0
-                    max_y_no_hole = -float('inf')
+                    min_y_ceiling = upper_point[1]
 
                     for v1, v2, v3 in no_hole_zones:
                         if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
                             for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
                                 if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
                                     y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
-                                    if y_intersect > lower_point[1]:
-                                        max_y_no_hole = max(max_y_no_hole, y_intersect)
+                                    if y_intersect < min_y_ceiling:
+                                        min_y_ceiling = min(min_y_ceiling, y_intersect)
 
-                    if max_y_no_hole > -float('inf'):
-                        new_lower_bound = np.array([hole_center_x, max_y_no_hole])
+                    available_height = min_y_ceiling - lower_point[1]
+                    hole_center = np.array([hole_center_x, lower_point[1] + available_height / 2])
+                    
+                    # Apply vertical shift within available height
+                    hole_center[1] += available_height / 2 * vertical_shift_perc
+                    
+                else:
+                    available_height = upper_point[1] - lower_point[1]
+                    hole_center = lower_point + (upper_point - lower_point) / 2 * (1 + vertical_shift_perc)
 
-                available_height = upper_point[1] - new_lower_bound[1]
                 if available_height < 1e-4:
                     continue
-
-                hole_center = new_lower_bound + (upper_point - new_lower_bound) / 2 * (1 + vertical_shift_perc)
-                hole_height = hole_height_perc * available_height
+                
+                if hole_height_mode == 1: # Margin mode
+                    hole_height = available_height - 2 * hole_margin_m
+                else: # Percent mode
+                    hole_height = hole_height_perc * available_height
+                
                 hole_width = hole_width_perc * rib.chord
 
                 if hole_height <= 0 or hole_width <= 0:
@@ -319,6 +324,8 @@ class HoleDesignTool(BaseTool):
         # Bottom right corner
         for angle in np.linspace(3*np.pi/2, 2*np.pi, 10):
             points.append((w + radius * np.cos(angle), -h + radius * np.sin(angle)))
+            
+        points.append(points[0]) # Close the loop
 
         return points
 
@@ -330,7 +337,8 @@ class HoleDesignTool(BaseTool):
 
         widgets_to_block = [self.holeShapeComboBox, self.numHolesSpinBox, self.holeWidthSpinBox,
                             self.holeHeightSpinBox, self.verticalShiftSpinBox,
-                            self.minPosSpinBox, self.maxPosSpinBox]
+                            self.minPosSpinBox, self.maxPosSpinBox,
+                            self.holeHeightModeComboBox, self.holeMarginSpinBox]
         if is_suspended:
             widgets_to_block.extend([self.noHoleAngleSpinBox])
 
@@ -343,10 +351,16 @@ class HoleDesignTool(BaseTool):
         self.holeWidthSpinBox.setValue(getattr(pg, f'hole_width{suffix}', 0.003))
         self.holeHeightSpinBox.setValue(getattr(pg, f'hole_height{suffix}', 0.8))
         self.verticalShiftSpinBox.setValue(getattr(pg, f'vertical_shift{suffix}', 0.0))
-        self.minPosSpinBox.setValue(getattr(pg, 'min_hole_pos', 0.2))
-        self.maxPosSpinBox.setValue(getattr(pg, 'max_hole_pos', 0.8))
+        self.minPosSpinBox.setValue(getattr(pg, f'min_hole_pos{suffix}', 0.2))
+        self.maxPosSpinBox.setValue(getattr(pg, f'max_hole_pos{suffix}', 0.8))
+        self.holeHeightModeComboBox.setCurrentIndex(getattr(pg, f'hole_height_mode{suffix}', 0))
+        self.holeMarginSpinBox.setValue(getattr(pg, f'hole_margin{suffix}', 0.02) * 1000.0) # Convert m to mm for UI
+
         if is_suspended:
             self.noHoleAngleSpinBox.setValue(getattr(pg, 'hole_free_angle_s', 30.0))
+
+        # Initial visibility update
+        self.on_height_mode_change(self.holeHeightModeComboBox.currentIndex())
 
         # Unblock signals
         for widget in widgets_to_block:
@@ -360,16 +374,21 @@ class HoleDesignTool(BaseTool):
             pg.hole_width_s = self.holeWidthSpinBox.value()
             pg.hole_height_s = self.holeHeightSpinBox.value()
             pg.vertical_shift_s = self.verticalShiftSpinBox.value()
+            pg.min_hole_pos_s = self.minPosSpinBox.value()
+            pg.max_hole_pos_s = self.maxPosSpinBox.value()
             pg.hole_free_angle_s = self.noHoleAngleSpinBox.value()
+            pg.hole_height_mode_s = self.holeHeightModeComboBox.currentIndex()
+            pg.hole_margin_s = self.holeMarginSpinBox.value() / 1000.0 # Convert mm to m for storage
         else:
             pg.hole_shape_ns = self.holeShapeComboBox.currentIndex()
             pg.num_holes_ns = self.numHolesSpinBox.value()
             pg.hole_width_ns = self.holeWidthSpinBox.value()
             pg.hole_height_ns = self.holeHeightSpinBox.value()
             pg.vertical_shift_ns = self.verticalShiftSpinBox.value()
-
-        pg.min_hole_pos = self.minPosSpinBox.value()
-        pg.max_hole_pos = self.maxPosSpinBox.value()
+            pg.min_hole_pos_ns = self.minPosSpinBox.value()
+            pg.max_hole_pos_ns = self.maxPosSpinBox.value()
+            pg.hole_height_mode_ns = self.holeHeightModeComboBox.currentIndex()
+            pg.hole_margin_ns = self.holeMarginSpinBox.value() / 1000.0 # Convert mm to m for storage
 
     def update_glider_data_and_preview(self, *args, switch=False):
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
