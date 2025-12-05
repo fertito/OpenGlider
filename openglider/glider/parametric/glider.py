@@ -83,6 +83,12 @@ class ParametricGlider(object):
         # No-hole zone parameters for suspended ribs
         self.hole_free_angle_s = 30.0  # degrees
 
+        # Sub-triangle hole parameters
+        self.sub_triangle_holes = False
+        self.num_sub_holes = 5
+        self.sub_hole_width = 0.001
+        self.sub_hole_height = 0.5
+
     def apply_holes(self, glider):
         if not self.holes:
             return
@@ -207,10 +213,9 @@ class ParametricGlider(object):
                             new_lower_bound = np.array([hole_center_x, max_y_no_hole])
 
                     available_height = upper[1] - new_lower_bound[1]
-                    hole_center = new_lower_bound + (upper - new_lower_bound) / 2 * (1 + v_shift_factor)
 
-                    if is_suspended and any(is_inside_triangle(hole_center, *zone) for zone in no_hole_zones):
-                        continue
+                    # Adjust vertical shift to be relative to the new available space
+                    adjusted_vertical_shift = (new_lower_bound[1] - lower[1]) / local_thickness + v_shift_factor * available_height / local_thickness
 
                     # Corrected size calculation for RibHole
                     width_param = (w_factor * rib.chord) / available_height
@@ -221,13 +226,45 @@ class ParametricGlider(object):
                         RibHole(
                             pos_x,
                             size=hole_size,
-                            vertical_shift=v_shift_factor,
+                            vertical_shift=adjusted_vertical_shift,
                             rotation=rotation,
                             shape=hole_shape,
                             available_height=available_height
                         )
                     )
                     num_placed_holes += 1
+
+            if is_suspended and self.sub_triangle_holes:
+                for v1, v2, v3 in no_hole_zones:
+                    # Find the bounding box of the triangle
+                    min_x = min(v1[0], v2[0], v3[0])
+                    max_x = max(v1[0], v2[0], v3[0])
+
+                    for i in range(self.num_sub_holes):
+                        pos_x = min_x + (i + 1.0) * ((max_x - min_x) / (self.num_sub_holes + 1))
+
+                        upper = rib.profile_2d.profilepoint(-pos_x)
+                        lower = rib.profile_2d.profilepoint(pos_x)
+
+                        hole_center = lower + (upper - lower) / 2.0
+
+                        if is_inside_triangle(hole_center, v1, v2, v3):
+                            local_thickness = upper[1] - lower[1]
+                            if local_thickness < 1e-6: continue
+
+                            width_param = (self.sub_hole_width * rib.chord) / local_thickness
+                            height_param = self.sub_hole_height
+                            hole_size = np.array([width_param, height_param])
+
+                            rib.holes.append(
+                                RibHole(
+                                    pos_x,
+                                    size=hole_size,
+                                    vertical_shift=0.0,
+                                    rotation=0.0,
+                                    shape='ellipse'
+                                )
+                            )
 
     def __json__(self):
         return {
@@ -567,11 +604,7 @@ class ParametricGlider(object):
             profile.name = "Profile{}".format(rib_no)
             profile.x_values = profile_x_values
 
-            this_rib_holes = [
-                RibHole(ribhole["pos"], ribhole["size"])
-                for ribhole in rib_holes
-                if rib_no in ribhole["ribs"]
-            ]
+            this_rib_holes = []
             this_rigid_foils = [
                 RigidFoil(rigid["start"], rigid["end"], rigid["distance"])
                 for rigid in rigids

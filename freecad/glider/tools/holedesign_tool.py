@@ -21,10 +21,19 @@ class HoleDesignTool(BaseTool):
         self.holeHeightSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.verticalShiftSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.rotationSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.minPosSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.maxPosSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
 
         # Controls for no-hole zones on suspended ribs
         self.noHoleZoneLabel = QtGui.QLabel("<b>No-Hole Zone Geometry</b>", self.base_widget)
         self.noHoleAngleSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+
+        # Controls for sub-triangle holes
+        self.subHoleLabel = QtGui.QLabel("<b>Sub-Triangle Holes</b>", self.base_widget)
+        self.subHoleCheckBox = QtGui.QCheckBox("Enable", self.base_widget)
+        self.numSubHolesSpinBox = QtGui.QSpinBox(self.base_widget)
+        self.subHoleWidthSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.subHoleHeightSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
 
         self.applyButton = QtGui.QPushButton("Apply", self.base_widget)
 
@@ -45,6 +54,19 @@ class HoleDesignTool(BaseTool):
         self.layout.addRow("Hole Height (%)", self.holeHeightSpinBox)
         self.layout.addRow("Vertical Shift (%)", self.verticalShiftSpinBox)
         self.layout.addRow("Rotation (deg)", self.rotationSpinBox)
+        self.layout.addRow("Min Position (%)", self.minPosSpinBox)
+        self.layout.addRow("Max Position (%)", self.maxPosSpinBox)
+
+        # Add separator and controls for no-hole zones
+        self.layout.addRow(self.noHoleZoneLabel)
+        self.layout.addRow("Angle (deg)", self.noHoleAngleSpinBox)
+
+        # Add separator and controls for sub-triangle holes
+        self.layout.addRow(self.subHoleLabel)
+        self.layout.addRow(self.subHoleCheckBox)
+        self.layout.addRow("Number of Holes", self.numSubHolesSpinBox)
+        self.layout.addRow("Hole Width (%)", self.subHoleWidthSpinBox)
+        self.layout.addRow("Hole Height (%)", self.subHoleHeightSpinBox)
 
         # Add separator and controls for no-hole zones
         self.layout.addRow(self.noHoleZoneLabel)
@@ -66,9 +88,21 @@ class HoleDesignTool(BaseTool):
         self.rotationSpinBox.setMinimum(-180)
         self.rotationSpinBox.setMaximum(180)
 
+        for spinbox in [self.minPosSpinBox, self.maxPosSpinBox]:
+            spinbox.setSingleStep(0.01)
+            spinbox.setDecimals(3)
+            spinbox.setMinimum(0.0)
+            spinbox.setMaximum(1.0)
+
         self.noHoleAngleSpinBox.setSingleStep(1.0)
         self.noHoleAngleSpinBox.setMinimum(0)
         self.noHoleAngleSpinBox.setMaximum(90)
+
+        for spinbox in [self.subHoleWidthSpinBox, self.subHoleHeightSpinBox]:
+            spinbox.setSingleStep(0.01)
+            spinbox.setDecimals(3)
+            spinbox.setMinimum(0.0)
+            spinbox.setMaximum(1.0)
 
         # Load initial values
         self.update_form_from_glider_data()
@@ -81,7 +115,13 @@ class HoleDesignTool(BaseTool):
         self.holeHeightSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.verticalShiftSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.rotationSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.minPosSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.maxPosSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.noHoleAngleSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.subHoleCheckBox.stateChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.numSubHolesSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.subHoleWidthSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.subHoleHeightSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.applyButton.clicked.connect(self.accept)
 
         # Set initial visibility of no-hole zone controls
@@ -110,8 +150,16 @@ class HoleDesignTool(BaseTool):
         # Show/hide no-hole zone controls
         self.noHoleZoneLabel.setVisible(is_suspended)
         self.noHoleAngleSpinBox.setVisible(is_suspended)
+        self.subHoleLabel.setVisible(is_suspended)
+        self.subHoleCheckBox.setVisible(is_suspended)
+        self.numSubHolesSpinBox.setVisible(is_suspended)
+        self.subHoleWidthSpinBox.setVisible(is_suspended)
+        self.subHoleHeightSpinBox.setVisible(is_suspended)
         # Also hide the labels associated with the spinboxes
         self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
+        self.layout.labelForField(self.numSubHolesSpinBox).setVisible(is_suspended)
+        self.layout.labelForField(self.subHoleWidthSpinBox).setVisible(is_suspended)
+        self.layout.labelForField(self.subHoleHeightSpinBox).setVisible(is_suspended)
 
         # Then, load the values for the newly selected rib type
         self.update_form_from_glider_data()
@@ -243,9 +291,11 @@ class HoleDesignTool(BaseTool):
         suffix = "_s" if is_suspended else "_ns"
 
         widgets_to_block = [self.holeShapeComboBox, self.numHolesSpinBox, self.holeWidthSpinBox,
-                            self.holeHeightSpinBox, self.verticalShiftSpinBox, self.rotationSpinBox]
+                            self.holeHeightSpinBox, self.verticalShiftSpinBox, self.rotationSpinBox,
+                            self.minPosSpinBox, self.maxPosSpinBox]
         if is_suspended:
-            widgets_to_block.extend([self.noHoleAngleSpinBox])
+            widgets_to_block.extend([self.noHoleAngleSpinBox, self.subHoleCheckBox, self.numSubHolesSpinBox,
+                                      self.subHoleWidthSpinBox, self.subHoleHeightSpinBox])
 
         # Block signals to prevent feedback loops
         for widget in widgets_to_block:
@@ -257,8 +307,14 @@ class HoleDesignTool(BaseTool):
         self.holeHeightSpinBox.setValue(getattr(pg, f'hole_height{suffix}', 0.8))
         self.verticalShiftSpinBox.setValue(getattr(pg, f'vertical_shift{suffix}', 0.0))
         self.rotationSpinBox.setValue(getattr(pg, f'rotation{suffix}', 0.0))
+        self.minPosSpinBox.setValue(getattr(pg, 'min_hole_pos', 0.2))
+        self.maxPosSpinBox.setValue(getattr(pg, 'max_hole_pos', 0.8))
         if is_suspended:
             self.noHoleAngleSpinBox.setValue(getattr(pg, 'hole_free_angle_s', 30.0))
+            self.subHoleCheckBox.setChecked(getattr(pg, 'sub_triangle_holes', False))
+            self.numSubHolesSpinBox.setValue(getattr(pg, 'num_sub_holes', 5))
+            self.subHoleWidthSpinBox.setValue(getattr(pg, 'sub_hole_width', 0.001))
+            self.subHoleHeightSpinBox.setValue(getattr(pg, 'sub_hole_height', 0.5))
 
         # Unblock signals
         for widget in widgets_to_block:
@@ -274,6 +330,10 @@ class HoleDesignTool(BaseTool):
             pg.vertical_shift_s = self.verticalShiftSpinBox.value()
             pg.rotation_s = self.rotationSpinBox.value()
             pg.hole_free_angle_s = self.noHoleAngleSpinBox.value()
+            pg.sub_triangle_holes = self.subHoleCheckBox.isChecked()
+            pg.num_sub_holes = self.numSubHolesSpinBox.value()
+            pg.sub_hole_width = self.subHoleWidthSpinBox.value()
+            pg.sub_hole_height = self.subHoleHeightSpinBox.value()
         else:
             pg.hole_shape_ns = self.holeShapeComboBox.currentIndex()
             pg.num_holes_ns = self.numHolesSpinBox.value()
@@ -282,12 +342,16 @@ class HoleDesignTool(BaseTool):
             pg.vertical_shift_ns = self.verticalShiftSpinBox.value()
             pg.rotation_ns = self.rotationSpinBox.value()
 
+    pg.min_hole_pos = self.minPosSpinBox.value()
+    pg.max_hole_pos = self.maxPosSpinBox.value()
+
     def update_glider_data_and_preview(self, *args, switch=False):
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
         self.update_glider_data(is_suspended)
         self.update_preview()
 
     def accept(self):
+        # When accepting, save the data from the currently visible tab.
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
         self.update_glider_data(is_suspended)
         super(HoleDesignTool, self).accept()
