@@ -68,6 +68,10 @@ class HoleDesignTool(BaseTool):
         self.layout.addRow("Hole Width (%)", self.subHoleWidthSpinBox)
         self.layout.addRow("Hole Height (%)", self.subHoleHeightSpinBox)
 
+        # Add separator and controls for no-hole zones
+        self.layout.addRow(self.noHoleZoneLabel)
+        self.layout.addRow("Angle (deg)", self.noHoleAngleSpinBox)
+
         # Right-align the apply button
         button_layout = QtGui.QHBoxLayout()
         button_layout.addStretch()
