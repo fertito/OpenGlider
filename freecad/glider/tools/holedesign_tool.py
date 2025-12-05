@@ -68,10 +68,6 @@ class HoleDesignTool(BaseTool):
         self.layout.addRow("Hole Width (%)", self.subHoleWidthSpinBox)
         self.layout.addRow("Hole Height (%)", self.subHoleHeightSpinBox)
 
-        # Add separator and controls for no-hole zones
-        self.layout.addRow(self.noHoleZoneLabel)
-        self.layout.addRow("Angle (deg)", self.noHoleAngleSpinBox)
-
         # Right-align the apply button
         button_layout = QtGui.QHBoxLayout()
         button_layout.addStretch()
@@ -342,8 +338,8 @@ class HoleDesignTool(BaseTool):
             pg.vertical_shift_ns = self.verticalShiftSpinBox.value()
             pg.rotation_ns = self.rotationSpinBox.value()
 
-    pg.min_hole_pos = self.minPosSpinBox.value()
-    pg.max_hole_pos = self.maxPosSpinBox.value()
+        pg.min_hole_pos = self.minPosSpinBox.value()
+        pg.max_hole_pos = self.maxPosSpinBox.value()
 
     def update_glider_data_and_preview(self, *args, switch=False):
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
