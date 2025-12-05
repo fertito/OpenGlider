@@ -228,64 +228,99 @@ class AttachmentPoint(Node):
 
 
 class RibHole(object):
-    def __init__(self, pos, size=0.5, vertical_shift=0.0, rotation=0.0, shape='ellipse'):
+    def __init__(self, pos, size=0.5, vertical_shift=0.0, rotation=0.0, shape='ellipse', available_height=None):
         self.pos = pos
-        if isinstance(size, (list, tuple)):
-            size = np.array(list(size))
-        self.size = size
+        if isinstance(size, (list, tuple, np.ndarray)):
+            self.size = np.array(list(size))
+        else:  # float for uniform scaling
+            self.size = np.array([size, size])
         self.vertical_shift = vertical_shift
         self.rotation = rotation  # rotation about p1
         self.shape = shape
+        self.available_height = available_height
 
     def get_3d(self, rib, num=20):
-        hole = self.get_points(rib, num=num)
+        hole = self.get_points(rib, num=num, available_height=self.available_height)
         return rib.align_all(set_dimension(hole, 3))
 
     def get_flattened(self, rib, num=80, scale=True):
-        points = self.get_points(rib, num).data
+        points = self.get_points(rib, num, available_height=self.available_height).data
         if scale:
             points *= rib.chord
         return PolyLine2D(points)
-        # return Polygon(p1, p2, num=num, scale=self.size, is_center=False)[0]
 
-    def get_points(self, rib, num=80):
-        if self.shape == 'ellipse':
-            phi = np.linspace(0, np.pi * 2, num + 1)
-            points = np.array([np.cos(phi), np.sin(phi)]).T
-        else: # rounded rectangle
-            points = self.create_rounded_rectangle(num)
-
+    def get_points(self, rib, num=80, available_height=None):
         prof = rib.profile_2d
-        p1 = prof[prof(self.pos)]
-        p2 = prof[prof(-self.pos)]
+        p1 = prof[prof(self.pos)]  # Lower surface point
+        p2 = prof[prof(-self.pos)] # Upper surface point
 
-        move_1 = Translation(p1)
-        move_2 = Translation((p2 - p1) / 2 * (1 + self.vertical_shift))
-        rot = Rotation(self.rotation)
-        scale = Scale(np.linalg.norm(p2 - p1) / 2 * self.size)
-        points = (scale * move_2 * rot * move_1).apply(points)
+        local_thickness = np.linalg.norm(p2 - p1)
 
-        return PolyLine2D(points, name=f"{rib.name}-hole")
+        # Avoid division by zero or errors for very thin profiles
+        if local_thickness < 1e-9:
+            return PolyLine2D([], name=f"{rib.name}-hole")
 
-    def create_rounded_rectangle(self, num, radius_ratio=0.25):
-        # Create a rounded rectangle with width and height of 1
-        radius = min(self.size) * radius_ratio
-        w = 0.5 - radius
-        h = 0.5 - radius
+        height_base = available_height if available_height is not None else local_thickness
+
+        # Calculate final hole dimensions
+        # self.size[0] (width_param) = (w_factor * rib.chord) / height_base
+        # self.size[1] (height_param) = h_factor
+        final_width = self.size[0] * height_base
+        final_height = self.size[1] * height_base
+
+        # Generate shape centered at (0,0)
+        if self.shape == 'ellipse':
+            shape_points = []
+            for angle in np.linspace(0, 2 * np.pi, num + 1):
+                x = final_width / 2 * np.cos(angle)
+                y = final_height / 2 * np.sin(angle)
+                shape_points.append([x, y])
+            shape_poly = np.array(shape_points)
+        else:  # rounded rectangle
+            shape_poly = self.create_rounded_rectangle(num, final_width, final_height)
+
+        # Determine final center position
+        final_center = p1 + (p2 - p1) / 2 * (1 + self.vertical_shift)
+
+        # Rotate and then translate the shape
+        rotation_rad = np.deg2rad(self.rotation)
+        rot_matrix = np.array([[np.cos(rotation_rad), -np.sin(rotation_rad)],
+                               [np.sin(rotation_rad), np.cos(rotation_rad)]])
+
+        # Apply rotation around shape's origin, then translate to final position
+        shape_poly = shape_poly.dot(rot_matrix)
+        shape_poly += final_center
+
+        return PolyLine2D(shape_poly, name=f"{rib.name}-hole")
+
+    def create_rounded_rectangle(self, num, width, height, radius_ratio=0.25):
+        radius = min(width, height) * radius_ratio
+        w = width / 2.0 - radius
+        h = height / 2.0 - radius
+
+        # If the radius is too large for the dimensions, create an ellipse instead
+        if w < 0 or h < 0:
+            points = []
+            for angle in np.linspace(0, 2 * np.pi, num + 1):
+                x = width / 2 * np.cos(angle)
+                y = height / 2 * np.sin(angle)
+                points.append([x, y])
+            return np.array(points)
 
         points = []
-        num_corner = num // 4
+        num_corner = max(1, num // 4)
+
         # Top right corner
-        for angle in np.linspace(0, np.pi/2, num_corner):
+        for angle in np.linspace(0, np.pi / 2, num_corner):
             points.append((w + radius * np.cos(angle), h + radius * np.sin(angle)))
         # Top left corner
-        for angle in np.linspace(np.pi/2, np.pi, num_corner):
+        for angle in np.linspace(np.pi / 2, np.pi, num_corner):
             points.append((-w + radius * np.cos(angle), h + radius * np.sin(angle)))
         # Bottom left corner
-        for angle in np.linspace(np.pi, 3*np.pi/2, num_corner):
+        for angle in np.linspace(np.pi, 3 * np.pi / 2, num_corner):
             points.append((-w + radius * np.cos(angle), -h + radius * np.sin(angle)))
         # Bottom right corner
-        for angle in np.linspace(3*np.pi/2, 2*np.pi, num_corner):
+        for angle in np.linspace(3 * np.pi / 2, 2 * np.pi, num_corner):
             points.append((w + radius * np.cos(angle), -h + radius * np.sin(angle)))
 
         return np.array(points)
