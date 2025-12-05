@@ -240,7 +240,7 @@ class RibHole(object):
         self.available_height = available_height
 
     def get_3d(self, rib, num=20):
-        hole = self.get_points(rib, num=num)
+        hole = self.get_points(rib, num=num, available_height=self.available_height)
         return rib.align_all(set_dimension(hole, 3))
 
     def get_flattened(self, rib, num=80, scale=True):
