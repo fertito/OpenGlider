@@ -208,6 +208,7 @@ class PanelPlot(object):
         self._insert_attachment_points(plotpart, attachment_points=attachment_points)
         self._insert_diagonals(plotpart)
         self._insert_rigidfoils(plotpart)
+        self._insert_minirib_marks(plotpart)
         # self._insert_center_rods(plotpart)
         # TODO: add in parametric way
 
@@ -409,6 +410,74 @@ class PanelPlot(object):
                 # laser dots
                 plotpart.layers["L0"].append(PolyLine2D([line.data[0]]))
                 plotpart.layers["L0"].append(PolyLine2D([line.data[-1]]))
+
+    def _insert_minirib_marks(self, plotpart):
+        """Insert marks showing where miniribs attach to this panel."""
+        if not hasattr(self.cell, 'miniribs'):
+            return
+        
+        for mr_idx, minirib in enumerate(self.cell.miniribs):
+            y_value = minirib.y_value  # Position in cell (0-1)
+            
+            # Get the minirib attachment range (intrados and extrados start/end)
+            intrados_start = minirib.intrados_start
+            extrados_start = minirib.extrados_start
+            
+            # Calculate chord for end percentage
+            chord = self.cell.rib1.chord * (1 - y_value) + self.cell.rib2.chord * y_value
+            end_pct = minirib.get_end_percentage(chord)
+            
+            # Check if this panel covers the minirib range
+            cut_front_left = self.panel.cut_front["left"]
+            cut_back_left = self.panel.cut_back["left"]
+            cut_front_right = self.panel.cut_front["right"]
+            cut_back_right = self.panel.cut_back["right"]
+            
+            # Interpolate cut positions for the y_value
+            cut_front = cut_front_left + y_value * (cut_front_right - cut_front_left)
+            cut_back = cut_back_left + y_value * (cut_back_right - cut_back_left)
+            
+            # Determine which x positions to mark based on panel type (lower/upper)
+            is_lower = self.panel.is_lower()
+            
+            if is_lower:
+                # Lower panel (intrados): minirib starts at intrados_start
+                x_start = intrados_start
+                x_end = end_pct
+            else:
+                # Upper panel (extrados): minirib starts at extrados_start
+                x_start = -extrados_start  # Negative for extrados
+                x_end = -end_pct
+            
+            # Check if start position is within panel range
+            if cut_front <= abs(x_start) <= cut_back:
+                try:
+                    # Get the interpolated position on the panel
+                    ik_start = get_x_value(self.x_values, abs(x_start) if is_lower else x_start)
+                    
+                    # Interpolate between left and right ballooned curves
+                    left_pt = np.array(self.ballooned[0][ik_start])
+                    right_pt = np.array(self.ballooned[1][ik_start])
+                    mark_pt = left_pt + y_value * (right_pt - left_pt)
+                    
+                    # Create a small cross mark
+                    mark_size = 0.003  # 3mm
+                    mark_line = PolyLine2D([
+                        mark_pt + np.array([-mark_size, 0]),
+                        mark_pt + np.array([mark_size, 0])
+                    ])
+                    mark_line_v = PolyLine2D([
+                        mark_pt + np.array([0, -mark_size]),
+                        mark_pt + np.array([0, mark_size])
+                    ])
+                    
+                    plotpart.layers["marks"].append(mark_line)
+                    plotpart.layers["marks"].append(mark_line_v)
+                    
+                    # Also add laser dot
+                    plotpart.layers["L0"].append(PolyLine2D([mark_pt]))
+                except Exception as e:
+                    self.logger.debug(f"Failed to insert minirib mark: {e}")
 
 
 class DribPlot(object):

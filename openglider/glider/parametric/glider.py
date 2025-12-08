@@ -94,6 +94,15 @@ class ParametricGlider(object):
         self.susp_hole_radius_top_s = kwargs.get('susp_hole_radius_top_s', 0.005)  # Top corner radius
         self.susp_hole_radius_bottom_s = kwargs.get('susp_hole_radius_bottom_s', 0.005)  # Bottom corner radius
 
+        # Minirib hole parameters
+        self.minirib_holes = kwargs.get('minirib_holes', False)  # Enable holes in miniribs (disabled by default)
+        self.minirib_num_holes = kwargs.get('minirib_num_holes', 1)  # Number of holes per minirib (when enabled)
+        self.minirib_hole_width = kwargs.get('minirib_hole_width', 0.5)  # Width ratio (0-1 of minirib width)
+        self.minirib_hole_height = kwargs.get('minirib_hole_height', 0.7)  # Height ratio (0-1 of minirib height)
+        self.minirib_hole_shape = kwargs.get('minirib_hole_shape', 0)  # 0=Ellipse, 1=Rounded Rectangle
+        self.minirib_hole_corner_radius = kwargs.get('minirib_hole_corner_radius', 0.25)  # Corner radius ratio
+        self.minirib_hole_max_pos = kwargs.get('minirib_hole_max_pos', 0.9)  # Max position (0-1, limits holes to avoid thin tip)
+
     def apply_holes(self, glider):
         if not self.holes:
             return
@@ -313,6 +322,14 @@ class ParametricGlider(object):
             "susp_hole_margin_s": getattr(self, "susp_hole_margin_s", 0.01),
             "susp_hole_radius_top_s": getattr(self, "susp_hole_radius_top_s", 0.005),
             "susp_hole_radius_bottom_s": getattr(self, "susp_hole_radius_bottom_s", 0.005),
+            # Minirib hole parameters
+            "minirib_holes": getattr(self, "minirib_holes", False),
+            "minirib_num_holes": getattr(self, "minirib_num_holes", 1),
+            "minirib_hole_width": getattr(self, "minirib_hole_width", 0.5),
+            "minirib_hole_height": getattr(self, "minirib_hole_height", 0.7),
+            "minirib_hole_shape": getattr(self, "minirib_hole_shape", 0),
+            "minirib_hole_corner_radius": getattr(self, "minirib_hole_corner_radius", 0.25),
+            "minirib_hole_max_pos": getattr(self, "minirib_hole_max_pos", 0.9),
         }
 
     def generate_truss_holes(self, rib, v1, v2, v3, num_holes, margin, radius_top=0.0, radius_bottom=0.0):
@@ -919,6 +936,18 @@ class ParametricGlider(object):
         for minirib in self.elements.get("miniribs", []):
             data = minirib.copy()
             cells = data.pop("cells")
+            
+            # Apply global minirib hole settings if enabled
+            if getattr(self, 'minirib_holes', False):
+                data['num_holes'] = getattr(self, 'minirib_num_holes', 1)
+                data['hole_width'] = getattr(self, 'minirib_hole_width', 0.5)
+                data['hole_height'] = getattr(self, 'minirib_hole_height', 0.7)
+                data['hole_shape'] = getattr(self, 'minirib_hole_shape', 0)
+                data['hole_corner_radius'] = getattr(self, 'minirib_hole_corner_radius', 0.25)
+                data['hole_max_pos'] = getattr(self, 'minirib_hole_max_pos', 0.9)
+            else:
+                data['num_holes'] = 0  # Disable holes
+            
             for cell_no in cells:
                 glider.cells[cell_no].miniribs.append(MiniRib(**data))
 
