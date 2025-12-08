@@ -400,11 +400,11 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         lines = []
         
         # Point Pilote coordinates (raw values from user)
-        # X = demi-écartement (span direction)
-        # Y = profondeur (chord direction)
+        # X = profondeur (chord direction)
+        # Y = demi-écartement (span direction)  
         # Z = -hauteur_cone (below wing)
-        lower_x = config["demi_ecartement"]
-        lower_y = config["profondeur"]
+        lower_x = config["profondeur"]
+        lower_y = config["demi_ecartement"]
         lower_z = -config["hauteur_cone"]
         
         # Single main lower node (point pilote)
