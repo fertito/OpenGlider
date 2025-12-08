@@ -399,24 +399,29 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         lines = []
         
         # Calculate lower position from parameters
-        # In 2D view: X = span direction, Y = chord/height direction
-        # profondeur_pilote: 0% = leading edge, 100% = trailing edge
-        # For 2D view, we use Y for the chord position (front/back)
-        # écartement_ventral: total width, divide by 2 for half-wing
+        # profondeur_pilote: position along chord (0% = leading edge, 100% = trailing edge)
+        # écartement_ventral: total width between risers, divide by 2 for half-wing
         
-        # Get reference chord position from shape
+        # Get maximum chord from shape for profondeur calculation
         try:
-            # Get average chord position at 30% (or profondeur_pilote %)
-            # Using the center rib as reference
-            center_front = self.parametric_glider.shape[0, 0]  # Leading edge center
-            center_back = self.parametric_glider.shape[0, 1]   # Trailing edge center
-            chord_length = abs(center_back[1] - center_front[1])
-            lower_y = center_front[1] + config["profondeur_pilote"] * chord_length
+            shape = self.parametric_glider.shape.get_half_shape()
+            # Find max chord (typically at center)
+            max_chord = 0
+            max_chord_y_front = 0
+            for i in range(len(shape.front)):
+                chord = abs(shape.back[i][1] - shape.front[i][1])
+                if chord > max_chord:
+                    max_chord = chord
+                    max_chord_y_front = shape.front[i][1]
+            
+            # Position pilote at profondeur % of max chord from leading edge
+            lower_y = max_chord_y_front + config["profondeur_pilote"] * max_chord
         except:
             lower_y = config["profondeur_pilote"] * 2  # Fallback
         
-        # X position: at center for half-wing (écartement/2 will offset risers outward)
-        lower_x = config["ecartement_ventral"] / 2  # Half of écartement for half-wing
+        # X position: écartement/2 for half-wing (center of half écartement)
+        half_ecartement = config["ecartement_ventral"] / 2
+        lower_x = half_ecartement / 2  # Center of the half
         
         # Z position: negative hauteur (below the wing)
         lower_z = -config["hauteur_cone"]
@@ -434,16 +439,13 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                   if config["line_types"][lt]["enabled"]]
         
         # Create riser for each enabled type
-        # Risers spread outward from center using half of écartement_ventral
+        # Risers spread along X using half_ecartement
         riser_nodes = {}
-        half_ecartement = config["ecartement_ventral"] / 2  # For half-wing
+        riser_spread = half_ecartement * 0.8  # Use 80% of half écartement for riser spread
         
-        # Distribute risers along the span (X direction)
-        # All risers start from the same Y position (chord) as pilote
         for i, lt in enumerate(enabled):
-            # Spread risers across the half écartement
             if len(enabled) > 1:
-                riser_x = lower_x + (i / (len(enabled) - 1)) * half_ecartement * 0.5
+                riser_x = lower_x + (i / (len(enabled) - 1) - 0.5) * riser_spread
             else:
                 riser_x = lower_x
             
@@ -481,21 +483,20 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         
         # Stabilo
         if config["include_stabilo"]:
-            # Use the last rib (not cell_pos=1 which causes index error)
             stabilo_cell = self.half_cell_num - 1
             stabilo = UpperNode2D(
                 cell_no=stabilo_cell,
                 rib_pos=config["stabilo_position"],
-                cell_pos=0,  # On the rib, not between ribs
+                cell_pos=0,
                 force=1.0,
                 name="S1",
                 layer="S",
             )
             
-            # Stabilo riser
-            offset = (len(enabled) / 2) * spacing + 0.2
+            # Stabilo riser - position at outer edge
+            stab_riser_x = lower_x + half_ecartement * 0.6
             stab_riser = BatchNode2D(
-                pos_2D=[lower_x + offset, lower_z + config["riser_length"]],
+                pos_2D=[stab_riser_x, lower_z + config["riser_length"]],
                 name="riser_S",
                 layer="S",
             )
