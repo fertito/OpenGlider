@@ -299,8 +299,8 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 interval = config["interval"]
                 for cell_no in range(start, self.half_cell_num, interval):
                     count += 1
-        # Add stabilo if enabled
-        if self.stabilo_checkbox.isChecked():
+        # Add stabilo if enabled (check if attribute exists first)
+        if hasattr(self, 'stabilo_checkbox') and self.stabilo_checkbox.isChecked():
             count += 1
         return count
     
@@ -550,25 +550,34 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
     
     def _calculate_batch_position(self, group, level):
         """Calculate the 2D position for a batch node."""
-        # Average position of group members
-        if isinstance(group[0], UpperNode2D):
-            avg_cell = sum(n.cell_no + n.cell_pos for n in group) / len(group)
-            avg_pos = sum(n.rib_pos for n in group) / len(group)
-            # Get 2D position from shape - use integer cell and interpolate
-            try:
-                # Use rounded cell number for shape lookup
-                cell_int = int(round(avg_cell))
-                cell_int = max(0, min(cell_int, self.half_cell_num - 1))
-                pos_2d = list(self.parametric_glider.shape[cell_int, avg_pos])
-            except Exception:
-                # Fallback: estimate position
-                pos_2d = [avg_cell * 0.5, avg_pos * 2.0]
-        else:
-            # Batch node - average positions
+        # Check what kind of nodes we have
+        pos_2d_list = []
+        
+        for n in group:
+            if isinstance(n, UpperNode2D):
+                # Get 2D position from shape
+                try:
+                    cell_int = int(round(n.cell_no + n.cell_pos))
+                    cell_int = max(0, min(cell_int, self.half_cell_num - 1))
+                    pos = list(self.parametric_glider.shape[cell_int, n.rib_pos])
+                    pos_2d_list.append(pos)
+                except Exception:
+                    pos_2d_list.append([n.cell_no * 0.5, n.rib_pos * 2.0])
+            elif hasattr(n, 'pos_2D'):
+                # BatchNode2D has pos_2D
+                pos_2d_list.append(list(n.pos_2D))
+            else:
+                # Fallback
+                pos_2d_list.append([0, 0])
+        
+        # Average the positions
+        if pos_2d_list:
             pos_2d = [
-                sum(n.pos_2D[0] for n in group) / len(group),
-                sum(n.pos_2D[1] for n in group) / len(group),
+                sum(p[0] for p in pos_2d_list) / len(pos_2d_list),
+                sum(p[1] for p in pos_2d_list) / len(pos_2d_list),
             ]
+        else:
+            pos_2d = [0, 0]
         
         # Move down for each level
         pos_2d[1] = pos_2d[1] - (level + 1) * 1.5
