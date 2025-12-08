@@ -23,6 +23,8 @@ from openglider.lines.line_types import LineType
 class LineTypeRow(QtGui.QWidget):
     """Widget for configuring a single line type (A, B, C, D, F)."""
     
+    configChanged = QtCore.Signal()
+    
     def __init__(self, line_type_name, default_position, parent=None):
         super(LineTypeRow, self).__init__(parent)
         self.line_type_name = line_type_name
@@ -64,6 +66,10 @@ class LineTypeRow(QtGui.QWidget):
         
         # Connect enable checkbox to enable/disable other controls
         self.enable_checkbox.toggled.connect(self._update_enabled_state)
+        self.enable_checkbox.toggled.connect(lambda: self.configChanged.emit())
+        self.position_spinbox.valueChanged.connect(lambda: self.configChanged.emit())
+        self.interval_spinbox.valueChanged.connect(lambda: self.configChanged.emit())
+        self.start_spinbox.valueChanged.connect(lambda: self.configChanged.emit())
         
     def _update_enabled_state(self, enabled):
         self.position_spinbox.setEnabled(enabled)
@@ -94,13 +100,24 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         "F": 100.0,
     }
     
+    # Predefined architecture patterns
+    ARCHITECTURE_PATTERNS = [
+        ("Direct (1:1)", [1]),
+        ("2:1", [2]),
+        ("3:1", [3]),
+        ("2:2:1", [2, 2]),
+        ("3:2:1", [3, 2]),
+        ("4:2:1", [4, 2]),
+        ("2:2:2:1", [2, 2, 2]),
+    ]
+    
     def __init__(self, parametric_glider, parent=None):
         super(LinesAutoPlacementDialog, self).__init__(parent)
         self.parametric_glider = parametric_glider
         self.half_cell_num = parametric_glider.shape.half_cell_num
         
         self.setWindowTitle("Auto-placement des suspentes")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(550)
         
         self.setup_ui()
         
@@ -111,11 +128,10 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         general_group = QtGui.QGroupBox("Général")
         general_layout = QtGui.QFormLayout(general_group)
         
-        # Number of line rows
-        self.num_rows_combo = QtGui.QComboBox()
-        self.num_rows_combo.addItems(["2 lignes", "3 lignes", "4 lignes"])
-        self.num_rows_combo.setCurrentIndex(1)  # Default: 3 lines
-        general_layout.addRow("Nombre de rangées:", self.num_rows_combo)
+        # Info about cells
+        info_label = QtGui.QLabel(f"Demi-voile: {self.half_cell_num} cellules")
+        info_label.setStyleSheet("color: gray;")
+        general_layout.addRow("", info_label)
         
         main_layout.addWidget(general_group)
         
@@ -168,6 +184,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             row = LineTypeRow(line_type, default_pos)
             self.line_type_rows[line_type] = row
             lines_layout.addWidget(row)
+            row.configChanged.connect(self._update_info)
             
             # Set default intervals (A every 1, B every 2, etc.)
             if line_type == "A":
@@ -181,26 +198,43 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         
         main_layout.addWidget(lines_group)
         
+        # === Stabilo Section ===
+        stabilo_group = QtGui.QGroupBox("Stabilo (bout d'aile)")
+        stabilo_layout = QtGui.QFormLayout(stabilo_group)
+        
+        self.stabilo_checkbox = QtGui.QCheckBox("Inclure stabilo")
+        self.stabilo_checkbox.setChecked(True)
+        stabilo_layout.addRow("", self.stabilo_checkbox)
+        
+        self.stabilo_position = QtGui.QDoubleSpinBox()
+        self.stabilo_position.setRange(0, 100)
+        self.stabilo_position.setValue(50)
+        self.stabilo_position.setSuffix(" %")
+        stabilo_layout.addRow("Position sur corde:", self.stabilo_position)
+        
+        main_layout.addWidget(stabilo_group)
+        
         # === Architecture Section ===
         arch_group = QtGui.QGroupBox("Architecture des suspentes")
         arch_layout = QtGui.QFormLayout(arch_group)
         
-        # Merge pattern
-        self.merge_pattern_combo = QtGui.QComboBox()
-        self.merge_pattern_combo.addItems([
-            "1:1 (pas de fusion)",
-            "2:1 (fusion par 2)",
-            "3:1 (fusion par 3)",
-            "4:1 (fusion par 4)",
-        ])
-        self.merge_pattern_combo.setCurrentIndex(1)  # Default: 2:1
-        arch_layout.addRow("Pattern de fusion:", self.merge_pattern_combo)
+        # Predefined architecture patterns
+        self.arch_pattern_combo = QtGui.QComboBox()
+        for name, _ in self.ARCHITECTURE_PATTERNS:
+            self.arch_pattern_combo.addItem(name)
+        self.arch_pattern_combo.setCurrentIndex(3)  # Default: 2:2:1
+        arch_layout.addRow("Pattern:", self.arch_pattern_combo)
         
-        # Number of levels
-        self.num_levels_spinbox = QtGui.QSpinBox()
-        self.num_levels_spinbox.setRange(1, 4)
-        self.num_levels_spinbox.setValue(2)
-        arch_layout.addRow("Nombre de niveaux:", self.num_levels_spinbox)
+        # Custom pattern input
+        self.custom_pattern_edit = QtGui.QLineEdit()
+        self.custom_pattern_edit.setPlaceholderText("ex: 2,2,1 ou 3,2")
+        self.custom_pattern_edit.setEnabled(False)
+        arch_layout.addRow("Pattern custom:", self.custom_pattern_edit)
+        
+        # Use custom checkbox
+        self.use_custom_checkbox = QtGui.QCheckBox("Utiliser pattern custom")
+        self.use_custom_checkbox.toggled.connect(self._toggle_custom_pattern)
+        arch_layout.addRow("", self.use_custom_checkbox)
         
         main_layout.addWidget(arch_group)
         
@@ -245,6 +279,10 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         main_layout.addWidget(self.info_label)
         
         self._update_info()
+    
+    def _toggle_custom_pattern(self, enabled):
+        self.custom_pattern_edit.setEnabled(enabled)
+        self.arch_pattern_combo.setEnabled(not enabled)
         
     def _update_info(self):
         """Update the info label with current configuration summary."""
@@ -261,25 +299,43 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 interval = config["interval"]
                 for cell_no in range(start, self.half_cell_num, interval):
                     count += 1
+        # Add stabilo if enabled
+        if self.stabilo_checkbox.isChecked():
+            count += 1
         return count
+    
+    def _get_architecture_pattern(self):
+        """Get the architecture pattern as a list of merge factors."""
+        if self.use_custom_checkbox.isChecked():
+            try:
+                pattern_str = self.custom_pattern_edit.text().strip()
+                pattern = [int(x.strip()) for x in pattern_str.split(",") if x.strip()]
+                return pattern if pattern else [1]
+            except ValueError:
+                return [1]
+        else:
+            idx = self.arch_pattern_combo.currentIndex()
+            return self.ARCHITECTURE_PATTERNS[idx][1]
     
     def preview(self):
         """Show preview of the configuration."""
         count = self._count_attachment_points()
+        pattern = self._get_architecture_pattern()
+        pattern_str = ":".join(str(p) for p in pattern) + ":1"
+        
         QtGui.QMessageBox.information(
             self,
             "Aperçu",
             f"Cette configuration générera:\n"
             f"- {count} points d'attache supérieurs\n"
             f"- 1 point d'attache inférieur\n"
-            f"- Architecture: {self.merge_pattern_combo.currentText()}\n"
-            f"- Niveaux: {self.num_levels_spinbox.value()}"
+            f"- Architecture: {pattern_str}\n"
+            f"- Stabilo: {'Oui' if self.stabilo_checkbox.isChecked() else 'Non'}"
         )
     
     def get_configuration(self):
         """Return the complete configuration as a dictionary."""
         return {
-            "num_rows": self.num_rows_combo.currentIndex() + 2,  # 2, 3, or 4
             "lower_position": [
                 self.lower_x.value(),
                 self.lower_y.value(),
@@ -289,9 +345,10 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 lt: row.get_config() 
                 for lt, row in self.line_type_rows.items()
             },
-            "merge_pattern": self.merge_pattern_combo.currentIndex(),  # 0=1:1, 1=2:1, etc.
-            "num_levels": self.num_levels_spinbox.value(),
+            "architecture_pattern": self._get_architecture_pattern(),
             "line_type_name": self.line_type_combo.currentText(),
+            "include_stabilo": self.stabilo_checkbox.isChecked(),
+            "stabilo_position": self.stabilo_position.value() / 100.0,
         }
     
     def generate_lineset(self):
@@ -302,26 +359,58 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         all_upper_nodes = {}  # {line_type: [nodes]}
         
         # Generate upper nodes for each enabled line type
-        for line_type, lt_config in config["line_types"].items():
-            if lt_config["enabled"]:
+        for line_type in ["A", "B", "C", "D", "F"]:  # Ordered
+            lt_config = config["line_types"].get(line_type)
+            if lt_config and lt_config["enabled"]:
                 nodes = self._generate_upper_nodes(line_type, lt_config)
-                all_upper_nodes[line_type] = nodes
+                if nodes:
+                    all_upper_nodes[line_type] = nodes
         
-        # Generate lower node(s)
-        lower_nodes = self._generate_lower_nodes(config["lower_position"])
+        # Generate stabilo node if enabled
+        stabilo_node = None
+        if config["include_stabilo"]:
+            stabilo_node = self._generate_stabilo_node(config["stabilo_position"])
+        
+        # Generate lower node(s) - one per line type group
+        lower_nodes = {}
+        for line_type in all_upper_nodes.keys():
+            lower_nodes[line_type] = self._generate_lower_node(
+                config["lower_position"], 
+                line_type
+            )
+        
+        # Also add a lower node for stabilo
+        if stabilo_node:
+            lower_nodes["S"] = self._generate_lower_node(
+                config["lower_position"],
+                "S"
+            )
         
         # Generate line architecture for each line type group
         for line_type, upper_nodes in all_upper_nodes.items():
             if upper_nodes:
+                lower_node = lower_nodes[line_type]
                 type_lines = self._generate_architecture(
                     upper_nodes,
-                    lower_nodes[0],  # Use first lower node
-                    config["merge_pattern"],
-                    config["num_levels"],
+                    lower_node,
+                    config["architecture_pattern"],
                     config["line_type_name"],
                     line_type,
                 )
                 lines.extend(type_lines)
+        
+        # Generate stabilo lines (direct connection)
+        if stabilo_node:
+            lower_node = lower_nodes["S"]
+            stabilo_line = Line2D(
+                lower_node=lower_node,
+                upper_node=stabilo_node,
+                target_length=None,
+                line_type=config["line_type_name"],
+                layer="S",
+                name="S1",
+            )
+            lines.append(stabilo_line)
         
         return LineSet2D(lines)
     
@@ -347,34 +436,55 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         
         return nodes
     
-    def _generate_lower_nodes(self, position):
-        """Generate LowerNode2D for harness attachment."""
-        node = LowerNode2D(
-            pos_2D=[position[0], position[2]],  # x, z for 2D view
-            pos_3D=position,
-            name="main",
-            layer="",
+    def _generate_stabilo_node(self, rib_pos):
+        """Generate UpperNode2D for stabilo (wing tip)."""
+        # Stabilo is on the last rib (half_cell_num - 1 with cell_pos=1, 
+        # or equivalently the tip rib)
+        cell_no = self.half_cell_num - 1
+        
+        node = UpperNode2D(
+            cell_no=cell_no,
+            rib_pos=rib_pos,
+            cell_pos=1,  # On the outer rib of the last cell (tip)
+            force=1.0,
+            name="S1",
+            layer="S",
         )
-        return [node]
+        return node
     
-    def _generate_architecture(self, upper_nodes, lower_node, merge_pattern, 
-                               num_levels, line_type_name, layer):
+    def _generate_lower_node(self, position, line_type):
+        """Generate LowerNode2D for harness attachment."""
+        # Offset the 2D position based on line type for visual separation
+        type_offsets = {"A": -2, "B": -1, "C": 0, "D": 1, "F": 2, "S": 3}
+        offset = type_offsets.get(line_type, 0) * 0.5
+        
+        node = LowerNode2D(
+            pos_2D=[position[0] + offset, position[2]],  # x, z for 2D view
+            pos_3D=[position[0] + offset, position[1], position[2]],
+            name=f"lower_{line_type}",
+            layer=line_type,
+        )
+        return node
+    
+    def _generate_architecture(self, upper_nodes, lower_node, pattern, 
+                               line_type_name, layer):
         """
         Generate line architecture connecting upper nodes to lower node.
         
-        merge_pattern: 0=1:1, 1=2:1, 2=3:1, 3=4:1
-        num_levels: number of intermediate levels
+        pattern: list of merge factors, e.g., [2, 2] for 2:2:1
         """
         lines = []
-        merge_factor = merge_pattern + 1  # 1, 2, 3, or 4
         
-        if merge_factor == 1 or len(upper_nodes) <= 1:
-            # Direct connection, no merging
+        if not upper_nodes:
+            return lines
+        
+        # If pattern is [1] or we have 1 node, direct connection
+        if pattern == [1] or len(upper_nodes) <= 1:
             for node in upper_nodes:
                 line = Line2D(
                     lower_node=lower_node,
                     upper_node=node,
-                    target_length=None,  # Will be calculated
+                    target_length=None,
                     line_type=line_type_name,
                     layer=layer,
                     name=node.name,
@@ -382,46 +492,25 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 lines.append(line)
             return lines
         
-        # Multi-level architecture with merging
+        # Multi-level architecture with pattern-based merging
         current_level_nodes = list(upper_nodes)
-        level = 0
         
-        while len(current_level_nodes) > 1 and level < num_levels:
+        for level, merge_factor in enumerate(pattern):
+            if len(current_level_nodes) <= 1:
+                break
+                
             next_level_nodes = []
             
             # Group nodes by merge_factor
             for i in range(0, len(current_level_nodes), merge_factor):
                 group = current_level_nodes[i:i + merge_factor]
                 
-                if len(group) == 1 or level == num_levels - 1:
-                    # Last level or single node: connect to lower
-                    for node in group:
-                        line = Line2D(
-                            lower_node=lower_node,
-                            upper_node=node,
-                            target_length=None,
-                            line_type=line_type_name,
-                            layer=layer,
-                            name=f"{layer}_l{level}_{i}",
-                        )
-                        lines.append(line)
+                if len(group) == 1:
+                    # Single node left over, pass through
+                    next_level_nodes.append(group[0])
                 else:
                     # Create intermediate batch node
-                    # Position it between the group members
-                    if isinstance(group[0], UpperNode2D):
-                        avg_cell = sum(n.cell_no for n in group) / len(group)
-                        avg_pos = sum(n.rib_pos for n in group) / len(group)
-                        # Get 2D position from shape
-                        pos_2d = self.parametric_glider.shape[avg_cell, avg_pos]
-                    else:
-                        # Batch node - average positions
-                        pos_2d = [
-                            sum(n.pos_2D[0] for n in group) / len(group),
-                            sum(n.pos_2D[1] for n in group) / len(group),
-                        ]
-                    
-                    # Move down for each level
-                    pos_2d = [pos_2d[0], pos_2d[1] - (level + 1) * 1.5]
+                    pos_2d = self._calculate_batch_position(group, level)
                     
                     batch_node = BatchNode2D(
                         pos_2D=list(pos_2d),
@@ -444,9 +533,8 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                     next_level_nodes.append(batch_node)
             
             current_level_nodes = next_level_nodes
-            level += 1
         
-        # Connect remaining nodes to lower
+        # Connect final level nodes to lower node
         for i, node in enumerate(current_level_nodes):
             line = Line2D(
                 lower_node=lower_node,
@@ -459,3 +547,31 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             lines.append(line)
         
         return lines
+    
+    def _calculate_batch_position(self, group, level):
+        """Calculate the 2D position for a batch node."""
+        # Average position of group members
+        if isinstance(group[0], UpperNode2D):
+            avg_cell = sum(n.cell_no + n.cell_pos for n in group) / len(group)
+            avg_pos = sum(n.rib_pos for n in group) / len(group)
+            # Get 2D position from shape - use integer cell and interpolate
+            try:
+                # Use rounded cell number for shape lookup
+                cell_int = int(round(avg_cell))
+                cell_int = max(0, min(cell_int, self.half_cell_num - 1))
+                pos_2d = list(self.parametric_glider.shape[cell_int, avg_pos])
+            except Exception:
+                # Fallback: estimate position
+                pos_2d = [avg_cell * 0.5, avg_pos * 2.0]
+        else:
+            # Batch node - average positions
+            pos_2d = [
+                sum(n.pos_2D[0] for n in group) / len(group),
+                sum(n.pos_2D[1] for n in group) / len(group),
+            ]
+        
+        # Move down for each level
+        pos_2d[1] = pos_2d[1] - (level + 1) * 1.5
+        
+        return pos_2d
+

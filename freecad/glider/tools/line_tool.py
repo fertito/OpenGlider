@@ -287,27 +287,27 @@ class LineTool(BaseTool):
             try:
                 new_lineset = dialog.generate_lineset()
                 
-                # Clear existing lines and nodes from the display
-                # Remove all dynamic objects (lines and markers)
-                to_remove = list(self.shape.dynamic_objects)
+                # Debug: print what was generated
+                App.Console.PrintMessage(f"Generated {len(new_lineset.lines)} lines and {len(new_lineset.nodes)} nodes\n")
+                
+                # Clear existing dynamic objects from the display
+                to_remove = [obj for obj in self.shape.dynamic_objects if hasattr(obj, 'dynamic') and obj.dynamic]
                 for obj in to_remove:
                     if hasattr(obj, 'delete'):
                         obj.delete()
-                self.shape.dynamic_objects = []
+                    if obj in self.shape.dynamic_objects:
+                        self.shape.dynamic_objects.remove(obj)
                 self.shape.selected_objects = []
                 
                 # Clear the layer combobox
                 self.layer_combobox.clear()
                 self.layer_combobox.addItem("")
                 
-                # Redraw shape background
-                self.draw_shape()
-                
-                # Store the new lineset temporarily
+                # Store the new lineset BEFORE drawing
                 self.parametric_glider.lineset = new_lineset
                 
-                # Redraw with new lineset
-                self._apply_lineset_to_display(new_lineset)
+                # Redraw everything with the new lineset
+                self.draw_shape()
                 
                 self.update_layer_selection()
                 self.show_layer()
@@ -318,6 +318,7 @@ class LineTool(BaseTool):
                 App.Console.PrintError(f"Auto-placement error: {str(e)}\n")
                 import traceback
                 App.Console.PrintError(traceback.format_exc())
+
     
     def _apply_lineset_to_display(self, lineset):
         """Apply a LineSet2D to the visual display."""
