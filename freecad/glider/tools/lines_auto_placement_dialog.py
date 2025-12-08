@@ -214,37 +214,35 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
     def setup_ui(self):
         main_layout = QtGui.QVBoxLayout(self)
         
-        # === Lower Point ===
-        lower_group = QtGui.QGroupBox("Point d'attache central")
+        # === Point Pilote ===
+        lower_group = QtGui.QGroupBox("Point Pilote")
         lower_layout = QtGui.QFormLayout(lower_group)
         
-        pos_widget = QtGui.QWidget()
-        pos_layout = QtGui.QHBoxLayout(pos_widget)
-        pos_layout.setContentsMargins(0, 0, 0, 0)
+        # Écartement ventral (width along span between risers)
+        self.ecartement_ventral = QtGui.QDoubleSpinBox()
+        self.ecartement_ventral.setRange(0, 1.0)
+        self.ecartement_ventral.setValue(0.4)
+        self.ecartement_ventral.setSingleStep(0.05)
+        self.ecartement_ventral.setSuffix(" m")
+        lower_layout.addRow("Écartement ventral:", self.ecartement_ventral)
         
-        self.lower_x = QtGui.QDoubleSpinBox()
-        self.lower_x.setRange(-50, 50)
-        self.lower_x.setValue(0)
-        self.lower_x.setSuffix(" m")
-        pos_layout.addWidget(QtGui.QLabel("X:"))
-        pos_layout.addWidget(self.lower_x)
+        # Profondeur pilote (position along chord, 0=leading edge, 1=trailing edge)
+        self.profondeur_pilote = QtGui.QDoubleSpinBox()
+        self.profondeur_pilote.setRange(0, 100)
+        self.profondeur_pilote.setValue(30)
+        self.profondeur_pilote.setSuffix(" %")
+        lower_layout.addRow("Profondeur (% corde):", self.profondeur_pilote)
         
-        self.lower_y = QtGui.QDoubleSpinBox()
-        self.lower_y.setRange(-50, 50)
-        self.lower_y.setValue(0)
-        self.lower_y.setSuffix(" m")
-        pos_layout.addWidget(QtGui.QLabel("Y:"))
-        pos_layout.addWidget(self.lower_y)
+        # Hauteur cône de suspentage
+        self.hauteur_cone = QtGui.QDoubleSpinBox()
+        self.hauteur_cone.setRange(1, 15)
+        self.hauteur_cone.setValue(7)
+        self.hauteur_cone.setSingleStep(0.5)
+        self.hauteur_cone.setSuffix(" m")
+        lower_layout.addRow("Hauteur cône:", self.hauteur_cone)
         
-        self.lower_z = QtGui.QDoubleSpinBox()
-        self.lower_z.setRange(-50, 50)
-        self.lower_z.setValue(-7)
-        self.lower_z.setSuffix(" m")
-        pos_layout.addWidget(QtGui.QLabel("Z:"))
-        pos_layout.addWidget(self.lower_z)
-        
-        lower_layout.addRow("Position:", pos_widget)
         main_layout.addWidget(lower_group)
+
         
         # === Lengths ===
         lengths_group = QtGui.QGroupBox("Longueurs")
@@ -383,7 +381,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             inter = max(0.5, basses - 1.0)
         
         return {
-            "lower_position": [self.lower_x.value(), self.lower_y.value(), self.lower_z.value()],
+            "ecartement_ventral": self.ecartement_ventral.value(),
+            "profondeur_pilote": self.profondeur_pilote.value() / 100.0,  # 0-1
+            "hauteur_cone": self.hauteur_cone.value(),
             "riser_length": self.riser_length.value(),
             "basses_length": basses,
             "inter_length": inter,
@@ -398,13 +398,17 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         config = self.get_configuration()
         lines = []
         
-        lower_pos = config["lower_position"]
+        # Calculate lower position from parameters
+        # X = profondeur (along chord), Y = 0, Z = -hauteur_cone
+        lower_x = config["profondeur_pilote"] * 2 - 1  # Convert 0-1 to roughly -1 to 1
+        lower_y = 0
+        lower_z = -config["hauteur_cone"]
         
         # Single main lower node
         main_lower = LowerNode2D(
-            pos_2D=[lower_pos[0], lower_pos[2]],
-            pos_3D=lower_pos,
-            name="main",
+            pos_2D=[lower_x, lower_z],
+            pos_3D=[lower_x, lower_y, lower_z],
+            name="pilote",
             layer="",
         )
         
@@ -413,12 +417,15 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                   if config["line_types"][lt]["enabled"]]
         
         # Create riser for each enabled type
+        # Use écartement_ventral for spacing
         riser_nodes = {}
-        spacing = 0.25
+        total_width = config["ecartement_ventral"]
+        spacing = total_width / max(1, len(enabled) - 1) if len(enabled) > 1 else 0
+        
         for i, lt in enumerate(enabled):
             offset = (i - (len(enabled) - 1) / 2) * spacing
             riser = BatchNode2D(
-                pos_2D=[lower_pos[0] + offset, lower_pos[2] + config["riser_length"]],
+                pos_2D=[lower_x + offset, lower_z + config["riser_length"]],
                 name=f"riser_{lt}",
                 layer=lt,
             )
@@ -465,7 +472,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             # Stabilo riser
             offset = (len(enabled) / 2) * spacing + 0.2
             stab_riser = BatchNode2D(
-                pos_2D=[lower_pos[0] + offset, lower_pos[2] + config["riser_length"]],
+                pos_2D=[lower_x + offset, lower_z + config["riser_length"]],
                 name="riser_S",
                 layer="S",
             )
