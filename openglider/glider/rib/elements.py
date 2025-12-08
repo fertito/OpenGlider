@@ -228,7 +228,7 @@ class AttachmentPoint(Node):
 
 
 class RibHole(object):
-    def __init__(self, pos, size=0.5, vertical_shift=0.0, rotation=0.0, shape='ellipse', available_height=None):
+    def __init__(self, pos, size=0.5, vertical_shift=0.0, rotation=0.0, shape='ellipse', available_height=None, custom_points=None, corner_radius=0.25):
         self.pos = pos
         if isinstance(size, (list, tuple, np.ndarray)):
             self.size = np.array(list(size))
@@ -238,6 +238,8 @@ class RibHole(object):
         self.rotation = rotation  # rotation about p1
         self.shape = shape
         self.available_height = available_height
+        self.custom_points = custom_points
+        self.corner_radius = corner_radius  # Corner radius for rounded rectangles
 
     def get_3d(self, rib, num=20):
         hole = self.get_points(rib, num=num, available_height=self.available_height)
@@ -248,9 +250,14 @@ class RibHole(object):
         if scale:
             points *= rib.chord
         return PolyLine2D(points)
-        # return Polygon(p1, p2, num=num, scale=self.size, is_center=False)[0]
 
     def get_points(self, rib, num=80, available_height=None):
+        if self.custom_points is not None:
+             # If custom_points are provided, return them directly.
+             # They are assumed to be in the rib's local coordinate system (normalized if scale=False context, but RibHole usually handles normalized)
+             # Based on apply_holes logic, we will pass normalized coordinates.
+             return PolyLine2D(self.custom_points, name=f"{rib.name}-hole")
+
         prof = rib.profile_2d
         p1 = prof[prof(self.pos)]  # Lower surface point
         p2 = prof[prof(-self.pos)] # Upper surface point
@@ -279,7 +286,7 @@ class RibHole(object):
                 shape_points.append([x, y])
             shape_poly = np.array(shape_points)
         else:  # rounded rectangle
-            shape_poly = self.create_rounded_rectangle(num, final_width, final_height)
+            shape_poly = self.create_rounded_rectangle(num, final_width, final_height, self.corner_radius)
 
         # Determine final center position
         # Note: self.vertical_shift is now an absolute shift in the local frame
@@ -297,13 +304,23 @@ class RibHole(object):
 
         return PolyLine2D(shape_poly, name=f"{rib.name}-hole")
 
-    def create_rounded_rectangle(self, num, width, height, radius_ratio=0.25):
-        radius = min(width, height) * radius_ratio
+    def create_rounded_rectangle(self, num, width, height, corner_radius=0.005):
+        # corner_radius is treated as a ratio of min(width, height)
+        # Default 0.25 = 25% of smallest dimension for backward compatibility
+        # If corner_radius > 1, assume it was passed as absolute and convert
+        if corner_radius > 1.0:
+            # Assume it was passed in same units as width/height, convert to ratio
+            radius = min(corner_radius, min(width, height) / 2.0)
+        else:
+            # Treat as ratio
+            radius = min(width, height) * corner_radius
+        
+        if radius < 0: radius = 0
         if radius > width / 2.0: radius = width / 2.0
         if radius > height / 2.0: radius = height / 2.0
 
-        w = width / 2.0 - radius
-        h = height / 2.0 - radius
+        w = max(0.0, width / 2.0 - radius)
+        h = max(0.0, height / 2.0 - radius)
 
         points = []
         num_corner = max(2, num // 4)
@@ -328,11 +345,25 @@ class RibHole(object):
         for angle in np.linspace(3*np.pi/2, 2*np.pi, num_corner):
             points.append((center_x + radius * np.cos(angle), center_y + radius * np.sin(angle)))
 
-        points.append(points[0]) # Close the loop
-
         return np.array(points)
 
     def get_center(self, rib, scale=True):
+        if self.custom_points is not None:
+             # Calculate centroid of custom points
+             # custom_points is list of [x, y] or numpy arrays
+             # Exclude the last point if it closes the loop (same as first point)
+             points = [np.array(p) for p in self.custom_points]
+             if len(points) > 1:
+                 # Check if last point is same as first (closed polygon)
+                 if np.linalg.norm(points[0] - points[-1]) < 1e-9:
+                     points = points[:-1]
+             if len(points) == 0:
+                 return np.array([0.0, 0.0])
+             center = np.mean(points, axis=0)
+             if scale:
+                 center = center * rib.chord
+             return center
+
         prof = rib.profile_2d
         p1 = prof[prof(self.pos)]
         p2 = prof[prof(-self.pos)]
@@ -354,6 +385,7 @@ class RibHole(object):
             "vertical_shift": self.vertical_shift,
             "rotation": self.rotation,
             "shape": self.shape,
+            "corner_radius": self.corner_radius,
         }
 
 class Mylar(object):
