@@ -215,25 +215,26 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         main_layout = QtGui.QVBoxLayout(self)
         
         # === Point Pilote ===
-        lower_group = QtGui.QGroupBox("Point Pilote")
+        lower_group = QtGui.QGroupBox("Point Pilote (X=envergure, Y=corde, Z=hauteur)")
         lower_layout = QtGui.QFormLayout(lower_group)
         
-        # Écartement ventral (width along span between risers)
-        self.ecartement_ventral = QtGui.QDoubleSpinBox()
-        self.ecartement_ventral.setRange(0, 1.0)
-        self.ecartement_ventral.setValue(0.4)
-        self.ecartement_ventral.setSingleStep(0.05)
-        self.ecartement_ventral.setSuffix(" m")
-        lower_layout.addRow("Écartement ventral:", self.ecartement_ventral)
+        # Demi-écartement (X - span direction)
+        self.demi_ecartement = QtGui.QDoubleSpinBox()
+        self.demi_ecartement.setRange(0, 2.0)
+        self.demi_ecartement.setValue(0.2)
+        self.demi_ecartement.setSingleStep(0.05)
+        self.demi_ecartement.setSuffix(" m")
+        lower_layout.addRow("Demi-écartement:", self.demi_ecartement)
         
-        # Profondeur pilote (position along chord, 0=leading edge, 1=trailing edge)
-        self.profondeur_pilote = QtGui.QDoubleSpinBox()
-        self.profondeur_pilote.setRange(0, 100)
-        self.profondeur_pilote.setValue(30)
-        self.profondeur_pilote.setSuffix(" %")
-        lower_layout.addRow("Profondeur (% corde):", self.profondeur_pilote)
+        # Profondeur (Y - chord direction, from leading edge)
+        self.profondeur = QtGui.QDoubleSpinBox()
+        self.profondeur.setRange(-5, 5)
+        self.profondeur.setValue(0.5)
+        self.profondeur.setSingleStep(0.1)
+        self.profondeur.setSuffix(" m")
+        lower_layout.addRow("Profondeur:", self.profondeur)
         
-        # Hauteur cône de suspentage
+        # Hauteur cône (Z - height below wing)
         self.hauteur_cone = QtGui.QDoubleSpinBox()
         self.hauteur_cone.setRange(1, 15)
         self.hauteur_cone.setValue(7)
@@ -381,9 +382,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             inter = max(0.5, basses - 1.0)
         
         return {
-            "ecartement_ventral": self.ecartement_ventral.value(),
-            "profondeur_pilote": self.profondeur_pilote.value() / 100.0,  # 0-1
-            "hauteur_cone": self.hauteur_cone.value(),
+            "demi_ecartement": self.demi_ecartement.value(),  # X - span
+            "profondeur": self.profondeur.value(),            # Y - chord
+            "hauteur_cone": self.hauteur_cone.value(),        # Z - height
             "riser_length": self.riser_length.value(),
             "basses_length": basses,
             "inter_length": inter,
@@ -398,32 +399,12 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         config = self.get_configuration()
         lines = []
         
-        # Calculate lower position from parameters
-        # profondeur_pilote: position along chord (0% = leading edge, 100% = trailing edge)
-        # écartement_ventral: total width between risers, divide by 2 for half-wing
-        
-        # Get maximum chord from shape for profondeur calculation
-        try:
-            shape = self.parametric_glider.shape.get_half_shape()
-            # Find max chord (typically at center)
-            max_chord = 0
-            max_chord_y_front = 0
-            for i in range(len(shape.front)):
-                chord = abs(shape.back[i][1] - shape.front[i][1])
-                if chord > max_chord:
-                    max_chord = chord
-                    max_chord_y_front = shape.front[i][1]
-            
-            # Position pilote at profondeur % of max chord from leading edge
-            lower_y = max_chord_y_front + config["profondeur_pilote"] * max_chord
-        except:
-            lower_y = config["profondeur_pilote"] * 2  # Fallback
-        
-        # X position: écartement/2 for half-wing (center of half écartement)
-        half_ecartement = config["ecartement_ventral"] / 2
-        lower_x = half_ecartement / 2  # Center of the half
-        
-        # Z position: negative hauteur (below the wing)
+        # Point Pilote coordinates (raw values from user)
+        # X = demi-écartement (span direction)
+        # Y = profondeur (chord direction)
+        # Z = -hauteur_cone (below wing)
+        lower_x = config["demi_ecartement"]
+        lower_y = config["profondeur"]
         lower_z = -config["hauteur_cone"]
         
         # Single main lower node (point pilote)
@@ -439,9 +420,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                   if config["line_types"][lt]["enabled"]]
         
         # Create riser for each enabled type
-        # Risers spread along X using half_ecartement
+        # Spread risers slightly around the pilote X position
         riser_nodes = {}
-        riser_spread = half_ecartement * 0.8  # Use 80% of half écartement for riser spread
+        riser_spread = 0.15  # Small spread for risers
         
         for i, lt in enumerate(enabled):
             if len(enabled) > 1:
@@ -494,7 +475,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             )
             
             # Stabilo riser - position at outer edge
-            stab_riser_x = lower_x + half_ecartement * 0.6
+            stab_riser_x = lower_x + riser_spread + 0.1
             stab_riser = BatchNode2D(
                 pos_2D=[stab_riser_x, lower_z + config["riser_length"]],
                 name="riser_S",
