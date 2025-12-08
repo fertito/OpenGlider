@@ -286,6 +286,8 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         
     def _update_info(self):
         """Update the info label with current configuration summary."""
+        if not hasattr(self, 'info_label'):
+            return
         count = self._count_attachment_points()
         self.info_label.setText(f"Points d'attache estimés: {count}")
         
@@ -405,7 +407,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             stabilo_line = Line2D(
                 lower_node=lower_node,
                 upper_node=stabilo_node,
-                target_length=None,
+                target_length=1.0,  # Default length, will be recalculated
                 line_type=config["line_type_name"],
                 layer="S",
                 name="S1",
@@ -484,7 +486,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 line = Line2D(
                     lower_node=lower_node,
                     upper_node=node,
-                    target_length=None,
+                    target_length=1.0,  # Default length
                     line_type=line_type_name,
                     layer=layer,
                     name=node.name,
@@ -523,7 +525,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                         line = Line2D(
                             lower_node=batch_node,
                             upper_node=node,
-                            target_length=None,
+                            target_length=1.0,  # Default length
                             line_type=line_type_name,
                             layer=layer,
                             name=f"{layer}_l{level}_{i + j}",
@@ -539,7 +541,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             line = Line2D(
                 lower_node=lower_node,
                 upper_node=node,
-                target_length=None,
+                target_length=1.0,  # Default length
                 line_type=line_type_name,
                 layer=layer,
                 name=f"{layer}_main_{i}",
