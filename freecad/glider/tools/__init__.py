@@ -18,6 +18,7 @@ from . import (
     features,
     line_tool,
     holedesign_tool,
+    miniribs_tool,
 )
 from . import panel_method as pm
 from . import shape_tool, span_mapping
@@ -318,6 +319,18 @@ class BallooningCommand(BaseCommand):
 
     def tool(self, obj):
         return ballooning_tool.BallooningTool(obj)
+
+
+class MiniRibsCommand(BaseCommand):
+    def GetResources(self):
+        return {
+            "Pixmap": "miniribs_command.svg",
+            "MenuText": "mini ribs",
+            "ToolTip": "create/modify mini ribs",
+        }
+
+    def tool(self, obj):
+        return miniribs_tool.MiniRibsTool(obj)
 
 
 class BallooningMergCommand(BaseCommand):

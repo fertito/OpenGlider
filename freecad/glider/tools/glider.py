@@ -638,6 +638,14 @@ def draw_glider(
         for rib in glider.ribs:
             if not rib.profile_2d.has_zero_thickness:
                 msh += rib.get_mesh(hole_num, glider=glider, filled=fill_ribs)
+
+        for cell in glider.cells:
+            for minirib in cell.miniribs:
+                try:
+                    msh += minirib.get_mesh(cell, filled=fill_ribs)
+                except Exception as e:
+                    print(f"Failed to render minirib in cell {cell.name}: {e}")
+
         if msh.vertices is not None:
             rib_sep += [mesh_sep(msh, (0.3, 0.3, 0.3), draw_lines=not fill_ribs)]
 
