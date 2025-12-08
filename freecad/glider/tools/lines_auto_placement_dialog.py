@@ -399,12 +399,29 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         lines = []
         
         # Calculate lower position from parameters
-        # X = profondeur (along chord), Y = 0, Z = -hauteur_cone
-        lower_x = config["profondeur_pilote"] * 2 - 1  # Convert 0-1 to roughly -1 to 1
-        lower_y = 0
+        # In 2D view: X = span direction, Y = chord/height direction
+        # profondeur_pilote: 0% = leading edge, 100% = trailing edge
+        # For 2D view, we use Y for the chord position (front/back)
+        # écartement_ventral: total width, divide by 2 for half-wing
+        
+        # Get reference chord position from shape
+        try:
+            # Get average chord position at 30% (or profondeur_pilote %)
+            # Using the center rib as reference
+            center_front = self.parametric_glider.shape[0, 0]  # Leading edge center
+            center_back = self.parametric_glider.shape[0, 1]   # Trailing edge center
+            chord_length = abs(center_back[1] - center_front[1])
+            lower_y = center_front[1] + config["profondeur_pilote"] * chord_length
+        except:
+            lower_y = config["profondeur_pilote"] * 2  # Fallback
+        
+        # X position: at center for half-wing (écartement/2 will offset risers outward)
+        lower_x = config["ecartement_ventral"] / 2  # Half of écartement for half-wing
+        
+        # Z position: negative hauteur (below the wing)
         lower_z = -config["hauteur_cone"]
         
-        # Single main lower node
+        # Single main lower node (point pilote)
         main_lower = LowerNode2D(
             pos_2D=[lower_x, lower_z],
             pos_3D=[lower_x, lower_y, lower_z],
@@ -417,15 +434,21 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                   if config["line_types"][lt]["enabled"]]
         
         # Create riser for each enabled type
-        # Use écartement_ventral for spacing
+        # Risers spread outward from center using half of écartement_ventral
         riser_nodes = {}
-        total_width = config["ecartement_ventral"]
-        spacing = total_width / max(1, len(enabled) - 1) if len(enabled) > 1 else 0
+        half_ecartement = config["ecartement_ventral"] / 2  # For half-wing
         
+        # Distribute risers along the span (X direction)
+        # All risers start from the same Y position (chord) as pilote
         for i, lt in enumerate(enabled):
-            offset = (i - (len(enabled) - 1) / 2) * spacing
+            # Spread risers across the half écartement
+            if len(enabled) > 1:
+                riser_x = lower_x + (i / (len(enabled) - 1)) * half_ecartement * 0.5
+            else:
+                riser_x = lower_x
+            
             riser = BatchNode2D(
-                pos_2D=[lower_x + offset, lower_z + config["riser_length"]],
+                pos_2D=[riser_x, lower_z + config["riser_length"]],
                 name=f"riser_{lt}",
                 layer=lt,
             )
