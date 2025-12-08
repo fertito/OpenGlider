@@ -345,6 +345,10 @@ class RibHole(object):
         for angle in np.linspace(3*np.pi/2, 2*np.pi, num_corner):
             points.append((center_x + radius * np.cos(angle), center_y + radius * np.sin(angle)))
 
+        # Close the polygon (add first point at the end)
+        if len(points) > 0:
+            points.append(points[0])
+
         return np.array(points)
 
     def get_center(self, rib, scale=True):

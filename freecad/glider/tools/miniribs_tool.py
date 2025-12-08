@@ -71,11 +71,13 @@ class MiniRibsTool(BaseTool):
         self.update_view_glider()
         self.miniribs_table.hide()
         del self.miniribs_table
+        self.task_separator.removeAllChildren()  # Clean up visualization
         super(MiniRibsTool, self).accept()
 
     def reject(self):
         self.miniribs_table.hide()
         del self.miniribs_table
+        self.task_separator.removeAllChildren()  # Clean up visualization
         super(MiniRibsTool, self).reject()
 
 
@@ -153,10 +155,11 @@ class miniribs_table(base_table_widget):
         if len(str_row) != 6:
             return None
         try:
-            return list(map(float, str_row[:-1])) + [
-                list(map(int, str_row[-1].split(",")))
-            ]
-        except TypeError as e:
+            # Replace comma with dot for French locale decimal separator
+            float_values = [float(s.replace(',', '.')) for s in str_row[:-1]]
+            cell_values = list(map(int, str_row[-1].replace(' ', '').split(",")))
+            return float_values + [cell_values]
+        except (TypeError, ValueError) as e:
             print(e)
             print("something wrong with row " + str(n_row))
             return None
