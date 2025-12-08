@@ -59,12 +59,57 @@ class PatternsNew(object):
         straps.insert_attachment_points(add_text=False)
         straps.insert_straps()
 
+        # Mini Ribs Layout
+        from openglider.vector.drawing import PlotPart, Layout
+
+        minirib_parts = []
+        # Iterate over cells to find miniribs
+        if hasattr(self.project.glider_3d, "cells"):
+             for cell in self.project.glider_3d.cells:
+                 if hasattr(cell, "miniribs"):
+                     for mr in cell.miniribs:
+                         try:
+                             # Get flattened shape with seam allowance
+                             inner, outer = mr.get_flattened_with_allowance(
+                                 cell, 
+                                 allowance=self.config.allowance_general
+                             )
+                             if outer is None:
+                                 continue
+                             
+                             # Create PlotPart with proper layers
+                             part_name = getattr(mr, "name", "minirib")
+                             part = PlotPart(
+                                 name=part_name,
+                                 material_code="miniribs"  # Material code for grouping
+                             )
+                             # Outer = cut line, Inner = stitch line
+                             part.layers["cuts"].append(outer)
+                             part.layers["stitches"].append(inner)
+                             
+                             minirib_parts.append(part)
+                         except Exception as e:
+                             print(f"Failed to plot minirib {mr.name}: {e}")
+        
+        # Arrange miniribs in a row
+        if minirib_parts:
+            miniribs_layout = Layout.stack_row(
+                minirib_parts, 
+                self.config.patterns_align_dist_x
+            )
+            # Add border frame
+            miniribs_layout.draw_border(border=0.02)
+            miniribs_layout.add_text("miniribs")
+        else:
+            miniribs_layout = Layout()
+
         drawings: List[Layout] = [
             design_upper.drawing,
             design_lower.drawing,
             lineplan.drawing,
             diagonals.drawing,
             straps.drawing,
+            miniribs_layout, # Add miniribs here
         ]
 
         drawings_width = max([dwg.width for dwg in drawings])

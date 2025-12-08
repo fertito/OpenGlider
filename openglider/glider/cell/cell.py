@@ -191,15 +191,31 @@ class Cell(CachedObject):
         return panels
 
     def _make_profile3d_from_minirib(self, minirib):
-        # self.basic_cell.prof1 = self.prof1
-        # self.basic_cell.prof2 = self.prof2
-        shape_with_ballooning = self.basic_cell.midrib(minirib.y_value, True).data
-        shape_without_ballooning = self.basic_cell.midrib(minirib.y_value, False).data
+        """
+        Create the 3D profile at a minirib position.
+        For constrained points (function=0), use the exact rib profile shape.
+        For unconstrained points (function=1), use the ballooned shape.
+        """
+        y = minirib.y_value
+        
+        # Interpolate chord for fixed distance calculations
+        chord = self.rib1.chord * (1 - y) + self.rib2.chord * y
+        
+        # Get ballooned shape from basic_cell
+        shape_with_ballooning = self.basic_cell.midrib(y, True).data
+        
+        # Get unballooned shape by direct interpolation of rib profiles
+        # This ensures the exact profile shape is used (matching MiniRib.get_3d)
+        prof1_3d = self.rib1.profile_3d.data
+        prof2_3d = self.rib2.profile_3d.data
+        shape_without_ballooning = prof1_3d * (1 - y) + prof2_3d * y
+        
         points = []
         for xval, with_bal, without_bal in zip(
             self.x_values, shape_with_ballooning, shape_without_ballooning
         ):
-            fakt = minirib.function(xval)  # factor ballooned/unb. (0-1)
+            # Pass chord for fixed distance calculation
+            fakt = minirib.function(xval, chord=chord)
             point = without_bal + fakt * (with_bal - without_bal)
             points.append(point)
         return Profile3D(points)
@@ -231,11 +247,9 @@ class Cell(CachedObject):
             for c in cells:
                 if bl > 0:
                     newval = l / lnew * (bl + 1 / 2) - 1 / 2
-                    # newval = l/lnew / bl
-                    # newval = lnew / l / bl if bl != 0 else 1
                     c.ballooning_phi.append(
                         Ballooning.arcsinc(1 / (1 + newval))
-                    )  # B/L NEW 1 / (bl * l / lnew)
+                    )
                 else:
                     c.ballooning_phi.append(0.0)
         return cells
