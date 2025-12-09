@@ -124,19 +124,75 @@ class DiagonalRib(object):
         """
 
         def get_list(rib, cut_front, cut_back):
-            # Is it at 0 or 1?
-            if cut_back[1] == cut_front[1] and cut_front[1] in (-1, 1):
-                side = -cut_front[1]  # -1 -> lower, 1->upper
-                front = rib.profile_2d(cut_front[0] * side)
-                back = rib.profile_2d(cut_back[0] * side)
-                return rib.profile_3d[front:back]
-            else:
-                return PolyLine(
-                    [
-                        rib.align(rib.profile_2d.align(p) + [0])
-                        for p in (cut_front, cut_back)
-                    ]
-                )
+            # Check if front and back are at the same height
+            if cut_back[1] == cut_front[1]:
+                height = cut_front[1]
+                
+                # Exact surface (height = 1 or -1): use profile slice directly
+                if height in (-1, 1):
+                    side = -height  # -1 -> lower, 1 -> upper
+                    front = rib.profile_2d(cut_front[0] * side)
+                    back = rib.profile_2d(cut_back[0] * side)
+                    return rib.profile_3d[front:back]
+                
+                # Near surface with offset (e.g., height = 0.75 means 25% offset from extrados)
+                elif abs(height) > 0.5:
+                    # Determine which surface we're near
+                    if height > 0:
+                        # Near extrados (upper surface)
+                        side = -1  # upper surface
+                    else:
+                        # Near intrados (lower surface)
+                        side = 1  # lower surface
+                    
+                    # Get profile indices for the surface curve
+                    front_idx = rib.profile_2d(cut_front[0] * side)
+                    back_idx = rib.profile_2d(cut_back[0] * side)
+                    
+                    # Get the surface curve points
+                    surface_curve = rib.profile_3d[front_idx:back_idx]
+                    
+                    if len(surface_curve) < 2:
+                        # Fallback to straight line
+                        return PolyLine([
+                            rib.align(rib.profile_2d.align(p) + [0])
+                            for p in (cut_front, cut_back)
+                        ])
+                    
+                    # Calculate offset factor: height=1.0 -> 0 offset, height=0.75 -> 0.125 (towards center)
+                    # The offset moves points toward the chord line (center of profile)
+                    offset_factor = (1.0 - abs(height)) / 2.0  # Divide by 2 since height range is 2 (-1 to 1)
+                    
+                    # Apply offset to each point on the surface curve
+                    offset_points = []
+                    num_points = len(surface_curve)
+                    
+                    for i, surface_pt in enumerate(surface_curve):
+                        # Calculate x position for this point (interpolate between front and back)
+                        t = i / max(1, num_points - 1)
+                        x_pos = cut_front[0] + (cut_back[0] - cut_front[0]) * t
+                        
+                        # Get the opposite surface point at the same x position
+                        try:
+                            opposite_2d = rib.profile_2d.profilepoint(x_pos, h=-height)
+                            opposite_pt = rib.align(np.array([opposite_2d[0], opposite_2d[1], 0]))
+                        except:
+                            opposite_pt = surface_pt
+                        
+                        # Interpolate between surface point and opposite point
+                        # offset_factor=0 means stay on surface, offset_factor=0.25 means 25% toward opposite
+                        offset_pt = surface_pt * (1 - offset_factor) + opposite_pt * offset_factor
+                        offset_points.append(offset_pt)
+                    
+                    return PolyLine(offset_points)
+            
+            # Fallback: straight line between two points (different heights on front/back)
+            return PolyLine(
+                [
+                    rib.align(rib.profile_2d.align(p) + [0])
+                    for p in (cut_front, cut_back)
+                ]
+            )
 
         left = get_list(cell.rib1, self.left_front, self.left_back)
         right = get_list(cell.rib2, self.right_front, self.right_back)
