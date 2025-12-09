@@ -657,6 +657,97 @@ class DribPlot(object):
             PolyLine2D([self.left[len(self.left) - 1], self.right[len(self.right) - 1]])
         )
 
+        # Add front/back reference marks in the seam allowance
+        # Front edge marks (at index 0)
+        front_left = self.left_out[0]
+        front_right = self.right_out[0]
+        front_mid = (np.array(front_left) + np.array(front_right)) / 2
+        
+        # Back edge marks (at last index)
+        back_left = self.left_out[len(self.left_out) - 1]
+        back_right = self.right_out[len(self.right_out) - 1]
+        back_mid = (np.array(back_left) + np.array(back_right)) / 2
+        
+        # Direction from front to back (for arrow orientation)
+        direction = back_mid - front_mid
+        dir_len = norm(direction)
+        if dir_len > 1e-10:
+            direction = direction / dir_len
+        else:
+            direction = np.array([0, 1])
+        
+        # Perpendicular direction
+        perp = np.array([-direction[1], direction[0]])
+        
+        # Arrow size
+        arrow_size = 0.005  # 5mm
+        
+        # Front mark: single arrow pointing forward (toward back)
+        front_arrow_tip = front_mid + direction * arrow_size
+        front_arrow_left = front_mid - direction * arrow_size * 0.5 + perp * arrow_size * 0.5
+        front_arrow_right = front_mid - direction * arrow_size * 0.5 - perp * arrow_size * 0.5
+        plotpart.layers["marks"].append(PolyLine2D([front_arrow_left, front_arrow_tip, front_arrow_right]))
+        
+        # Back mark: double line (two parallel lines)
+        back_line1_start = back_mid - perp * arrow_size * 0.5
+        back_line1_end = back_mid + perp * arrow_size * 0.5
+        back_line2_start = back_mid - direction * arrow_size * 0.3 - perp * arrow_size * 0.5
+        back_line2_end = back_mid - direction * arrow_size * 0.3 + perp * arrow_size * 0.5
+        plotpart.layers["marks"].append(PolyLine2D([back_line1_start, back_line1_end]))
+        plotpart.layers["marks"].append(PolyLine2D([back_line2_start, back_line2_end]))
+        
+        # Add dot marks at top of diagonal (in seam allowance on left and right sides)
+        # These help identify front vs back when viewing the piece
+        dot_size = 0.001  # 1mm dot represented as small cross
+        
+        # Find middle point along left edge (in seam allowance)
+        left_mid_idx = len(self.left_out) // 2
+        left_mid_inner = np.array(self.left[len(self.left) // 2])
+        left_mid_outer = np.array(self.left_out[left_mid_idx])
+        
+        # Direction from inner to outer (into seam allowance)
+        left_seam_dir = left_mid_outer - left_mid_inner
+        left_seam_len = norm(left_seam_dir)
+        if left_seam_len > 1e-10:
+            left_seam_dir = left_seam_dir / left_seam_len
+        
+        # 2 dots toward front (left side = front in standard orientation)
+        dot1_pos = left_mid_outer - left_seam_dir * 0.002  # 2mm from edge
+        dot2_pos = left_mid_outer - left_seam_dir * 0.005  # 5mm from edge
+        
+        # Small cross for each dot
+        for dot_pos in [dot1_pos, dot2_pos]:
+            plotpart.layers["marks"].append(PolyLine2D([
+                dot_pos + np.array([-dot_size, 0]),
+                dot_pos + np.array([dot_size, 0])
+            ]))
+            plotpart.layers["marks"].append(PolyLine2D([
+                dot_pos + np.array([0, -dot_size]),
+                dot_pos + np.array([0, dot_size])
+            ]))
+        
+        # Find middle point along right edge (in seam allowance)
+        right_mid_idx = len(self.right_out) // 2
+        right_mid_inner = np.array(self.right[len(self.right) // 2])
+        right_mid_outer = np.array(self.right_out[right_mid_idx])
+        
+        # Direction from inner to outer (into seam allowance)
+        right_seam_dir = right_mid_outer - right_mid_inner
+        right_seam_len = norm(right_seam_dir)
+        if right_seam_len > 1e-10:
+            right_seam_dir = right_seam_dir / right_seam_len
+        
+        # 1 dot toward back (right side = back in standard orientation)
+        dot3_pos = right_mid_outer - right_seam_dir * 0.003  # 3mm from edge
+        plotpart.layers["marks"].append(PolyLine2D([
+            dot3_pos + np.array([-dot_size, 0]),
+            dot3_pos + np.array([dot_size, 0])
+        ]))
+        plotpart.layers["marks"].append(PolyLine2D([
+            dot3_pos + np.array([0, -dot_size]),
+            dot3_pos + np.array([0, dot_size])
+        ]))
+
         plotpart.layers["stitches"] += [self.left, self.right]
 
         self._insert_attachment_points(plotpart, attachment_points)

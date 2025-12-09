@@ -135,21 +135,24 @@ class DiagonalRib(object):
                     back = rib.profile_2d(cut_back[0] * side)
                     return rib.profile_3d[front:back]
                 
-                # Near surface with offset (e.g., height = 0.75 means 25% offset from extrados)
+                # Near surface with offset
+                # Height encodes offset ratio from surface
                 elif abs(height) > 0.5:
                     # Determine which surface we're near
                     if height > 0:
                         # Near extrados (upper surface)
                         side = -1  # upper surface
+                        offset_direction = -1  # offset inward (toward intrados)
                     else:
                         # Near intrados (lower surface)
                         side = 1  # lower surface
+                        offset_direction = 1  # offset inward (toward extrados)
                     
                     # Get profile indices for the surface curve
                     front_idx = rib.profile_2d(cut_front[0] * side)
                     back_idx = rib.profile_2d(cut_back[0] * side)
                     
-                    # Get the surface curve points
+                    # Get the surface curve points from profile_3d
                     surface_curve = rib.profile_3d[front_idx:back_idx]
                     
                     if len(surface_curve) < 2:
@@ -159,29 +162,61 @@ class DiagonalRib(object):
                             for p in (cut_front, cut_back)
                         ])
                     
-                    # Calculate offset factor: height=1.0 -> 0 offset, height=0.75 -> 0.125 (towards center)
-                    # The offset moves points toward the chord line (center of profile)
-                    offset_factor = (1.0 - abs(height)) / 2.0  # Divide by 2 since height range is 2 (-1 to 1)
+                    chord = rib.chord  # In meters
                     
-                    # Apply offset to each point on the surface curve
+                    # Apply offset to each point on the surface curve using local normals
                     offset_points = []
                     num_points = len(surface_curve)
                     
-                    for i, surface_pt in enumerate(surface_curve):
-                        # Calculate x position for this point (interpolate between front and back)
+                    for i in range(num_points):
+                        pt = surface_curve[i]
+                        
+                        # Calculate x position for this point
                         t = i / max(1, num_points - 1)
                         x_pos = cut_front[0] + (cut_back[0] - cut_front[0]) * t
                         
-                        # Get the opposite surface point at the same x position
+                        # Get REAL thickness at this x position from profile
                         try:
-                            opposite_2d = rib.profile_2d.profilepoint(x_pos, h=-height)
-                            opposite_pt = rib.align(np.array([opposite_2d[0], opposite_2d[1], 0]))
+                            upper_pt = rib.profile_2d.profilepoint(abs(x_pos), h=1.0)
+                            lower_pt = rib.profile_2d.profilepoint(abs(x_pos), h=-1.0)
+                            local_thickness_norm = upper_pt[1] - lower_pt[1]  # Normalized 0-1
+                            local_thickness = local_thickness_norm * chord  # In meters
                         except:
-                            opposite_pt = surface_pt
+                            local_thickness = chord * 0.12  # Fallback to 12%
                         
-                        # Interpolate between surface point and opposite point
-                        # offset_factor=0 means stay on surface, offset_factor=0.25 means 25% toward opposite
-                        offset_pt = surface_pt * (1 - offset_factor) + opposite_pt * offset_factor
+                        # Calculate offset distance from height encoding
+                        # height = 1.0 - (offset_mm / 10 / thickness_cm) * 2
+                        # offset_mm = (1.0 - height) * thickness_cm * 10 / 2
+                        # offset_m = (1.0 - height) * thickness_m / 2
+                        height_offset_ratio = 1.0 - abs(height)
+                        offset_distance = height_offset_ratio * local_thickness / 2
+                        
+                        # Calculate local normal (perpendicular to surface)
+                        if i == 0:
+                            tangent = surface_curve[1] - surface_curve[0]
+                        elif i == num_points - 1:
+                            tangent = surface_curve[-1] - surface_curve[-2]
+                        else:
+                            tangent = surface_curve[i + 1] - surface_curve[i - 1]
+                        
+                        # Normalize tangent
+                        tangent_len = norm(tangent)
+                        if tangent_len > 1e-10:
+                            tangent = tangent / tangent_len
+                        else:
+                            tangent = np.array([1, 0, 0])
+                        
+                        # Normal is perpendicular to tangent in the rib plane
+                        span_dir = np.array([0, 1, 0])  # Approximate span direction
+                        normal = np.cross(tangent, span_dir)
+                        normal_len = norm(normal)
+                        if normal_len > 1e-10:
+                            normal = normal / normal_len
+                        else:
+                            normal = np.array([0, 0, offset_direction])
+                        
+                        # Apply offset in normal direction (inward)
+                        offset_pt = pt + normal * offset_distance * offset_direction
                         offset_points.append(offset_pt)
                     
                     return PolyLine(offset_points)
