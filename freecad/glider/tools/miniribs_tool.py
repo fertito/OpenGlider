@@ -226,7 +226,9 @@ class MiniRibsTool(BaseTool):
 
     def apply_elements(self):
         self.miniribs_table.apply_to_glider(self.parametric_glider)
-        self.update_preview()
+        # Only update preview if preview_root exists (may be called during init)
+        if hasattr(self, 'preview_root'):
+            self.update_preview()
 
     def accept(self):
         self.apply_elements()
