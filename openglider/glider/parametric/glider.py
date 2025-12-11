@@ -361,7 +361,7 @@ class ParametricGlider(object):
                 rib.reinforcements = []
             return
         
-        apply_all = getattr(self, 'reinforcement_apply_all_s', True)
+        apply_all = getattr(self, 'reinforcement_apply_all_s', False)
         master_config = getattr(self, 'reinforcement_master_s', {})
         configs = getattr(self, 'reinforcement_configs_s', [])
         

@@ -382,6 +382,16 @@ class AirfoilStructureTool(BaseTool):
         # Set initial visibility of reinforcement group (only for suspended)
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
         self.reinforcementGroupBox.setVisible(is_suspended)
+        
+        # Always initialize reinforcement tabs (even if Non-Suspended is selected)
+        # so they're ready when switching to Suspended
+        rib = self.get_first_suspended_rib()
+        if rib:
+            valid_aps = self.get_valid_attachment_points(rib)
+            self.update_reinforcement_tabs(valid_aps)
+        
+        # Ensure correct stack widget is shown
+        self.on_reinforcement_mode_change(None)
 
     def setup_pivy(self):
         self.task_separator.addChild(self.preview_root)
@@ -643,7 +653,7 @@ class AirfoilStructureTool(BaseTool):
             
             # Global Enable/ApplyAll
             self.reinforcementEnabledCheckBox.setChecked(getattr(pg, 'reinforcement_enabled_s', True))
-            apply_all = getattr(pg, 'reinforcement_apply_all_s', True)
+            apply_all = getattr(pg, 'reinforcement_apply_all_s', False)
             self.reinforcementApplyAllCheckBox.setChecked(apply_all)
             self.on_reinforcement_mode_change(None) # Update stack
 
@@ -694,7 +704,7 @@ class AirfoilStructureTool(BaseTool):
                 rib.reinforcements = []
             return
         
-        apply_all = getattr(pg, 'reinforcement_apply_all_s', True)
+        apply_all = getattr(pg, 'reinforcement_apply_all_s', False)
         master_config = getattr(pg, 'reinforcement_master_s', {})
         configs = getattr(pg, 'reinforcement_configs_s', [])
         
