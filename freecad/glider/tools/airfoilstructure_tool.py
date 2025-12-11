@@ -670,11 +670,68 @@ class AirfoilStructureTool(BaseTool):
                 # Non-suspended ribs don't get reinforcements
                 rib.reinforcements = []
 
+    def apply_rod_sleeves_to_ribs(self):
+        """Apply rod sleeve configurations to the actual rib objects for 2D export."""
+        from openglider.glider.rib.elements import RodSleeve
+        
+        pg = self.parametric_glider
+        glider_instance = self.obj.Proxy.getGliderInstance()
+        
+        # Identify suspended ribs
+        suspended_ribs = {att.rib for att in glider_instance.lineset.attachment_points if hasattr(att, 'rib')}
+        
+        for rib_idx, rib in enumerate(glider_instance.ribs):
+            is_suspended = rib in suspended_ribs
+            suffix = '_s' if is_suspended else '_ns'
+            
+            rod_sleeves = []
+            
+            # Get extrados sleeves
+            extrados_enabled = getattr(pg, f'extrados_sleeves_enabled{suffix}', True)
+            extrados_configs = getattr(pg, f'extrados_sleeves{suffix}', [])
+            
+            if extrados_enabled and extrados_configs:
+                for i, config in enumerate(extrados_configs):
+                    sleeve = RodSleeve(
+                        surface='extrados',
+                        width=config.get('width', 0.015),
+                        offset=config.get('offset', 0.005),
+                        start_chord=config.get('start_chord', 0.0),
+                        end_chord=config.get('end_chord', 0.7),
+                        le_angle=config.get('start_angle', 350.0),
+                        te_angle=config.get('end_angle', 325.0),
+                        le_length=config.get('start_length', 0.1),
+                        te_length=config.get('end_length', 0.075),
+                    )
+                    rod_sleeves.append(sleeve)
+            
+            # Get intrados sleeves
+            intrados_enabled = getattr(pg, f'intrados_sleeves_enabled{suffix}', True)
+            intrados_configs = getattr(pg, f'intrados_sleeves{suffix}', [])
+            
+            if intrados_enabled and intrados_configs:
+                for i, config in enumerate(intrados_configs):
+                    sleeve = RodSleeve(
+                        surface='intrados',
+                        width=config.get('width', 0.015),
+                        offset=config.get('offset', 0.005),
+                        start_chord=config.get('start_chord', 0.06),
+                        end_chord=config.get('end_chord', 0.5),
+                        le_angle=config.get('start_angle', 100.0),
+                        te_angle=config.get('end_angle', 20.0),
+                        le_length=config.get('start_length', 0.1),
+                        te_length=config.get('end_length', 0.09),
+                    )
+                    rod_sleeves.append(sleeve)
+            
+            rib.rod_sleeves = rod_sleeves
+
     def accept(self):
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
         self.update_glider_data(is_suspended)
-        # Apply reinforcements to ribs for 2D export
+        # Apply reinforcements and rod sleeves to ribs for 2D export
         self.apply_reinforcements_to_ribs()
+        self.apply_rod_sleeves_to_ribs()
         self.update_view_glider()
         super(AirfoilStructureTool, self).accept()
 
