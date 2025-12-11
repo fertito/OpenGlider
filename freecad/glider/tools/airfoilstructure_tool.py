@@ -298,6 +298,12 @@ class AirfoilStructureTool(BaseTool):
 
         self.applyButton = QtGui.QPushButton("Apply", self.base_widget)
 
+        # Preview rib selector
+        self.previewRibLabel = QtGui.QLabel("Preview Rib:")
+        self.previewRibSpinBox = QtGui.QSpinBox(self.base_widget)
+        self.previewRibSpinBox.setRange(0, self.get_num_ribs() - 1)
+        self.previewRibSpinBox.setValue(0)
+
         self.preview_root = coin.SoSeparator()
         self.setup_widget()
         self.setup_pivy()
@@ -316,6 +322,13 @@ class AirfoilStructureTool(BaseTool):
         self.reinforcementLayout.addRow(self.reinforcementStack)
         
         self.layout.addRow(self.reinforcementGroupBox)
+        
+        # Preview selector
+        preview_layout = QtGui.QHBoxLayout()
+        preview_layout.addWidget(self.previewRibLabel)
+        preview_layout.addWidget(self.previewRibSpinBox)
+        preview_layout.addStretch()
+        self.layout.addRow(preview_layout)
         
         # Apply button
         button_layout = QtGui.QHBoxLayout()
@@ -338,6 +351,7 @@ class AirfoilStructureTool(BaseTool):
         self.masterConfig.changed.connect(self.update_preview)
         
         self.ribTypeComboBox.currentIndexChanged.connect(self.on_rib_type_change)
+        self.previewRibSpinBox.valueChanged.connect(self.update_preview)
         self.applyButton.clicked.connect(self.accept)
 
         # Set initial visibility of reinforcement group (only for suspended)
@@ -349,13 +363,22 @@ class AirfoilStructureTool(BaseTool):
         self.update_preview()
         Gui.SendMsgToActiveView("ViewFit")
 
+    def get_num_ribs(self):
+        """Get total number of ribs."""
+        try:
+            glider_instance = self.obj.Proxy.getGliderInstance()
+            return len(glider_instance.ribs)
+        except:
+            return 1
+
     def get_representative_rib(self, suspended=False):
+        """Get rib for preview based on spinner selection."""
         glider_instance = self.obj.Proxy.getGliderInstance()
-        suspended_ribs = {att.rib for att in glider_instance.attachment_points if hasattr(att, 'rib')}
-        for rib in glider_instance.ribs:
-            if suspended == (rib in suspended_ribs):
-                return rib
-        return None
+        rib_idx = self.previewRibSpinBox.value()
+        
+        if rib_idx < len(glider_instance.ribs):
+            return glider_instance.ribs[rib_idx]
+        return glider_instance.ribs[0] if glider_instance.ribs else None
     
     def get_valid_attachment_points(self, rib):
         """Get attachment points < 90% chord."""
