@@ -102,6 +102,12 @@ class RodSleeveConfigWidget(QtGui.QWidget):
         self.endLengthSpinBox.setValue(75.0)
         self.layout.addRow("Length", self.endLengthSpinBox)
         
+        # Excluded ribs field
+        self.layout.addRow(QtGui.QLabel("<b>Exclusions</b>"))
+        self.excludedRibsEdit = QtGui.QLineEdit()
+        self.excludedRibsEdit.setPlaceholderText("e.g. 1, 3, 5 (rib numbers to exclude)")
+        self.layout.addRow("Excluded Ribs", self.excludedRibsEdit)
+        
         # Connect signals
         self.startSpinBox.valueChanged.connect(self.emit_changed)
         self.endSpinBox.valueChanged.connect(self.emit_changed)
@@ -111,9 +117,21 @@ class RodSleeveConfigWidget(QtGui.QWidget):
         self.startLengthSpinBox.valueChanged.connect(self.emit_changed)
         self.endAngleSpinBox.valueChanged.connect(self.emit_changed)
         self.endLengthSpinBox.valueChanged.connect(self.emit_changed)
+        self.excludedRibsEdit.textChanged.connect(self.emit_changed)
     
     def emit_changed(self):
         self.changed.emit()
+    
+    def get_excluded_ribs(self):
+        """Parse excluded ribs from text field. Returns list of 0-based indices."""
+        text = self.excludedRibsEdit.text().strip()
+        if not text:
+            return []
+        try:
+            # Parse comma-separated rib numbers (1-based from user, convert to 0-based)
+            return [int(x.strip()) - 1 for x in text.split(',') if x.strip().isdigit()]
+        except:
+            return []
     
     def get_values(self):
         return {
@@ -125,6 +143,7 @@ class RodSleeveConfigWidget(QtGui.QWidget):
             'start_length': self.startLengthSpinBox.value() / 1000.0,
             'end_angle': self.endAngleSpinBox.value(),
             'end_length': self.endLengthSpinBox.value() / 1000.0,
+            'excluded_ribs': self.get_excluded_ribs(),
         }
     
     def set_values(self, config):
@@ -138,6 +157,12 @@ class RodSleeveConfigWidget(QtGui.QWidget):
         self.startLengthSpinBox.setValue(config.get('start_length', 0.1) * 1000.0)
         self.endAngleSpinBox.setValue(config.get('end_angle', 325.0 if self.surface == 'extrados' else 20.0))
         self.endLengthSpinBox.setValue(config.get('end_length', 0.075) * 1000.0)
+        # Load excluded ribs (convert 0-based to 1-based for display)
+        excluded = config.get('excluded_ribs', [])
+        if excluded:
+            self.excludedRibsEdit.setText(', '.join(str(x + 1) for x in excluded))
+        else:
+            self.excludedRibsEdit.clear()
     
     def create_rod_sleeve(self):
         """Create a RodSleeve object from this widget's values."""
@@ -379,6 +404,15 @@ class AirfoilStructureTool(BaseTool):
         if rib_idx < len(glider_instance.ribs):
             return glider_instance.ribs[rib_idx]
         return glider_instance.ribs[0] if glider_instance.ribs else None
+
+    def get_first_suspended_rib(self):
+        """Get the first suspended rib for reinforcement configuration."""
+        glider_instance = self.obj.Proxy.getGliderInstance()
+        suspended_ribs = {att.rib for att in glider_instance.attachment_points if hasattr(att, 'rib')}
+        for rib in glider_instance.ribs:
+            if rib in suspended_ribs:
+                return rib
+        return glider_instance.ribs[0] if glider_instance.ribs else None
     
     def get_valid_attachment_points(self, rib):
         """Get attachment points < 90% chord."""
@@ -601,8 +635,8 @@ class AirfoilStructureTool(BaseTool):
 
         # Load reinforcement values (only for suspended)
         if is_suspended:
-            # Rebuild tabs first
-            rib = self.get_representative_rib(suspended=True)
+            # Rebuild tabs first - use first suspended rib to get attachment points
+            rib = self.get_first_suspended_rib()
             if rib:
                 valid_aps = self.get_valid_attachment_points(rib)
                 self.update_reinforcement_tabs(valid_aps)
@@ -715,6 +749,11 @@ class AirfoilStructureTool(BaseTool):
             
             if extrados_enabled and extrados_configs:
                 for i, config in enumerate(extrados_configs):
+                    # Check if this rib is excluded for this config
+                    excluded_ribs = config.get('excluded_ribs', [])
+                    if rib_idx in excluded_ribs:
+                        continue
+                    
                     sleeve = RodSleeve(
                         surface='extrados',
                         width=config.get('width', 0.015),
@@ -734,6 +773,11 @@ class AirfoilStructureTool(BaseTool):
             
             if intrados_enabled and intrados_configs:
                 for i, config in enumerate(intrados_configs):
+                    # Check if this rib is excluded for this config
+                    excluded_ribs = config.get('excluded_ribs', [])
+                    if rib_idx in excluded_ribs:
+                        continue
+                    
                     sleeve = RodSleeve(
                         surface='intrados',
                         width=config.get('width', 0.015),

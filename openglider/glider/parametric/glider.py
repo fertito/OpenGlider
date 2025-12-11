@@ -425,6 +425,11 @@ class ParametricGlider(object):
             
             if extrados_enabled and extrados_configs:
                 for i, config in enumerate(extrados_configs):
+                    # Check if this rib is excluded for this config
+                    excluded_ribs = config.get('excluded_ribs', [])
+                    if rib_idx in excluded_ribs:
+                        continue
+                    
                     sleeve = RodSleeve(
                         surface='extrados',
                         width=config.get('width', 0.015),
@@ -444,6 +449,11 @@ class ParametricGlider(object):
             
             if intrados_enabled and intrados_configs:
                 for i, config in enumerate(intrados_configs):
+                    # Check if this rib is excluded for this config
+                    excluded_ribs = config.get('excluded_ribs', [])
+                    if rib_idx in excluded_ribs:
+                        continue
+                    
                     sleeve = RodSleeve(
                         surface='intrados',
                         width=config.get('width', 0.015),
