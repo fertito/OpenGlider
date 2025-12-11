@@ -29,6 +29,7 @@ class HoleDesignTool(BaseTool):
         # Controls for no-hole zones on suspended ribs
         self.noHoleZoneLabel = QtGui.QLabel("<b>No-Hole Zone Geometry</b>", self.base_widget)
         self.noHoleAngleSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.noHoleBaseWidthSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
 
         self.applyButton = QtGui.QPushButton("Apply", self.base_widget)
 
@@ -58,6 +59,7 @@ class HoleDesignTool(BaseTool):
         # Add separator and controls for no-hole zones
         self.layout.addRow(self.noHoleZoneLabel)
         self.layout.addRow("Angle (deg)", self.noHoleAngleSpinBox)
+        self.layout.addRow("Base Width (mm)", self.noHoleBaseWidthSpinBox)
 
         # Right-align the apply button
         button_layout = QtGui.QHBoxLayout()
@@ -120,6 +122,11 @@ class HoleDesignTool(BaseTool):
         self.noHoleAngleSpinBox.setMinimum(0)
         self.noHoleAngleSpinBox.setMaximum(90)
 
+        self.noHoleBaseWidthSpinBox.setSingleStep(1.0)
+        self.noHoleBaseWidthSpinBox.setDecimals(1)
+        self.noHoleBaseWidthSpinBox.setSuffix(" mm")
+        self.noHoleBaseWidthSpinBox.setRange(0.0, 200.0)  # 0 = full triangle, >0 = truncated
+
         # Load initial values
         self.update_form_from_glider_data()
 
@@ -136,6 +143,7 @@ class HoleDesignTool(BaseTool):
         self.maxPosSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.holeCornerRadiusSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.noHoleAngleSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.noHoleBaseWidthSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.suspHoleNumSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.suspHoleMarginSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.suspHoleRadiusTopSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
@@ -147,6 +155,8 @@ class HoleDesignTool(BaseTool):
         self.noHoleZoneLabel.setVisible(is_suspended)
         self.noHoleAngleSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
+        self.noHoleBaseWidthSpinBox.setVisible(is_suspended)
+        self.layout.labelForField(self.noHoleBaseWidthSpinBox).setVisible(is_suspended)
         
         # Initial visibility of susp hole controls
         self.suspHoleNumSpinBox.setVisible(is_suspended)
@@ -214,6 +224,8 @@ class HoleDesignTool(BaseTool):
         self.noHoleAngleSpinBox.setVisible(is_suspended)
         # Also hide the labels associated with the spinboxes
         self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
+        self.noHoleBaseWidthSpinBox.setVisible(is_suspended)
+        self.layout.labelForField(self.noHoleBaseWidthSpinBox).setVisible(is_suspended)
         
         self.suspHoleNumSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.suspHoleNumSpinBox).setVisible(is_suspended)
@@ -282,9 +294,47 @@ class HoleDesignTool(BaseTool):
                 v3 = extrados_poly.line_intersection(v1, v1 + dir3 * far_factor)
 
                 if v2 is not None and v3 is not None:
-                    no_hole_zones.append((v1, v2, v3))
-                    zone_points = [v1, v2, v3, v1] # Closed loop for visualization
-                    self.preview_root.addChild(Line_old(zone_points, color='red', width=1).object)
+                    # Get base width for trapezoid (width at intrados)
+                    base_width_m = self.noHoleBaseWidthSpinBox.value() / 1000.0  # mm to m
+                    base_width_norm = base_width_m / rib.chord  # normalize to chord
+                    
+                    if base_width_norm > 1e-6:
+                        # Create trapezoid with base at intrados
+                        # Base is centered at attachment point (v1), with width = base_width
+                        # Sides go up at the specified angle to extrados
+                        
+                        # Find points on intrados at half base_width from v1
+                        # We move along the intrados tangent direction
+                        intrados_poly = rib.profile_2d.get_intrados_poly()
+                        
+                        # Get tangent direction at v1 (along intrados)
+                        # Use the profile x-direction as approximation (left-right)
+                        half_base = base_width_norm / 2.0
+                        
+                        # v1_left and v1_right are on intrados, at half_base distance from v1
+                        # Approximate by moving in x direction on intrados
+                        v1_left = np.array([v1[0] - half_base, v1[1]])
+                        v1_right = np.array([v1[0] + half_base, v1[1]])
+                        
+                        # Now trace lines from v1_left and v1_right at the angle to extrados
+                        v2_new = extrados_poly.line_intersection(v1_left, v1_left + dir2 * far_factor)
+                        v3_new = extrados_poly.line_intersection(v1_right, v1_right + dir3 * far_factor)
+                        
+                        if v2_new is not None and v3_new is not None:
+                            # Trapezoid: v1_left -> v2_new -> v3_new -> v1_right -> v1_left
+                            no_hole_zones.append((v1_left, v2_new, v3_new, v1_right))
+                            zone_points = [v1_left, v2_new, v3_new, v1_right, v1_left]
+                            self.preview_root.addChild(Line_old(zone_points, color='red', width=1).object)
+                        else:
+                            # Fallback to original triangle
+                            no_hole_zones.append((v1, v2, v3))
+                            zone_points = [v1, v2, v3, v1]
+                            self.preview_root.addChild(Line_old(zone_points, color='red', width=1).object)
+                    else:
+                        # Full triangle (no base width)
+                        no_hole_zones.append((v1, v2, v3))
+                        zone_points = [v1, v2, v3, v1]
+                        self.preview_root.addChild(Line_old(zone_points, color='red', width=1).object)
                     
                     # PREVIEW TRUSS HOLES
                     susp_hole_num = self.suspHoleNumSpinBox.value()
@@ -322,6 +372,81 @@ class HoleDesignTool(BaseTool):
             return
 
         allowed_ranges = [(min_pos, max_pos)]
+
+        # Visualize Airfoil Structure elements (rod sleeves and reinforcements)
+        pg = self.parametric_glider
+        glider_instance = self.obj.Proxy.getGliderInstance()
+        rib_idx = glider_instance.ribs.index(rib) if rib in glider_instance.ribs else 0
+        
+        # Draw rod sleeves from configuration
+        from openglider.glider.rib.elements import RodSleeve
+        suffix = '_s' if is_suspended else '_ns'
+        
+        # Draw extrados sleeves
+        extrados_enabled = getattr(pg, f'extrados_sleeves_enabled{suffix}', True)
+        extrados_configs = getattr(pg, f'extrados_sleeves{suffix}', [])
+        print(f"DEBUG: extrados_enabled={extrados_enabled}, configs={len(extrados_configs)}, suffix={suffix}")
+        if extrados_enabled and extrados_configs:
+            for config in extrados_configs:
+                excluded_ribs = config.get('excluded_ribs', [])
+                if rib_idx not in excluded_ribs:
+                    try:
+                        sleeve = RodSleeve(
+                            surface='extrados',
+                            width=config.get('width', 0.015),
+                            offset=config.get('offset', 0.005),
+                            start_chord=config.get('start_chord', 0.0),
+                            end_chord=config.get('end_chord', 0.7),
+                        )
+                        inner_pts, outer_pts = sleeve.get_sleeve_points(rib)
+                        if inner_pts and outer_pts:
+                            inner_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in inner_pts]
+                            outer_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in outer_pts]
+                            sleeve_poly = inner_norm + list(reversed(outer_norm)) + [inner_norm[0]]
+                            self.preview_root.addChild(Line_old(sleeve_poly, color='green', width=2).object)
+                    except Exception as e:
+                        import traceback
+                        print(f"Error drawing extrados sleeve: {e}")
+                        traceback.print_exc()
+        
+        # Draw intrados sleeves
+        intrados_enabled = getattr(pg, f'intrados_sleeves_enabled{suffix}', True)
+        intrados_configs = getattr(pg, f'intrados_sleeves{suffix}', [])
+        print(f"DEBUG: intrados_enabled={intrados_enabled}, configs={len(intrados_configs)}, suffix={suffix}")
+        if intrados_enabled and intrados_configs:
+            for config in intrados_configs:
+                excluded_ribs = config.get('excluded_ribs', [])
+                if rib_idx not in excluded_ribs:
+                    try:
+                        sleeve = RodSleeve(
+                            surface='intrados',
+                            width=config.get('width', 0.015),
+                            offset=config.get('offset', 0.005),
+                            start_chord=config.get('start_chord', 0.06),
+                            end_chord=config.get('end_chord', 0.5),
+                        )
+                        inner_pts, outer_pts = sleeve.get_sleeve_points(rib)
+                        if inner_pts and outer_pts:
+                            inner_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in inner_pts]
+                            outer_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in outer_pts]
+                            sleeve_poly = inner_norm + list(reversed(outer_norm)) + [inner_norm[0]]
+                            self.preview_root.addChild(Line_old(sleeve_poly, color='white', width=2).object)
+                    except Exception as e:
+                        import traceback
+                        print(f"Error drawing intrados sleeve: {e}")
+                        traceback.print_exc()
+        
+        # Draw reinforcements if they exist for this rib (suspended only)
+        if is_suspended and hasattr(rib, 'reinforcements') and rib.reinforcements:
+            for reinf in rib.reinforcements:
+                try:
+                    halfmoon_pts = reinf.get_halfmoon_points(rib)
+                    if halfmoon_pts:
+                        # Normalize by chord for preview
+                        halfmoon_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in halfmoon_pts]
+                        self.preview_root.addChild(Line_old(halfmoon_norm, color='yellow', width=2).object)
+                except Exception as e:
+                    print(f"Error drawing reinforcement: {e}")
 
         # Distribute holes across the allowed ranges
         total_allowable_length = sum(end - start for start, end in allowed_ranges)
@@ -362,9 +487,15 @@ class HoleDesignTool(BaseTool):
                     hole_center_x = (upper_point[0] + lower_point[0]) / 2.0
                     min_y_ceiling = upper_point[1]
 
-                    for v1, v2, v3 in no_hole_zones:
-                        if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
-                            for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
+                    for zone in no_hole_zones:
+                        # Get all x values from zone vertices
+                        zone_x = [v[0] for v in zone]
+                        if min(zone_x) <= hole_center_x <= max(zone_x):
+                            # Iterate over edges of the polygon
+                            n = len(zone)
+                            for i in range(n):
+                                p1 = zone[i]
+                                p2 = zone[(i + 1) % n]
                                 if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
                                     y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
                                     if y_intersect < min_y_ceiling:
@@ -447,7 +578,7 @@ class HoleDesignTool(BaseTool):
                             self.minPosSpinBox, self.maxPosSpinBox,
                             self.holeHeightModeComboBox, self.holeMarginSpinBox, self.holeCornerRadiusSpinBox]
         if is_suspended:
-            widgets_to_block.extend([self.noHoleAngleSpinBox, self.suspHoleNumSpinBox, self.suspHoleMarginSpinBox, self.suspHoleRadiusTopSpinBox, self.suspHoleRadiusBottomSpinBox])
+            widgets_to_block.extend([self.noHoleAngleSpinBox, self.noHoleBaseWidthSpinBox, self.suspHoleNumSpinBox, self.suspHoleMarginSpinBox, self.suspHoleRadiusTopSpinBox, self.suspHoleRadiusBottomSpinBox])
 
         # Block signals to prevent feedback loops
         for widget in widgets_to_block:
@@ -466,6 +597,7 @@ class HoleDesignTool(BaseTool):
 
         if is_suspended:
             self.noHoleAngleSpinBox.setValue(getattr(pg, 'hole_free_angle_s', 30.0))
+            self.noHoleBaseWidthSpinBox.setValue(getattr(pg, 'hole_base_width_s', 0.0))  # in mm
             self.suspHoleNumSpinBox.setValue(getattr(pg, 'susp_hole_num_s', 3))
             self.suspHoleMarginSpinBox.setValue(getattr(pg, 'susp_hole_margin_s', 0.01) * 1000.0)
             self.suspHoleRadiusTopSpinBox.setValue(getattr(pg, 'susp_hole_radius_top_s', 0.005) * 1000.0)
@@ -489,6 +621,7 @@ class HoleDesignTool(BaseTool):
             pg.min_hole_pos_s = self.minPosSpinBox.value()
             pg.max_hole_pos_s = self.maxPosSpinBox.value()
             pg.hole_free_angle_s = self.noHoleAngleSpinBox.value()
+            pg.hole_base_width_s = self.noHoleBaseWidthSpinBox.value()  # store in mm
             pg.hole_height_mode_s = self.holeHeightModeComboBox.currentIndex()
             pg.hole_margin_s = self.holeMarginSpinBox.value() / 1000.0 # Convert mm to m for storage
             pg.susp_hole_num_s = self.suspHoleNumSpinBox.value()

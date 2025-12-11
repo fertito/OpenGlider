@@ -173,6 +173,97 @@ class ParametricGlider(object):
         self.intrados_sleeves_enabled_ns = kwargs.get('intrados_sleeves_enabled_ns', True)
         self.intrados_sleeves_ns = kwargs.get('intrados_sleeves_ns', [])
 
+    def get_sleeve_exclusion_zones(self, rib, rib_idx, is_suspended):
+        """
+        Get chord ranges that should be excluded from hole placement due to rod sleeves.
+        Returns list of (start_chord, end_chord) tuples.
+        """
+        suffix = '_s' if is_suspended else '_ns'
+        exclusion_zones = []
+        
+        # Check extrados sleeves
+        if getattr(self, f'extrados_sleeves_enabled{suffix}', True):
+            for config in getattr(self, f'extrados_sleeves{suffix}', []):
+                excluded_ribs = config.get('excluded_ribs', [])
+                if rib_idx not in excluded_ribs:
+                    start = config.get('start_chord', 0.0)
+                    end = config.get('end_chord', 0.7)
+                    if start < end:
+                        exclusion_zones.append((start, end))
+        
+        # Check intrados sleeves
+        if getattr(self, f'intrados_sleeves_enabled{suffix}', True):
+            for config in getattr(self, f'intrados_sleeves{suffix}', []):
+                excluded_ribs = config.get('excluded_ribs', [])
+                if rib_idx not in excluded_ribs:
+                    start = config.get('start_chord', 0.06)
+                    end = config.get('end_chord', 0.5)
+                    if start < end:
+                        exclusion_zones.append((start, end))
+        
+        return exclusion_zones
+    
+    def get_reinforcement_exclusion_zones(self, rib, glider):
+        """
+        Get chord ranges that should be excluded from hole placement due to attachment reinforcements.
+        Returns list of (start_chord, end_chord) tuples.
+        """
+        exclusion_zones = []
+        
+        if not getattr(self, 'reinforcement_enabled_s', False):
+            return exclusion_zones
+        
+        apply_all = getattr(self, 'reinforcement_apply_all_s', False)
+        master_config = getattr(self, 'reinforcement_master_s', {})
+        configs = getattr(self, 'reinforcement_configs_s', [])
+        
+        attachment_points = glider.get_rib_attachment_points(rib)
+        valid_aps = [ap for ap in attachment_points if ap.rib_pos <= 0.90]
+        valid_aps.sort(key=lambda x: x.rib_pos)
+        
+        for i, ap in enumerate(valid_aps):
+            if apply_all:
+                config = master_config
+            else:
+                config = configs[i] if i < len(configs) else master_config
+            
+            if config.get('enabled', True):
+                radius_normalized = config.get('halfmoon_radius', 0.03) / rib.chord
+                start = max(0.0, ap.rib_pos - radius_normalized)
+                end = min(1.0, ap.rib_pos + radius_normalized)
+                exclusion_zones.append((start, end))
+        
+        return exclusion_zones
+    
+    def subtract_exclusion_zones(self, allowed_ranges, exclusion_zones):
+        """
+        Remove exclusion zones from allowed ranges.
+        Both inputs are lists of (start, end) tuples.
+        Returns a new list of allowed (start, end) tuples.
+        """
+        if not exclusion_zones:
+            return allowed_ranges
+        
+        # Sort exclusion zones by start position
+        exclusions = sorted(exclusion_zones, key=lambda x: x[0])
+        
+        result = []
+        for start, end in allowed_ranges:
+            current_start = start
+            for ex_start, ex_end in exclusions:
+                if ex_end <= current_start or ex_start >= end:
+                    # No overlap with this exclusion
+                    continue
+                if ex_start > current_start:
+                    # Add the gap before this exclusion
+                    result.append((current_start, min(ex_start, end)))
+                current_start = max(current_start, ex_end)
+                if current_start >= end:
+                    break
+            if current_start < end:
+                result.append((current_start, end))
+        
+        return result
 
     def apply_holes(self, glider):
         if not self.holes:
@@ -247,8 +338,6 @@ class ParametricGlider(object):
                 continue
 
             allowed_ranges = [(start_pos, end_pos)]
-
-
 
             total_allowable_length = sum(end - start for start, end in allowed_ranges)
             if total_allowable_length <= 1e-6:
