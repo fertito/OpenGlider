@@ -140,14 +140,19 @@ class PatternsNew(object):
         else:
             miniribs_layout = Layout()
 
+        # Reinforcements are now handled by PlotMaker.get_reinforcements() 
+        # and placed above the RIBS frame
+
         drawings: List[Layout] = [
             design_upper.drawing,
             design_lower.drawing,
             lineplan.drawing,
             diagonals.drawing,
             straps.drawing,
-            miniribs_layout, # Add miniribs here
+            miniribs_layout,
         ]
+
+
 
         drawings_width = max([dwg.width for dwg in drawings])
 

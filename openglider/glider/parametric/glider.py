@@ -103,6 +103,57 @@ class ParametricGlider(object):
         self.minirib_hole_corner_radius = kwargs.get('minirib_hole_corner_radius', 0.25)  # Corner radius ratio
         self.minirib_hole_max_pos = kwargs.get('minirib_hole_max_pos', 0.9)  # Max position (0-1, limits holes to avoid thin tip)
 
+        # Airfoil Structure - Extrados Sleeve (suspended)
+        self.extrados_sleeve_enabled_s = kwargs.get('extrados_sleeve_enabled_s', False)
+        self.extrados_sleeve_width_s = kwargs.get('extrados_sleeve_width_s', 0.015)
+        self.extrados_sleeve_offset_s = kwargs.get('extrados_sleeve_offset_s', 0.003)
+        self.extrados_sleeve_start_s = kwargs.get('extrados_sleeve_start_s', 0.0)
+        self.extrados_sleeve_end_s = kwargs.get('extrados_sleeve_end_s', 0.9)
+        self.extrados_sleeve_le_angle_s = kwargs.get('extrados_sleeve_le_angle_s', 80.0)
+        self.extrados_sleeve_le_length_s = kwargs.get('extrados_sleeve_le_length_s', 0.03)
+        self.extrados_sleeve_te_angle_s = kwargs.get('extrados_sleeve_te_angle_s', 80.0)
+        self.extrados_sleeve_te_length_s = kwargs.get('extrados_sleeve_te_length_s', 0.03)
+        
+        # Airfoil Structure - Intrados Sleeve (suspended)
+        self.intrados_sleeve_enabled_s = kwargs.get('intrados_sleeve_enabled_s', False)
+        self.intrados_sleeve_width_s = kwargs.get('intrados_sleeve_width_s', 0.015)
+        self.intrados_sleeve_offset_s = kwargs.get('intrados_sleeve_offset_s', 0.003)
+        self.intrados_sleeve_start_s = kwargs.get('intrados_sleeve_start_s', 0.0)
+        self.intrados_sleeve_end_s = kwargs.get('intrados_sleeve_end_s', 0.9)
+        self.intrados_sleeve_le_angle_s = kwargs.get('intrados_sleeve_le_angle_s', 100.0)
+        self.intrados_sleeve_le_length_s = kwargs.get('intrados_sleeve_le_length_s', 0.03)
+        self.intrados_sleeve_te_angle_s = kwargs.get('intrados_sleeve_te_angle_s', 100.0)
+        self.intrados_sleeve_te_length_s = kwargs.get('intrados_sleeve_te_length_s', 0.03)
+        
+        # Airfoil Structure - Extrados Sleeve (non-suspended)
+        self.extrados_sleeve_enabled_ns = kwargs.get('extrados_sleeve_enabled_ns', False)
+        self.extrados_sleeve_width_ns = kwargs.get('extrados_sleeve_width_ns', 0.015)
+        self.extrados_sleeve_offset_ns = kwargs.get('extrados_sleeve_offset_ns', 0.003)
+        self.extrados_sleeve_start_ns = kwargs.get('extrados_sleeve_start_ns', 0.0)
+        self.extrados_sleeve_end_ns = kwargs.get('extrados_sleeve_end_ns', 0.9)
+        self.extrados_sleeve_le_angle_ns = kwargs.get('extrados_sleeve_le_angle_ns', 80.0)
+        self.extrados_sleeve_le_length_ns = kwargs.get('extrados_sleeve_le_length_ns', 0.03)
+        self.extrados_sleeve_te_angle_ns = kwargs.get('extrados_sleeve_te_angle_ns', 80.0)
+        self.extrados_sleeve_te_length_ns = kwargs.get('extrados_sleeve_te_length_ns', 0.03)
+        
+        # Airfoil Structure - Intrados Sleeve (non-suspended)
+        self.intrados_sleeve_enabled_ns = kwargs.get('intrados_sleeve_enabled_ns', False)
+        self.intrados_sleeve_width_ns = kwargs.get('intrados_sleeve_width_ns', 0.015)
+        self.intrados_sleeve_offset_ns = kwargs.get('intrados_sleeve_offset_ns', 0.003)
+        self.intrados_sleeve_start_ns = kwargs.get('intrados_sleeve_start_ns', 0.0)
+        self.intrados_sleeve_end_ns = kwargs.get('intrados_sleeve_end_ns', 0.9)
+        self.intrados_sleeve_le_angle_ns = kwargs.get('intrados_sleeve_le_angle_ns', 100.0)
+        self.intrados_sleeve_le_length_ns = kwargs.get('intrados_sleeve_le_length_ns', 0.03)
+        self.intrados_sleeve_te_angle_ns = kwargs.get('intrados_sleeve_te_angle_ns', 100.0)
+        self.intrados_sleeve_te_length_ns = kwargs.get('intrados_sleeve_te_length_ns', 0.03)
+        
+        # Airfoil Structure - Reinforcements (suspended only)
+        self.reinforcement_enabled_s = kwargs.get('reinforcement_enabled_s', False)
+        self.reinforcement_apply_all_s = kwargs.get('reinforcement_apply_all_s', True)
+        self.reinforcement_master_s = kwargs.get('reinforcement_master_s', {})
+        self.reinforcement_configs_s = kwargs.get('reinforcement_configs_s', [])
+
+
     def apply_holes(self, glider):
         if not self.holes:
             return
@@ -280,6 +331,59 @@ class ParametricGlider(object):
                         )
                     )
 
+    def apply_reinforcements(self, glider):
+        """Apply reinforcement configurations to ribs for 2D export."""
+        from openglider.glider.rib.elements import AttachmentReinforcement
+        
+        if not getattr(self, 'reinforcement_enabled_s', False):
+            # Clear reinforcements from all ribs
+            for rib in glider.ribs:
+                rib.reinforcements = []
+            return
+        
+        apply_all = getattr(self, 'reinforcement_apply_all_s', True)
+        master_config = getattr(self, 'reinforcement_master_s', {})
+        configs = getattr(self, 'reinforcement_configs_s', [])
+        
+        # Identify suspended ribs
+        suspended_ribs = {att.rib for att in glider.lineset.attachment_points if hasattr(att, 'rib')}
+        
+        for rib_idx, rib in enumerate(glider.ribs):
+            if rib in suspended_ribs:
+                # Get attachment points for this rib
+                attachment_points = glider.get_rib_attachment_points(rib)
+                # Filter to valid attachment points (< 90% chord)
+                valid_aps = [ap for ap in attachment_points if ap.rib_pos <= 0.90]
+                valid_aps.sort(key=lambda x: x.rib_pos)
+                
+                reinforcements = []
+                for i, ap in enumerate(valid_aps):
+                    # Get config
+                    if apply_all:
+                        config = master_config
+                    else:
+                        config = configs[i] if i < len(configs) else master_config
+                    
+                    if config.get('enabled', True):
+                        # Generate name: rib index + attachment point name
+                        name = f"{rib_idx + 1}{ap.name}" if ap.name else f"{rib_idx + 1}_{i + 1}"
+                        
+                        reinforcement = AttachmentReinforcement(
+                            position=ap.rib_pos,
+                            surface_offset=config.get('surface_offset', 0.003),
+                            halfmoon_radius=config.get('halfmoon_radius', 0.03),
+                            rod_enabled=config.get('rod_enabled', True),
+                            rod_offset=config.get('rod_offset', 0.005),
+                            rod_width=config.get('rod_width', 0.005),
+                            rod_end_offset=config.get('rod_end_offset', 10.0),
+                            name=name,
+                        )
+                        reinforcements.append(reinforcement)
+                
+                rib.reinforcements = reinforcements
+            else:
+                # Non-suspended ribs don't get reinforcements
+                rib.reinforcements = []
 
     def __json__(self):
         return {
@@ -330,7 +434,53 @@ class ParametricGlider(object):
             "minirib_hole_shape": getattr(self, "minirib_hole_shape", 0),
             "minirib_hole_corner_radius": getattr(self, "minirib_hole_corner_radius", 0.25),
             "minirib_hole_max_pos": getattr(self, "minirib_hole_max_pos", 0.9),
+            # Airfoil Structure - Extrados Sleeve (suspended)
+            "extrados_sleeve_enabled_s": getattr(self, "extrados_sleeve_enabled_s", False),
+            "extrados_sleeve_width_s": getattr(self, "extrados_sleeve_width_s", 0.015),
+            "extrados_sleeve_offset_s": getattr(self, "extrados_sleeve_offset_s", 0.003),
+            "extrados_sleeve_start_s": getattr(self, "extrados_sleeve_start_s", 0.0),
+            "extrados_sleeve_end_s": getattr(self, "extrados_sleeve_end_s", 0.9),
+            "extrados_sleeve_le_angle_s": getattr(self, "extrados_sleeve_le_angle_s", 80.0),
+            "extrados_sleeve_le_length_s": getattr(self, "extrados_sleeve_le_length_s", 0.03),
+            "extrados_sleeve_te_angle_s": getattr(self, "extrados_sleeve_te_angle_s", 80.0),
+            "extrados_sleeve_te_length_s": getattr(self, "extrados_sleeve_te_length_s", 0.03),
+            # Airfoil Structure - Intrados Sleeve (suspended)
+            "intrados_sleeve_enabled_s": getattr(self, "intrados_sleeve_enabled_s", False),
+            "intrados_sleeve_width_s": getattr(self, "intrados_sleeve_width_s", 0.015),
+            "intrados_sleeve_offset_s": getattr(self, "intrados_sleeve_offset_s", 0.003),
+            "intrados_sleeve_start_s": getattr(self, "intrados_sleeve_start_s", 0.0),
+            "intrados_sleeve_end_s": getattr(self, "intrados_sleeve_end_s", 0.9),
+            "intrados_sleeve_le_angle_s": getattr(self, "intrados_sleeve_le_angle_s", 100.0),
+            "intrados_sleeve_le_length_s": getattr(self, "intrados_sleeve_le_length_s", 0.03),
+            "intrados_sleeve_te_angle_s": getattr(self, "intrados_sleeve_te_angle_s", 100.0),
+            "intrados_sleeve_te_length_s": getattr(self, "intrados_sleeve_te_length_s", 0.03),
+            # Airfoil Structure - Extrados Sleeve (non-suspended)
+            "extrados_sleeve_enabled_ns": getattr(self, "extrados_sleeve_enabled_ns", False),
+            "extrados_sleeve_width_ns": getattr(self, "extrados_sleeve_width_ns", 0.015),
+            "extrados_sleeve_offset_ns": getattr(self, "extrados_sleeve_offset_ns", 0.003),
+            "extrados_sleeve_start_ns": getattr(self, "extrados_sleeve_start_ns", 0.0),
+            "extrados_sleeve_end_ns": getattr(self, "extrados_sleeve_end_ns", 0.9),
+            "extrados_sleeve_le_angle_ns": getattr(self, "extrados_sleeve_le_angle_ns", 80.0),
+            "extrados_sleeve_le_length_ns": getattr(self, "extrados_sleeve_le_length_ns", 0.03),
+            "extrados_sleeve_te_angle_ns": getattr(self, "extrados_sleeve_te_angle_ns", 80.0),
+            "extrados_sleeve_te_length_ns": getattr(self, "extrados_sleeve_te_length_ns", 0.03),
+            # Airfoil Structure - Intrados Sleeve (non-suspended)
+            "intrados_sleeve_enabled_ns": getattr(self, "intrados_sleeve_enabled_ns", False),
+            "intrados_sleeve_width_ns": getattr(self, "intrados_sleeve_width_ns", 0.015),
+            "intrados_sleeve_offset_ns": getattr(self, "intrados_sleeve_offset_ns", 0.003),
+            "intrados_sleeve_start_ns": getattr(self, "intrados_sleeve_start_ns", 0.0),
+            "intrados_sleeve_end_ns": getattr(self, "intrados_sleeve_end_ns", 0.9),
+            "intrados_sleeve_le_angle_ns": getattr(self, "intrados_sleeve_le_angle_ns", 100.0),
+            "intrados_sleeve_le_length_ns": getattr(self, "intrados_sleeve_le_length_ns", 0.03),
+            "intrados_sleeve_te_angle_ns": getattr(self, "intrados_sleeve_te_angle_ns", 100.0),
+            "intrados_sleeve_te_length_ns": getattr(self, "intrados_sleeve_te_length_ns", 0.03),
+            # Airfoil Structure - Reinforcements (suspended only)
+            "reinforcement_enabled_s": getattr(self, "reinforcement_enabled_s", False),
+            "reinforcement_apply_all_s": getattr(self, "reinforcement_apply_all_s", True),
+            "reinforcement_master_s": getattr(self, "reinforcement_master_s", {}),
+            "reinforcement_configs_s": getattr(self, "reinforcement_configs_s", []),
         }
+
 
     def generate_truss_holes(self, rib, v1, v2, v3, num_holes, margin, radius_top=0.0, radius_bottom=0.0):
         """
@@ -962,7 +1112,9 @@ class ParametricGlider(object):
 
         glider.lineset = self.lineset.return_lineset(glider, self.v_inf)
         self.apply_holes(glider)
+        self.apply_reinforcements(glider)
         glider.lineset.glider = glider
+
         glider.lineset.calculate_sag = False
         for _ in range(3):
             glider.lineset.recalc()

@@ -22,21 +22,20 @@ class GliderWorkbench(Gui.Workbench):
         "ImportGlider",
         "ShapeCommand",
         "ArcCommand",
-        "AoaCommand",
         "ZrotCommand",
         "AirfoilCommand",
         "AirfoilMergeCommand",
         "BallooningCommand",
-        "MiniRibsCommand",
         "BallooningMergeCommand",
-        "CellCommand",
         "LineCommand",
         "LineObserveCommand",
+        "CellCommand",
+        "MiniRibsCommand",
         "HoleDesignCommand",
+        "AirfoilStructureCommand",
         "CutCommand",
         "ColorCommand",
         "Gl2dExport",
-        "HoleDesignCommand",
     ]
 
     featureBox = [
@@ -101,6 +100,7 @@ class GliderWorkbench(Gui.Workbench):
             tools.GliderSingleSkinRibFeatureCommand(),
         )
         Gui.addCommand("HoleDesignCommand", tools.HoleDesignCommand())
+        Gui.addCommand("AirfoilStructureCommand", tools.AirfoilStructureCommand())
         Gui.addCommand("GliderFlapFeatureCommand", tools.GliderFlapFeatureCommand())
         Gui.addCommand("GliderScaleFeatureCommand", tools.GliderScaleFeatureCommand())
         Gui.addCommand(

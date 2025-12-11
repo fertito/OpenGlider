@@ -84,6 +84,33 @@ class RibPlot(object):
         for curve in self.rib.curves:
             self.plotpart.layers["marks"].append(curve.get_flattened(self.rib))
 
+        # reinforcements (half-moon and rod sleeve)
+        for reinforcement in self.rib.reinforcements:
+            flat = reinforcement.get_flattened(self.rib)
+            
+            # Draw halfmoon outline
+            if flat.get('halfmoon') and len(flat['halfmoon'].data) > 0:
+                self.plotpart.layers["marks"].append(flat['halfmoon'])
+                
+                # Add text label if reinforcement has a name
+                if reinforcement.name:
+                    # Get center point of halfmoon for text placement
+                    halfmoon_data = flat['halfmoon'].data
+                    center_idx = len(halfmoon_data) // 4  # Top of the arc approx
+                    if center_idx < len(halfmoon_data):
+                        p1 = np.array(halfmoon_data[center_idx])
+                        p2 = p1 + np.array([0.01, 0])  # Horizontal text
+                        _text = Text(reinforcement.name, p1, p2, size=0.008, valign=0)
+                        self.plotpart.layers["text"] += _text.get_vectors()
+            
+            # Draw rod sleeve
+            if flat.get('rod_sleeve') and len(flat['rod_sleeve'].data) > 0:
+                self.plotpart.layers["marks"].append(flat['rod_sleeve'])
+            
+            # Add profile mark at reinforcement position
+            self.insert_mark(reinforcement.position, self.config.marks_attachment_point)
+
+
         self._insert_text(self.rib.name)
         self.insert_controlpoints()
 
@@ -92,6 +119,7 @@ class RibPlot(object):
         self.plotpart.layers["stitches"].append(self.inner)
 
         return self.plotpart
+
 
     def _get_inner_outer(self, x_value):
         ik = get_x_value(self.x_values, x_value)

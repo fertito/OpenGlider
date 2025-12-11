@@ -10,6 +10,7 @@ from . import glider
 from . import tools
 from . import (
     airfoil_tool,
+    airfoilstructure_tool,
     arc_tool,
     ballooning_tool,
     cell_tool,
@@ -556,6 +557,18 @@ class HoleDesignCommand(BaseCommand):
 
     def tool(self, obj):
         return holedesign_tool.HoleDesignTool(obj)
+
+
+class AirfoilStructureCommand(BaseCommand):
+    def GetResources(self):
+        return {
+            "Pixmap": "airfoilstructure_command.svg",
+            "MenuText": "Airfoil Structure",
+            "ToolTip": "Configure rod sleeves and attachment reinforcements",
+        }
+
+    def tool(self, obj):
+        return airfoilstructure_tool.AirfoilStructureTool(obj)
 
 
 class GliderScaleFeatureCommand(GliderFeatureCommand):

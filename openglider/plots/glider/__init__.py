@@ -19,6 +19,7 @@ class PlotMaker(object):
         self.dribs = collections.OrderedDict()
         self.straps = collections.OrderedDict()
         self.rigidfoils = collections.OrderedDict()
+        self.reinforcements = []  # Halfmoons and rod sleeves
         self.ribs = []
         self._cellplotmakers = dict()
 
@@ -129,6 +130,63 @@ class PlotMaker(object):
 
         return self.rigidfoils
 
+    def get_reinforcements(self):
+        """Get reinforcement parts (halfmoons and rod sleeves) for 2D export."""
+        from openglider.vector.drawing import PlotPart
+        from openglider.vector.text import Text
+        import numpy as np
+        
+        self.reinforcements = []
+        
+        for rib_idx, rib in enumerate(self.glider_3d.ribs):
+            if hasattr(rib, "reinforcements") and rib.reinforcements:
+                for reinf_idx, reinforcement in enumerate(rib.reinforcements):
+                    try:
+                        flat = reinforcement.get_flattened(rib)
+                        unique_name = reinforcement.name or f"R{rib_idx+1}_{reinf_idx+1}"
+                        
+                        # Halfmoon part
+                        if flat.get('halfmoon') and len(flat['halfmoon'].data) > 0:
+                            halfmoon_part = PlotPart(
+                                name=unique_name,
+                                material_code="reinforcement"
+                            )
+                            halfmoon_part.layers["cuts"].append(flat['halfmoon'])
+                            
+                            # Text label centered inside
+                            halfmoon_data = flat['halfmoon'].data
+                            if len(halfmoon_data) > 4:
+                                center = np.mean(halfmoon_data, axis=0)
+                                p1 = center
+                                p2 = center + np.array([0.01, 0])
+                                text_obj = Text(unique_name, p1, p2, size=0.005, valign=0)
+                                halfmoon_part.layers["text"] += text_obj.get_vectors()
+                            
+                            self.reinforcements.append(halfmoon_part)
+                        
+                        # Rod sleeve part
+                        if flat.get('rod_sleeve') and len(flat['rod_sleeve'].data) > 0:
+                            sleeve_part = PlotPart(
+                                name=unique_name,
+                                material_code="rod_sleeve"
+                            )
+                            sleeve_part.layers["cuts"].append(flat['rod_sleeve'])
+                            
+                            sleeve_data = flat['rod_sleeve'].data
+                            if len(sleeve_data) > 4:
+                                center = np.mean(sleeve_data, axis=0)
+                                p1 = center
+                                p2 = center + np.array([0.01, 0])
+                                text_obj = Text(unique_name, p1, p2, size=0.003, valign=0)
+                                sleeve_part.layers["text"] += text_obj.get_vectors()
+                            
+                            self.reinforcements.append(sleeve_part)
+                            
+                    except Exception as e:
+                        print(f"Failed to plot reinforcement: {e}")
+        
+        return self.reinforcements
+
     def get_all_grouped(self) -> Layout:
         # create x-raster
         for rib in self.ribs:
@@ -165,8 +223,19 @@ class PlotMaker(object):
 
         panels.add_text("panels_all")
 
+        # Add reinforcements layout above ribs
+        reinforcements_layout = Layout()
+        if self.reinforcements:
+            reinforcements_layout = Layout.stack_row(
+                self.reinforcements, self.config.patterns_align_dist_x
+            )
+            reinforcements_layout.draw_border(border=0.02)
+            reinforcements_layout.add_text("reinforcements")
+
         all_layouts = [panels]
         all_layouts += panels_grouped
+        if self.reinforcements:
+            all_layouts += [reinforcements_layout]  # Above ribs
         all_layouts += ribs_grouped
         all_layouts += dribs_grouped
         all_layouts += straps_grouped
@@ -180,6 +249,7 @@ class PlotMaker(object):
         self.get_dribs()
         self.get_straps()
         self.get_rigidfoils()
+        self.get_reinforcements()
         return self
 
     def get_all_parts(self):
