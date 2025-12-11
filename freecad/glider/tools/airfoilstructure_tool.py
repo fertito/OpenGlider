@@ -2,7 +2,7 @@
 Airfoil Structure Tool for OpenGlider FreeCAD workbench.
 
 This tool allows configuration of structural elements on rib profiles:
-- Rod sleeves (fourreaux de joncs) for extrados and intrados
+- Rod sleeves (fourreaux de joncs) for extrados and intrados (multiple per surface)
 - Attachment reinforcements with half-moon load distribution rods (suspended ribs only)
 """
 
@@ -15,6 +15,244 @@ from pivy import coin
 import os
 
 
+class RodSleeveConfigWidget(QtGui.QWidget):
+    """Widget for configuring a single rod sleeve's parameters."""
+    changed = QtCore.Signal()
+    
+    def __init__(self, surface='extrados', parent=None):
+        super(RodSleeveConfigWidget, self).__init__(parent)
+        self.surface = surface
+        self.layout = QtGui.QFormLayout(self)
+        self.layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Start/End position
+        self.startSpinBox = QtGui.QDoubleSpinBox()
+        self.startSpinBox.setSingleStep(1.0)
+        self.startSpinBox.setDecimals(1)
+        self.startSpinBox.setSuffix(" %")
+        self.startSpinBox.setRange(0.0, 100.0)
+        self.startSpinBox.setValue(0.0)
+        self.layout.addRow("Start (% chord)", self.startSpinBox)
+        
+        self.endSpinBox = QtGui.QDoubleSpinBox()
+        self.endSpinBox.setSingleStep(1.0)
+        self.endSpinBox.setDecimals(1)
+        self.endSpinBox.setSuffix(" %")
+        self.endSpinBox.setRange(0.0, 100.0)
+        self.endSpinBox.setValue(70.0)
+        self.layout.addRow("End (% chord)", self.endSpinBox)
+        
+        # Width and offset
+        self.widthSpinBox = QtGui.QDoubleSpinBox()
+        self.widthSpinBox.setSingleStep(1.0)
+        self.widthSpinBox.setDecimals(1)
+        self.widthSpinBox.setSuffix(" mm")
+        self.widthSpinBox.setRange(1.0, 50.0)
+        self.widthSpinBox.setValue(15.0)
+        self.layout.addRow("Width", self.widthSpinBox)
+        
+        self.offsetSpinBox = QtGui.QDoubleSpinBox()
+        self.offsetSpinBox.setSingleStep(0.5)
+        self.offsetSpinBox.setDecimals(1)
+        self.offsetSpinBox.setSuffix(" mm")
+        self.offsetSpinBox.setRange(0.0, 20.0)
+        self.offsetSpinBox.setValue(5.0)
+        self.layout.addRow("Offset", self.offsetSpinBox)
+        
+        # Start termination (formerly "Leading Edge")
+        self.layout.addRow(QtGui.QLabel("<b>Start Termination</b>"))
+        self.startAngleSpinBox = QtGui.QDoubleSpinBox()
+        self.startAngleSpinBox.setSingleStep(5.0)
+        self.startAngleSpinBox.setDecimals(0)
+        self.startAngleSpinBox.setSuffix(" °")
+        self.startAngleSpinBox.setRange(0.0, 360.0)
+        # Default angles differ by surface
+        if surface == 'extrados':
+            self.startAngleSpinBox.setValue(350.0)
+        else:
+            self.startAngleSpinBox.setValue(100.0)
+        self.layout.addRow("Angle", self.startAngleSpinBox)
+        
+        self.startLengthSpinBox = QtGui.QDoubleSpinBox()
+        self.startLengthSpinBox.setSingleStep(5.0)
+        self.startLengthSpinBox.setDecimals(0)
+        self.startLengthSpinBox.setSuffix(" mm")
+        self.startLengthSpinBox.setRange(10.0, 200.0)
+        self.startLengthSpinBox.setValue(100.0)
+        self.layout.addRow("Length", self.startLengthSpinBox)
+        
+        # End termination (formerly "Trailing Edge")
+        self.layout.addRow(QtGui.QLabel("<b>End Termination</b>"))
+        self.endAngleSpinBox = QtGui.QDoubleSpinBox()
+        self.endAngleSpinBox.setSingleStep(5.0)
+        self.endAngleSpinBox.setDecimals(0)
+        self.endAngleSpinBox.setSuffix(" °")
+        self.endAngleSpinBox.setRange(0.0, 360.0)
+        if surface == 'extrados':
+            self.endAngleSpinBox.setValue(325.0)
+        else:
+            self.endAngleSpinBox.setValue(20.0)
+        self.layout.addRow("Angle", self.endAngleSpinBox)
+        
+        self.endLengthSpinBox = QtGui.QDoubleSpinBox()
+        self.endLengthSpinBox.setSingleStep(5.0)
+        self.endLengthSpinBox.setDecimals(0)
+        self.endLengthSpinBox.setSuffix(" mm")
+        self.endLengthSpinBox.setRange(10.0, 200.0)
+        self.endLengthSpinBox.setValue(75.0)
+        self.layout.addRow("Length", self.endLengthSpinBox)
+        
+        # Connect signals
+        self.startSpinBox.valueChanged.connect(self.emit_changed)
+        self.endSpinBox.valueChanged.connect(self.emit_changed)
+        self.widthSpinBox.valueChanged.connect(self.emit_changed)
+        self.offsetSpinBox.valueChanged.connect(self.emit_changed)
+        self.startAngleSpinBox.valueChanged.connect(self.emit_changed)
+        self.startLengthSpinBox.valueChanged.connect(self.emit_changed)
+        self.endAngleSpinBox.valueChanged.connect(self.emit_changed)
+        self.endLengthSpinBox.valueChanged.connect(self.emit_changed)
+    
+    def emit_changed(self):
+        self.changed.emit()
+    
+    def get_values(self):
+        return {
+            'start_chord': self.startSpinBox.value() / 100.0,
+            'end_chord': self.endSpinBox.value() / 100.0,
+            'width': self.widthSpinBox.value() / 1000.0,
+            'offset': self.offsetSpinBox.value() / 1000.0,
+            'start_angle': self.startAngleSpinBox.value(),
+            'start_length': self.startLengthSpinBox.value() / 1000.0,
+            'end_angle': self.endAngleSpinBox.value(),
+            'end_length': self.endLengthSpinBox.value() / 1000.0,
+        }
+    
+    def set_values(self, config):
+        if not config:
+            return
+        self.startSpinBox.setValue(config.get('start_chord', 0.0) * 100.0)
+        self.endSpinBox.setValue(config.get('end_chord', 0.7) * 100.0)
+        self.widthSpinBox.setValue(config.get('width', 0.015) * 1000.0)
+        self.offsetSpinBox.setValue(config.get('offset', 0.005) * 1000.0)
+        self.startAngleSpinBox.setValue(config.get('start_angle', 350.0 if self.surface == 'extrados' else 100.0))
+        self.startLengthSpinBox.setValue(config.get('start_length', 0.1) * 1000.0)
+        self.endAngleSpinBox.setValue(config.get('end_angle', 325.0 if self.surface == 'extrados' else 20.0))
+        self.endLengthSpinBox.setValue(config.get('end_length', 0.075) * 1000.0)
+    
+    def create_rod_sleeve(self):
+        """Create a RodSleeve object from this widget's values."""
+        values = self.get_values()
+        return RodSleeve(
+            surface=self.surface,
+            width=values['width'],
+            offset=values['offset'],
+            start_chord=values['start_chord'],
+            end_chord=values['end_chord'],
+            le_angle=values['start_angle'],
+            te_angle=values['end_angle'],
+            le_length=values['start_length'],
+            te_length=values['end_length'],
+        )
+
+
+class SurfaceRodSleeveGroup(QtGui.QGroupBox):
+    """Group box for managing multiple rod sleeves on one surface."""
+    changed = QtCore.Signal()
+    
+    def __init__(self, surface='extrados', title="Extrados Rod Sleeves", parent=None):
+        super(SurfaceRodSleeveGroup, self).__init__(title, parent)
+        self.surface = surface
+        self.rod_widgets = []
+        
+        main_layout = QtGui.QVBoxLayout(self)
+        
+        # Enable checkbox
+        self.enabledCheckBox = QtGui.QCheckBox("Enable")
+        self.enabledCheckBox.setChecked(True)
+        main_layout.addWidget(self.enabledCheckBox)
+        
+        # Tabs for multiple rods
+        self.tabWidget = QtGui.QTabWidget()
+        self.tabWidget.setTabsClosable(True)
+        self.tabWidget.tabCloseRequested.connect(self.remove_rod)
+        main_layout.addWidget(self.tabWidget)
+        
+        # Add button
+        button_layout = QtGui.QHBoxLayout()
+        self.addButton = QtGui.QPushButton("+ Add Rod")
+        self.addButton.clicked.connect(self.add_rod)
+        button_layout.addWidget(self.addButton)
+        button_layout.addStretch()
+        main_layout.addLayout(button_layout)
+        
+        # Connect enable checkbox
+        self.enabledCheckBox.stateChanged.connect(self.emit_changed)
+        
+        # Add one rod by default
+        self.add_rod()
+    
+    def emit_changed(self):
+        self.changed.emit()
+    
+    def add_rod(self):
+        """Add a new rod sleeve tab."""
+        widget = RodSleeveConfigWidget(surface=self.surface)
+        widget.changed.connect(self.emit_changed)
+        
+        rod_num = len(self.rod_widgets) + 1
+        self.rod_widgets.append(widget)
+        self.tabWidget.addTab(widget, f"Rod {rod_num}")
+        self.emit_changed()
+    
+    def remove_rod(self, index):
+        """Remove a rod sleeve tab."""
+        if len(self.rod_widgets) <= 1:
+            return  # Keep at least one rod
+        
+        widget = self.rod_widgets.pop(index)
+        self.tabWidget.removeTab(index)
+        widget.deleteLater()
+        
+        # Renumber tabs
+        for i, w in enumerate(self.rod_widgets):
+            self.tabWidget.setTabText(i, f"Rod {i + 1}")
+        
+        self.emit_changed()
+    
+    def is_enabled(self):
+        return self.enabledCheckBox.isChecked()
+    
+    def get_rod_sleeves(self):
+        """Get list of RodSleeve objects for all enabled rods."""
+        if not self.is_enabled():
+            return []
+        return [w.create_rod_sleeve() for w in self.rod_widgets]
+    
+    def get_configs(self):
+        """Get list of config dicts for all rods."""
+        return [w.get_values() for w in self.rod_widgets]
+    
+    def set_configs(self, enabled, configs):
+        """Set the widget state from a list of configs."""
+        self.enabledCheckBox.setChecked(enabled)
+        
+        # Clear existing tabs (except first)
+        while len(self.rod_widgets) > 1:
+            self.remove_rod(len(self.rod_widgets) - 1)
+        
+        if not configs:
+            return
+        
+        # Set first rod's values
+        if len(configs) > 0 and len(self.rod_widgets) > 0:
+            self.rod_widgets[0].set_values(configs[0])
+        
+        # Add additional rods
+        for i, config in enumerate(configs[1:], start=1):
+            self.add_rod()
+            self.rod_widgets[i].set_values(config)
+
+
 class AirfoilStructureTool(BaseTool):
     widget_name = "Airfoil Structure"
 
@@ -24,38 +262,19 @@ class AirfoilStructureTool(BaseTool):
         # Profile type selector
         self.ribTypeComboBox = QtGui.QComboBox(self.base_widget)
         
-        # === Extrados Sleeve Group ===
-        self.extradosGroupBox = QtGui.QGroupBox("Extrados Rod Sleeve", self.base_widget)
-        self.extradosLayout = QtGui.QFormLayout(self.extradosGroupBox)
+        # === Extrados Sleeve Group (multiple rods) ===
+        self.extradosGroup = SurfaceRodSleeveGroup(
+            surface='extrados', 
+            title="Extrados Rod Sleeves",
+            parent=self.base_widget
+        )
         
-        self.extradosEnabledCheckBox = QtGui.QCheckBox("Enable", self.extradosGroupBox)
-        self.extradosWidthSpinBox = QtGui.QDoubleSpinBox(self.extradosGroupBox)
-        self.extradosOffsetSpinBox = QtGui.QDoubleSpinBox(self.extradosGroupBox)
-        self.extradosStartSpinBox = QtGui.QDoubleSpinBox(self.extradosGroupBox)
-        self.extradosEndSpinBox = QtGui.QDoubleSpinBox(self.extradosGroupBox)
-        # Leading edge termination
-        self.extradosLeAngleSpinBox = QtGui.QDoubleSpinBox(self.extradosGroupBox)
-        self.extradosLeLengthSpinBox = QtGui.QDoubleSpinBox(self.extradosGroupBox)
-        # Trailing edge termination
-        self.extradosTeAngleSpinBox = QtGui.QDoubleSpinBox(self.extradosGroupBox)
-        self.extradosTeLengthSpinBox = QtGui.QDoubleSpinBox(self.extradosGroupBox)
-        
-        # === Intrados Sleeve Group ===
-        self.intradosGroupBox = QtGui.QGroupBox("Intrados Rod Sleeve", self.base_widget)
-        self.intradosLayout = QtGui.QFormLayout(self.intradosGroupBox)
-        
-        self.intradosEnabledCheckBox = QtGui.QCheckBox("Enable", self.intradosGroupBox)
-        self.intradosWidthSpinBox = QtGui.QDoubleSpinBox(self.intradosGroupBox)
-        self.intradosOffsetSpinBox = QtGui.QDoubleSpinBox(self.intradosGroupBox)
-        self.intradosStartSpinBox = QtGui.QDoubleSpinBox(self.intradosGroupBox)
-        self.intradosEndSpinBox = QtGui.QDoubleSpinBox(self.intradosGroupBox)
-        # Leading edge termination
-        self.intradosLeAngleSpinBox = QtGui.QDoubleSpinBox(self.intradosGroupBox)
-        self.intradosLeLengthSpinBox = QtGui.QDoubleSpinBox(self.intradosGroupBox)
-        # Trailing edge termination
-        self.intradosTeAngleSpinBox = QtGui.QDoubleSpinBox(self.intradosGroupBox)
-        self.intradosTeLengthSpinBox = QtGui.QDoubleSpinBox(self.intradosGroupBox)
-        
+        # === Intrados Sleeve Group (multiple rods) ===
+        self.intradosGroup = SurfaceRodSleeveGroup(
+            surface='intrados',
+            title="Intrados Rod Sleeves", 
+            parent=self.base_widget
+        )
         
         # === Attachment Reinforcement Group (only for suspended) ===
         self.reinforcementGroupBox = QtGui.QGroupBox("Attachment Reinforcements", self.base_widget)
@@ -87,141 +306,12 @@ class AirfoilStructureTool(BaseTool):
         self.ribTypeComboBox.addItems(["Non-Suspended", "Suspended"])
         self.layout.addRow("Profile Type", self.ribTypeComboBox)
         
-        # --- Configure Extrados Sleeve ---
-        self.extradosLayout.addRow(self.extradosEnabledCheckBox)
-        
-        self.extradosWidthSpinBox.setSingleStep(1.0)
-        self.extradosWidthSpinBox.setDecimals(1)
-        self.extradosWidthSpinBox.setSuffix(" mm")
-        self.extradosWidthSpinBox.setRange(1.0, 50.0)
-        self.extradosWidthSpinBox.setValue(15.0)
-        self.extradosLayout.addRow("Width", self.extradosWidthSpinBox)
-        
-        self.extradosOffsetSpinBox.setSingleStep(0.5)
-        self.extradosOffsetSpinBox.setDecimals(1)
-        self.extradosOffsetSpinBox.setSuffix(" mm")
-        self.extradosOffsetSpinBox.setRange(0.0, 20.0)
-        self.extradosOffsetSpinBox.setValue(5.0)
-        self.extradosLayout.addRow("Offset", self.extradosOffsetSpinBox)
-        
-        self.extradosStartSpinBox.setSingleStep(1.0)
-        self.extradosStartSpinBox.setDecimals(1)
-        self.extradosStartSpinBox.setSuffix(" %")
-        self.extradosStartSpinBox.setRange(0.0, 100.0)
-        self.extradosStartSpinBox.setValue(0.0)
-        self.extradosLayout.addRow("Start (% chord)", self.extradosStartSpinBox)
-        
-        self.extradosEndSpinBox.setSingleStep(1.0)
-        self.extradosEndSpinBox.setDecimals(1)
-        self.extradosEndSpinBox.setSuffix(" %")
-        self.extradosEndSpinBox.setRange(0.0, 100.0)
-        self.extradosEndSpinBox.setValue(71.0)
-        self.extradosLayout.addRow("End (% chord)", self.extradosEndSpinBox)
-        
-        # Leading edge termination
-        self.extradosLayout.addRow(QtGui.QLabel("<b>Leading Edge</b>"))
-        self.extradosLeAngleSpinBox.setSingleStep(5.0)
-        self.extradosLeAngleSpinBox.setDecimals(0)
-        self.extradosLeAngleSpinBox.setSuffix(" °")
-        self.extradosLeAngleSpinBox.setRange(0.0, 360.0)
-        self.extradosLeAngleSpinBox.setValue(350.0)  # Default: 350 deg
-        self.extradosLayout.addRow("LE Angle", self.extradosLeAngleSpinBox)
-        
-        self.extradosLeLengthSpinBox.setSingleStep(5.0)
-        self.extradosLeLengthSpinBox.setDecimals(0)
-        self.extradosLeLengthSpinBox.setSuffix(" mm")
-        self.extradosLeLengthSpinBox.setRange(10.0, 200.0)
-        self.extradosLeLengthSpinBox.setValue(125.0)
-        self.extradosLayout.addRow("LE Length", self.extradosLeLengthSpinBox)
-        
-        # Trailing edge termination
-        self.extradosLayout.addRow(QtGui.QLabel("<b>Trailing Edge</b>"))
-        self.extradosTeAngleSpinBox.setSingleStep(5.0)
-        self.extradosTeAngleSpinBox.setDecimals(0)
-        self.extradosTeAngleSpinBox.setSuffix(" °")
-        self.extradosTeAngleSpinBox.setRange(0.0, 360.0)
-        self.extradosTeAngleSpinBox.setValue(325.0)  # Default: 325 deg
-        self.extradosLayout.addRow("TE Angle", self.extradosTeAngleSpinBox)
-        
-        self.extradosTeLengthSpinBox.setSingleStep(5.0)
-        self.extradosTeLengthSpinBox.setDecimals(0)
-        self.extradosTeLengthSpinBox.setSuffix(" mm")
-        self.extradosTeLengthSpinBox.setRange(10.0, 200.0)
-        self.extradosTeLengthSpinBox.setValue(75.0)
-        self.extradosLayout.addRow("TE Length", self.extradosTeLengthSpinBox)
-
-        
-        self.layout.addRow(self.extradosGroupBox)
-        
-        # --- Configure Intrados Sleeve ---
-        self.intradosLayout.addRow(self.intradosEnabledCheckBox)
-        
-        self.intradosWidthSpinBox.setSingleStep(1.0)
-        self.intradosWidthSpinBox.setDecimals(1)
-        self.intradosWidthSpinBox.setSuffix(" mm")
-        self.intradosWidthSpinBox.setRange(1.0, 50.0)
-        self.intradosWidthSpinBox.setValue(15.0)
-        self.intradosLayout.addRow("Width", self.intradosWidthSpinBox)
-        
-        self.intradosOffsetSpinBox.setSingleStep(0.5)
-        self.intradosOffsetSpinBox.setDecimals(1)
-        self.intradosOffsetSpinBox.setSuffix(" mm")
-        self.intradosOffsetSpinBox.setRange(0.0, 20.0)
-        self.intradosOffsetSpinBox.setValue(5.0)
-        self.intradosLayout.addRow("Offset", self.intradosOffsetSpinBox)
-        
-        self.intradosStartSpinBox.setSingleStep(1.0)
-        self.intradosStartSpinBox.setDecimals(1)
-        self.intradosStartSpinBox.setSuffix(" %")
-        self.intradosStartSpinBox.setRange(0.0, 100.0)
-        self.intradosStartSpinBox.setValue(6.0)  # Start 6%
-        self.intradosLayout.addRow("Start (% chord)", self.intradosStartSpinBox)
-        
-        self.intradosEndSpinBox.setSingleStep(1.0)
-        self.intradosEndSpinBox.setDecimals(1)
-        self.intradosEndSpinBox.setSuffix(" %")
-        self.intradosEndSpinBox.setRange(0.0, 100.0)
-        self.intradosEndSpinBox.setValue(50.0) # End 50%
-        self.intradosLayout.addRow("End (% chord)", self.intradosEndSpinBox)
-        
-        # Leading edge termination
-        self.intradosLayout.addRow(QtGui.QLabel("<b>Leading Edge</b>"))
-        self.intradosLeAngleSpinBox.setSingleStep(5.0)
-        self.intradosLeAngleSpinBox.setDecimals(0)
-        self.intradosLeAngleSpinBox.setSuffix(" °")
-        self.intradosLeAngleSpinBox.setRange(0.0, 360.0)
-        self.intradosLeAngleSpinBox.setValue(100.0)  # Default: 100 deg
-        self.intradosLayout.addRow("LE Angle", self.intradosLeAngleSpinBox)
-        
-        self.intradosLeLengthSpinBox.setSingleStep(5.0)
-        self.intradosLeLengthSpinBox.setDecimals(0)
-        self.intradosLeLengthSpinBox.setSuffix(" mm")
-        self.intradosLeLengthSpinBox.setRange(10.0, 200.0)
-        self.intradosLeLengthSpinBox.setValue(100.0)
-        self.intradosLayout.addRow("LE Length", self.intradosLeLengthSpinBox)
-        
-        # Trailing edge termination
-        self.intradosLayout.addRow(QtGui.QLabel("<b>Trailing Edge</b>"))
-        self.intradosTeAngleSpinBox.setSingleStep(5.0)
-        self.intradosTeAngleSpinBox.setDecimals(0)
-        self.intradosTeAngleSpinBox.setSuffix(" °")
-        self.intradosTeAngleSpinBox.setRange(0.0, 360.0)
-        self.intradosTeAngleSpinBox.setValue(20.0)  # Default: 20 deg
-        self.intradosLayout.addRow("TE Angle", self.intradosTeAngleSpinBox)
-        
-        self.intradosTeLengthSpinBox.setSingleStep(5.0)
-        self.intradosTeLengthSpinBox.setDecimals(0)
-        self.intradosTeLengthSpinBox.setSuffix(" mm")
-        self.intradosTeLengthSpinBox.setRange(10.0, 200.0)
-        self.intradosTeLengthSpinBox.setValue(90.0)
-        self.intradosLayout.addRow("TE Length", self.intradosTeLengthSpinBox)
-        
-        self.layout.addRow(self.intradosGroupBox)
+        # Add rod sleeve groups
+        self.layout.addRow(self.extradosGroup)
+        self.layout.addRow(self.intradosGroup)
         
         # --- Configure Attachment Reinforcements ---
         self.reinforcementLayout.addRow(self.reinforcementEnabledCheckBox)
-        
-
         self.reinforcementLayout.addRow(self.reinforcementApplyAllCheckBox)
         self.reinforcementLayout.addRow(self.reinforcementStack)
         
@@ -236,27 +326,9 @@ class AirfoilStructureTool(BaseTool):
         # Load initial values
         self.update_form_from_glider_data()
 
-        # Connections - Extrados
-        self.extradosEnabledCheckBox.stateChanged.connect(self.update_preview)
-        self.extradosWidthSpinBox.valueChanged.connect(self.update_preview)
-        self.extradosOffsetSpinBox.valueChanged.connect(self.update_preview)
-        self.extradosStartSpinBox.valueChanged.connect(self.update_preview)
-        self.extradosEndSpinBox.valueChanged.connect(self.update_preview)
-        self.extradosLeAngleSpinBox.valueChanged.connect(self.update_preview)
-        self.extradosLeLengthSpinBox.valueChanged.connect(self.update_preview)
-        self.extradosTeAngleSpinBox.valueChanged.connect(self.update_preview)
-        self.extradosTeLengthSpinBox.valueChanged.connect(self.update_preview)
-        
-        # Connections - Intrados
-        self.intradosEnabledCheckBox.stateChanged.connect(self.update_preview)
-        self.intradosWidthSpinBox.valueChanged.connect(self.update_preview)
-        self.intradosOffsetSpinBox.valueChanged.connect(self.update_preview)
-        self.intradosStartSpinBox.valueChanged.connect(self.update_preview)
-        self.intradosEndSpinBox.valueChanged.connect(self.update_preview)
-        self.intradosLeAngleSpinBox.valueChanged.connect(self.update_preview)
-        self.intradosLeLengthSpinBox.valueChanged.connect(self.update_preview)
-        self.intradosTeAngleSpinBox.valueChanged.connect(self.update_preview)
-        self.intradosTeLengthSpinBox.valueChanged.connect(self.update_preview)
+        # Connections - Rod sleeves
+        self.extradosGroup.changed.connect(self.update_preview)
+        self.intradosGroup.changed.connect(self.update_preview)
         
         # Connections - Reinforcements
         self.reinforcementEnabledCheckBox.stateChanged.connect(self.update_preview)
@@ -316,10 +388,6 @@ class AirfoilStructureTool(BaseTool):
 
     def update_reinforcement_tabs(self, valid_aps):
         """Rebuild tabs based on current valid attachment points."""
-        # Clear existing tabs (except we might want to preserve values if reloading same rib?)
-        # For now, simplistic approach: rebuild.
-        # Ideally we load values from parametric_glider after rebuilding.
-        
         self.reinforcementTabs.clear()
         self.reinforcement_widgets = []
         
@@ -350,14 +418,12 @@ class AirfoilStructureTool(BaseTool):
             for ap in valid_aps:
                 self._draw_attachment_point_marker(rib, ap.rib_pos)
 
-        # Draw extrados sleeve if enabled
-        if self.extradosEnabledCheckBox.isChecked():
-            sleeve = self._create_extrados_sleeve()
+        # Draw extrados sleeves
+        for sleeve in self.extradosGroup.get_rod_sleeves():
             self._draw_sleeve(sleeve, rib, color='blue')
 
-        # Draw intrados sleeve if enabled
-        if self.intradosEnabledCheckBox.isChecked():
-            sleeve = self._create_intrados_sleeve()
+        # Draw intrados sleeves
+        for sleeve in self.intradosGroup.get_rod_sleeves():
             self._draw_sleeve(sleeve, rib, color='green')
 
         # Draw attachment reinforcements if enabled and suspended
@@ -379,34 +445,6 @@ class AirfoilStructureTool(BaseTool):
                     reinforcement = self._create_reinforcement(ap.rib_pos, config)
                     self._draw_reinforcement(reinforcement, rib)
 
-    def _create_extrados_sleeve(self):
-        """Create a RodSleeve from current extrados UI values."""
-        return RodSleeve(
-            surface='extrados',
-            width=self.extradosWidthSpinBox.value() / 1000.0,
-            offset=self.extradosOffsetSpinBox.value() / 1000.0,
-            start_chord=self.extradosStartSpinBox.value() / 100.0,
-            end_chord=self.extradosEndSpinBox.value() / 100.0,
-            le_angle=self.extradosLeAngleSpinBox.value(),
-            te_angle=self.extradosTeAngleSpinBox.value(),
-            le_length=self.extradosLeLengthSpinBox.value() / 1000.0,
-            te_length=self.extradosTeLengthSpinBox.value() / 1000.0,
-        )
-
-    def _create_intrados_sleeve(self):
-        """Create a RodSleeve from current intrados UI values."""
-        return RodSleeve(
-            surface='intrados',
-            width=self.intradosWidthSpinBox.value() / 1000.0,
-            offset=self.intradosOffsetSpinBox.value() / 1000.0,
-            start_chord=self.intradosStartSpinBox.value() / 100.0,
-            end_chord=self.intradosEndSpinBox.value() / 100.0,
-            le_angle=self.intradosLeAngleSpinBox.value(),
-            te_angle=self.intradosTeAngleSpinBox.value(),
-            le_length=self.intradosLeLengthSpinBox.value() / 1000.0,
-            te_length=self.intradosTeLengthSpinBox.value() / 1000.0,
-        )
-
     def _create_reinforcement(self, position, config, name=""):
         """Create an AttachmentReinforcement from config values."""
         return AttachmentReinforcement(
@@ -422,24 +460,28 @@ class AirfoilStructureTool(BaseTool):
 
 
     def _draw_sleeve(self, sleeve, rib, color='blue'):
-        """Draw a rod sleeve preview (main sleeve only, no terminations for now)."""
+        """Draw a rod sleeve preview with terminations."""
         try:
-            # Just draw the main sleeve without the problematic terminations
-            inner_points, outer_points = sleeve.get_sleeve_points(rib)
+            # Get full sleeve with terminations
+            inner_points, outer_points = sleeve.get_full_sleeve_points(rib)
             
             if inner_points and outer_points:
+                # Draw inner edge
                 inner_3d = [[p[0], p[1], 0] for p in inner_points]
                 self.preview_root.addChild(Line_old(inner_3d, color=color, width=2).object)
                 
+                # Draw outer edge
                 outer_3d = [[p[0], p[1], 0] for p in outer_points]
                 self.preview_root.addChild(Line_old(outer_3d, color=color, width=2).object)
                 
-                # Draw end caps
+                # Draw end caps connecting inner and outer
                 if len(inner_points) > 0 and len(outer_points) > 0:
+                    # Start cap
                     start_cap = [[inner_points[0][0], inner_points[0][1], 0],
                                  [outer_points[0][0], outer_points[0][1], 0]]
                     self.preview_root.addChild(Line_old(start_cap, color=color, width=1).object)
                     
+                    # End cap
                     end_cap = [[inner_points[-1][0], inner_points[-1][1], 0],
                                [outer_points[-1][0], outer_points[-1][1], 0]]
                     self.preview_root.addChild(Line_old(end_cap, color=color, width=1).object)
@@ -490,44 +532,49 @@ class AirfoilStructureTool(BaseTool):
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
         suffix = "_s" if is_suspended else "_ns"
 
-        widgets = [
-            self.extradosEnabledCheckBox, self.extradosWidthSpinBox, self.extradosOffsetSpinBox,
-            self.extradosStartSpinBox, self.extradosEndSpinBox,
-            self.extradosLeAngleSpinBox, self.extradosLeLengthSpinBox,
-            self.extradosTeAngleSpinBox, self.extradosTeLengthSpinBox,
-            self.intradosEnabledCheckBox, self.intradosWidthSpinBox, self.intradosOffsetSpinBox,
-            self.intradosStartSpinBox, self.intradosEndSpinBox,
-            self.intradosLeAngleSpinBox, self.intradosLeLengthSpinBox,
-            self.intradosTeAngleSpinBox, self.intradosTeLengthSpinBox,
-        ]
+        # Load extrados rod sleeve configs (new multi-rod format)
+        extrados_enabled = getattr(pg, f'extrados_sleeves_enabled{suffix}', True)
+        extrados_configs = getattr(pg, f'extrados_sleeves{suffix}', None)
+        
+        # Backward compatibility: migrate old single-rod format
+        if extrados_configs is None:
+            old_enabled = getattr(pg, f'extrados_sleeve_enabled{suffix}', True)
+            old_config = {
+                'start_chord': getattr(pg, f'extrados_sleeve_start{suffix}', 0.0),
+                'end_chord': getattr(pg, f'extrados_sleeve_end{suffix}', 0.71),
+                'width': getattr(pg, f'extrados_sleeve_width{suffix}', 0.015),
+                'offset': getattr(pg, f'extrados_sleeve_offset{suffix}', 0.005),
+                'start_angle': getattr(pg, f'extrados_sleeve_le_angle{suffix}', 350.0),
+                'start_length': getattr(pg, f'extrados_sleeve_le_length{suffix}', 0.125),
+                'end_angle': getattr(pg, f'extrados_sleeve_te_angle{suffix}', 325.0),
+                'end_length': getattr(pg, f'extrados_sleeve_te_length{suffix}', 0.075),
+            }
+            extrados_configs = [old_config]
+            extrados_enabled = old_enabled
+        
+        self.extradosGroup.set_configs(extrados_enabled, extrados_configs)
 
-        for w in widgets:
-            w.blockSignals(True)
-
-        # Load extrados sleeve values
-        self.extradosEnabledCheckBox.setChecked(getattr(pg, f'extrados_sleeve_enabled{suffix}', True))
-        self.extradosWidthSpinBox.setValue(getattr(pg, f'extrados_sleeve_width{suffix}', 0.015) * 1000.0)
-        self.extradosOffsetSpinBox.setValue(getattr(pg, f'extrados_sleeve_offset{suffix}', 0.005) * 1000.0)
-        self.extradosStartSpinBox.setValue(getattr(pg, f'extrados_sleeve_start{suffix}', 0.0) * 100.0)
-        self.extradosEndSpinBox.setValue(getattr(pg, f'extrados_sleeve_end{suffix}', 0.71) * 100.0)
-        self.extradosLeAngleSpinBox.setValue(getattr(pg, f'extrados_sleeve_le_angle{suffix}', 350.0))
-        self.extradosLeLengthSpinBox.setValue(getattr(pg, f'extrados_sleeve_le_length{suffix}', 0.125) * 1000.0)
-        self.extradosTeAngleSpinBox.setValue(getattr(pg, f'extrados_sleeve_te_angle{suffix}', 325.0))
-        self.extradosTeLengthSpinBox.setValue(getattr(pg, f'extrados_sleeve_te_length{suffix}', 0.075) * 1000.0)
-
-        # Load intrados sleeve values
-        self.intradosEnabledCheckBox.setChecked(getattr(pg, f'intrados_sleeve_enabled{suffix}', True))
-        self.intradosWidthSpinBox.setValue(getattr(pg, f'intrados_sleeve_width{suffix}', 0.015) * 1000.0)
-        self.intradosOffsetSpinBox.setValue(getattr(pg, f'intrados_sleeve_offset{suffix}', 0.005) * 1000.0)
-        self.intradosStartSpinBox.setValue(getattr(pg, f'intrados_sleeve_start{suffix}', 0.06) * 100.0)
-        self.intradosEndSpinBox.setValue(getattr(pg, f'intrados_sleeve_end{suffix}', 0.50) * 100.0)
-        self.intradosLeAngleSpinBox.setValue(getattr(pg, f'intrados_sleeve_le_angle{suffix}', 100.0))
-        self.intradosLeLengthSpinBox.setValue(getattr(pg, f'intrados_sleeve_le_length{suffix}', 0.100) * 1000.0)
-        self.intradosTeAngleSpinBox.setValue(getattr(pg, f'intrados_sleeve_te_angle{suffix}', 20.0))
-        self.intradosTeLengthSpinBox.setValue(getattr(pg, f'intrados_sleeve_te_length{suffix}', 0.090) * 1000.0)
-
-        for w in widgets:
-            w.blockSignals(False)
+        # Load intrados rod sleeve configs (new multi-rod format)
+        intrados_enabled = getattr(pg, f'intrados_sleeves_enabled{suffix}', True)
+        intrados_configs = getattr(pg, f'intrados_sleeves{suffix}', None)
+        
+        # Backward compatibility: migrate old single-rod format
+        if intrados_configs is None:
+            old_enabled = getattr(pg, f'intrados_sleeve_enabled{suffix}', True)
+            old_config = {
+                'start_chord': getattr(pg, f'intrados_sleeve_start{suffix}', 0.06),
+                'end_chord': getattr(pg, f'intrados_sleeve_end{suffix}', 0.50),
+                'width': getattr(pg, f'intrados_sleeve_width{suffix}', 0.015),
+                'offset': getattr(pg, f'intrados_sleeve_offset{suffix}', 0.005),
+                'start_angle': getattr(pg, f'intrados_sleeve_le_angle{suffix}', 100.0),
+                'start_length': getattr(pg, f'intrados_sleeve_le_length{suffix}', 0.100),
+                'end_angle': getattr(pg, f'intrados_sleeve_te_angle{suffix}', 20.0),
+                'end_length': getattr(pg, f'intrados_sleeve_te_length{suffix}', 0.090),
+            }
+            intrados_configs = [old_config]
+            intrados_enabled = old_enabled
+            
+        self.intradosGroup.set_configs(intrados_enabled, intrados_configs)
 
         # Load reinforcement values (only for suspended)
         if is_suspended:
@@ -560,27 +607,13 @@ class AirfoilStructureTool(BaseTool):
         pg = self.parametric_glider
         suffix = "_s" if is_suspended else "_ns"
 
-        # Save extrados sleeve values
-        setattr(pg, f'extrados_sleeve_enabled{suffix}', self.extradosEnabledCheckBox.isChecked())
-        setattr(pg, f'extrados_sleeve_width{suffix}', self.extradosWidthSpinBox.value() / 1000.0)
-        setattr(pg, f'extrados_sleeve_offset{suffix}', self.extradosOffsetSpinBox.value() / 1000.0)
-        setattr(pg, f'extrados_sleeve_start{suffix}', self.extradosStartSpinBox.value() / 100.0)
-        setattr(pg, f'extrados_sleeve_end{suffix}', self.extradosEndSpinBox.value() / 100.0)
-        setattr(pg, f'extrados_sleeve_le_angle{suffix}', self.extradosLeAngleSpinBox.value())
-        setattr(pg, f'extrados_sleeve_le_length{suffix}', self.extradosLeLengthSpinBox.value() / 1000.0)
-        setattr(pg, f'extrados_sleeve_te_angle{suffix}', self.extradosTeAngleSpinBox.value())
-        setattr(pg, f'extrados_sleeve_te_length{suffix}', self.extradosTeLengthSpinBox.value() / 1000.0)
+        # Save extrados rod sleeve configs (new multi-rod format)
+        setattr(pg, f'extrados_sleeves_enabled{suffix}', self.extradosGroup.is_enabled())
+        setattr(pg, f'extrados_sleeves{suffix}', self.extradosGroup.get_configs())
 
-        # Save intrados sleeve values
-        setattr(pg, f'intrados_sleeve_enabled{suffix}', self.intradosEnabledCheckBox.isChecked())
-        setattr(pg, f'intrados_sleeve_width{suffix}', self.intradosWidthSpinBox.value() / 1000.0)
-        setattr(pg, f'intrados_sleeve_offset{suffix}', self.intradosOffsetSpinBox.value() / 1000.0)
-        setattr(pg, f'intrados_sleeve_start{suffix}', self.intradosStartSpinBox.value() / 100.0)
-        setattr(pg, f'intrados_sleeve_end{suffix}', self.intradosEndSpinBox.value() / 100.0)
-        setattr(pg, f'intrados_sleeve_le_angle{suffix}', self.intradosLeAngleSpinBox.value())
-        setattr(pg, f'intrados_sleeve_le_length{suffix}', self.intradosLeLengthSpinBox.value() / 1000.0)
-        setattr(pg, f'intrados_sleeve_te_angle{suffix}', self.intradosTeAngleSpinBox.value())
-        setattr(pg, f'intrados_sleeve_te_length{suffix}', self.intradosTeLengthSpinBox.value() / 1000.0)
+        # Save intrados rod sleeve configs (new multi-rod format)
+        setattr(pg, f'intrados_sleeves_enabled{suffix}', self.intradosGroup.is_enabled())
+        setattr(pg, f'intrados_sleeves{suffix}', self.intradosGroup.get_configs())
 
         # Save reinforcement values (only for suspended)
         if is_suspended:

@@ -516,11 +516,7 @@ class RodSleeve(object):
         end_angle_rad = np.deg2rad(end_angle_deg)
         end_direction = np.array([np.cos(end_angle_rad), np.sin(end_angle_rad)])
         
-        # Calculate starting tangent
-        # CRITICAL: At t=0, we need inner_curve[0] = inner_start and outer_curve[0] = outer_start
-        # This requires: normal_t0 = (outer_start - inner_start) / |...|
-        # Since normal = [-tangent[1], tangent[0]], we need:
-        # tangent = [width_dir_norm[1], -width_dir_norm[0]]
+        # Calculate initial width direction (from inner to outer)
         width_dir = (outer_start - inner_start)
         width_len = np.linalg.norm(width_dir)
         if width_len > 1e-10:
@@ -532,13 +528,7 @@ class RodSleeve(object):
         required_tangent = np.array([width_dir_norm[1], -width_dir_norm[0]])
         
         if start_tangent_vec is None:
-            # Check if required_tangent points roughly towards end_direction
-            if np.dot(required_tangent, end_direction) >= 0:
-                start_tangent = required_tangent
-            else:
-                # Required tangent points away from end. We still use it,
-                # the Bezier will curve appropriately to reach the endpoint.
-                start_tangent = required_tangent
+            start_tangent = required_tangent
         else:
             start_tangent = start_tangent_vec / np.linalg.norm(start_tangent_vec)
 
@@ -557,6 +547,9 @@ class RodSleeve(object):
         
         inner_curve = []
         outer_curve = []
+        
+        # Track previous normal for progressive orientation consistency
+        prev_normal = width_dir_norm  # Start with initial width direction
         
         for i in range(num_points):
             t = i / (num_points - 1)
@@ -584,6 +577,13 @@ class RodSleeve(object):
             
             # Normal is perpendicular to tangent
             normal = np.array([-tangent[1], tangent[0]])
+            
+            # PROGRESSIVE FIX: Compare with PREVIOUS normal, not initial direction
+            # This ensures smooth transitions even for large curve turns
+            if np.dot(normal, prev_normal) < 0:
+                normal = -normal
+            
+            prev_normal = normal  # Update for next iteration
             
             # Inner and outer points at constant width
             half_width = width / 2

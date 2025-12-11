@@ -161,6 +161,17 @@ class ParametricGlider(object):
         })
         self.reinforcement_configs_s = kwargs.get('reinforcement_configs_s', [])
 
+        # Multi-rod sleeves (NEW FORMAT - list of configs)
+        # Suspended ribs
+        self.extrados_sleeves_enabled_s = kwargs.get('extrados_sleeves_enabled_s', True)
+        self.extrados_sleeves_s = kwargs.get('extrados_sleeves_s', [])
+        self.intrados_sleeves_enabled_s = kwargs.get('intrados_sleeves_enabled_s', True)
+        self.intrados_sleeves_s = kwargs.get('intrados_sleeves_s', [])
+        # Non-suspended ribs
+        self.extrados_sleeves_enabled_ns = kwargs.get('extrados_sleeves_enabled_ns', True)
+        self.extrados_sleeves_ns = kwargs.get('extrados_sleeves_ns', [])
+        self.intrados_sleeves_enabled_ns = kwargs.get('intrados_sleeves_enabled_ns', True)
+        self.intrados_sleeves_ns = kwargs.get('intrados_sleeves_ns', [])
 
 
     def apply_holes(self, glider):
@@ -395,6 +406,59 @@ class ParametricGlider(object):
                 # Non-suspended ribs don't get reinforcements
                 rib.reinforcements = []
 
+    def apply_rod_sleeves(self, glider):
+        """Apply rod sleeve configurations to ribs for 2D export."""
+        from openglider.glider.rib.elements import RodSleeve
+        
+        # Identify suspended ribs
+        suspended_ribs = {att.rib for att in glider.lineset.attachment_points if hasattr(att, 'rib')}
+        
+        for rib_idx, rib in enumerate(glider.ribs):
+            is_suspended = rib in suspended_ribs
+            suffix = '_s' if is_suspended else '_ns'
+            
+            rod_sleeves = []
+            
+            # Get extrados sleeves
+            extrados_enabled = getattr(self, f'extrados_sleeves_enabled{suffix}', True)
+            extrados_configs = getattr(self, f'extrados_sleeves{suffix}', [])
+            
+            if extrados_enabled and extrados_configs:
+                for i, config in enumerate(extrados_configs):
+                    sleeve = RodSleeve(
+                        surface='extrados',
+                        width=config.get('width', 0.015),
+                        offset=config.get('offset', 0.005),
+                        start_chord=config.get('start_chord', 0.0),
+                        end_chord=config.get('end_chord', 0.7),
+                        le_angle=config.get('start_angle', 350.0),
+                        te_angle=config.get('end_angle', 325.0),
+                        le_length=config.get('start_length', 0.1),
+                        te_length=config.get('end_length', 0.075),
+                    )
+                    rod_sleeves.append(sleeve)
+            
+            # Get intrados sleeves
+            intrados_enabled = getattr(self, f'intrados_sleeves_enabled{suffix}', True)
+            intrados_configs = getattr(self, f'intrados_sleeves{suffix}', [])
+            
+            if intrados_enabled and intrados_configs:
+                for i, config in enumerate(intrados_configs):
+                    sleeve = RodSleeve(
+                        surface='intrados',
+                        width=config.get('width', 0.015),
+                        offset=config.get('offset', 0.005),
+                        start_chord=config.get('start_chord', 0.06),
+                        end_chord=config.get('end_chord', 0.5),
+                        le_angle=config.get('start_angle', 100.0),
+                        te_angle=config.get('end_angle', 20.0),
+                        le_length=config.get('start_length', 0.1),
+                        te_length=config.get('end_length', 0.09),
+                    )
+                    rod_sleeves.append(sleeve)
+            
+            rib.rod_sleeves = rod_sleeves
+
     def __json__(self):
         return {
             "shape": self.shape,
@@ -492,6 +556,15 @@ class ParametricGlider(object):
                 'rod_enabled': True, 'rod_offset': 0.008, 'rod_width': 0.009, 'rod_end_offset': 1.0
             }),
             "reinforcement_configs_s": getattr(self, "reinforcement_configs_s", []),
+            # Multi-rod sleeves (NEW FORMAT)
+            "extrados_sleeves_enabled_s": getattr(self, "extrados_sleeves_enabled_s", True),
+            "extrados_sleeves_s": getattr(self, "extrados_sleeves_s", []),
+            "intrados_sleeves_enabled_s": getattr(self, "intrados_sleeves_enabled_s", True),
+            "intrados_sleeves_s": getattr(self, "intrados_sleeves_s", []),
+            "extrados_sleeves_enabled_ns": getattr(self, "extrados_sleeves_enabled_ns", True),
+            "extrados_sleeves_ns": getattr(self, "extrados_sleeves_ns", []),
+            "intrados_sleeves_enabled_ns": getattr(self, "intrados_sleeves_enabled_ns", True),
+            "intrados_sleeves_ns": getattr(self, "intrados_sleeves_ns", []),
         }
 
 
@@ -1127,6 +1200,7 @@ class ParametricGlider(object):
         glider.lineset = self.lineset.return_lineset(glider, self.v_inf)
         self.apply_holes(glider)
         self.apply_reinforcements(glider)
+        self.apply_rod_sleeves(glider)
         glider.lineset.glider = glider
 
         glider.lineset.calculate_sag = False

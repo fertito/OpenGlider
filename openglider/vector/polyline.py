@@ -364,7 +364,14 @@ class PolyLine2D(PolyLine):
         this property returns a normal for every point,
         approximated by the 2 neighbour points (len(data) == len(normals))
         """
-        rotate = lambda x: normalize(x).dot([[0, -1], [1, 0]])
+        def safe_normalize(x):
+            """Normalize vector, return default if zero-length."""
+            leng = np.linalg.norm(x)
+            if leng < 1e-10:
+                return np.array([0.0, 1.0])  # Return default upward normal
+            return x / leng
+        
+        rotate = lambda x: safe_normalize(x).dot([[0, -1], [1, 0]])
         normvectors = [rotate(self.data[1] - self.data[0])]
         for j in range(1, len(self.data) - 1):
             normvectors.append(

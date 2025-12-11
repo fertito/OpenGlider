@@ -19,7 +19,8 @@ class PlotMaker(object):
         self.dribs = collections.OrderedDict()
         self.straps = collections.OrderedDict()
         self.rigidfoils = collections.OrderedDict()
-        self.reinforcements = []  # Halfmoons and rod sleeves
+        self.reinforcements = []  # Halfmoons and attachment rod sleeves
+        self.rod_sleeves = []  # Profile rod sleeves (extrados/intrados)
         self.ribs = []
         self._cellplotmakers = dict()
 
@@ -48,6 +49,35 @@ class PlotMaker(object):
             )
 
         return self._cellplotmakers[cell]
+
+    def _get_text_position_inside(self, points, offset_ratio=0.15):
+        """
+        Get a text position inside a closed polygon near the top edge.
+        Returns (p1, p2) for text placement.
+        """
+        import numpy as np
+        
+        if len(points) < 3:
+            center = np.mean(points, axis=0) if len(points) > 0 else np.array([0, 0])
+            return center, center + np.array([0.01, 0])
+        
+        points = np.array(points)
+        
+        # Find bbox
+        min_pt = np.min(points, axis=0)
+        max_pt = np.max(points, axis=0)
+        width = max_pt[0] - min_pt[0]
+        height = max_pt[1] - min_pt[1]
+        
+        # Position text in upper-center area of the shape
+        center_x = (min_pt[0] + max_pt[0]) / 2
+        # Place text at offset_ratio from top
+        text_y = max_pt[1] - height * offset_ratio
+        
+        p1 = np.array([center_x - width * 0.3, text_y])
+        p2 = np.array([center_x + width * 0.3, text_y])
+        
+        return p1, p2
 
     def get_panels(self):
         self.panels.clear()
@@ -131,7 +161,7 @@ class PlotMaker(object):
         return self.rigidfoils
 
     def get_reinforcements(self):
-        """Get reinforcement parts (halfmoons and rod sleeves) for 2D export."""
+        """Get attachment reinforcement parts (halfmoons and their rod sleeves) for 2D export."""
         from openglider.vector.drawing import PlotPart
         from openglider.vector.text import Text
         import numpy as np
@@ -153,32 +183,25 @@ class PlotMaker(object):
                             )
                             halfmoon_part.layers["cuts"].append(flat['halfmoon'])
                             
-                            # Text label centered inside
-                            halfmoon_data = flat['halfmoon'].data
-                            if len(halfmoon_data) > 4:
-                                center = np.mean(halfmoon_data, axis=0)
-                                p1 = center
-                                p2 = center + np.array([0.01, 0])
-                                text_obj = Text(unique_name, p1, p2, size=0.005, valign=0)
-                                halfmoon_part.layers["text"] += text_obj.get_vectors()
+                            # Text label inside shape
+                            p1, p2 = self._get_text_position_inside(flat['halfmoon'].data, 0.25)
+                            text_obj = Text(unique_name, p1, p2, size=0.005, valign=0)
+                            halfmoon_part.layers["text"] += text_obj.get_vectors()
                             
                             self.reinforcements.append(halfmoon_part)
                         
-                        # Rod sleeve part
+                        # Rod sleeve part (for attachments)
                         if flat.get('rod_sleeve') and len(flat['rod_sleeve'].data) > 0:
                             sleeve_part = PlotPart(
-                                name=unique_name,
+                                name=unique_name + "_sleeve",
                                 material_code="rod_sleeve"
                             )
                             sleeve_part.layers["cuts"].append(flat['rod_sleeve'])
                             
-                            sleeve_data = flat['rod_sleeve'].data
-                            if len(sleeve_data) > 4:
-                                center = np.mean(sleeve_data, axis=0)
-                                p1 = center
-                                p2 = center + np.array([0.01, 0])
-                                text_obj = Text(unique_name, p1, p2, size=0.003, valign=0)
-                                sleeve_part.layers["text"] += text_obj.get_vectors()
+                            # Text label inside shape
+                            p1, p2 = self._get_text_position_inside(flat['rod_sleeve'].data, 0.3)
+                            text_obj = Text(unique_name, p1, p2, size=0.003, valign=0)
+                            sleeve_part.layers["text"] += text_obj.get_vectors()
                             
                             self.reinforcements.append(sleeve_part)
                             
@@ -186,6 +209,43 @@ class PlotMaker(object):
                         print(f"Failed to plot reinforcement: {e}")
         
         return self.reinforcements
+
+    def get_rod_sleeves(self):
+        """Get profile rod sleeves (extrados/intrados) for 2D export in separate frame."""
+        from openglider.vector.drawing import PlotPart
+        from openglider.vector.text import Text
+        import numpy as np
+        
+        self.rod_sleeves = []
+        
+        for rib_idx, rib in enumerate(self.glider_3d.ribs):
+            if hasattr(rib, "rod_sleeves") and rib.rod_sleeves:
+                for sleeve_idx, sleeve in enumerate(rib.rod_sleeves):
+                    try:
+                        flat = sleeve.get_flattened(rib)
+                        surface_label = "E" if sleeve.surface == 'extrados' else "I"
+                        unique_name = f"{rib.name}_{surface_label}{sleeve_idx+1}"
+                        
+                        if flat is not None and hasattr(flat, 'data') and len(flat.data) > 0:
+                            sleeve_part = PlotPart(
+                                name=unique_name,
+                                material_code=f"{sleeve.surface}_sleeve"
+                            )
+                            sleeve_part.layers["cuts"].append(flat)
+                            
+                            # Text label inside shape
+                            p1, p2 = self._get_text_position_inside(flat.data, 0.3)
+                            text_obj = Text(unique_name, p1, p2, size=0.003, valign=0)
+                            sleeve_part.layers["text"] += text_obj.get_vectors()
+                            
+                            self.rod_sleeves.append(sleeve_part)
+                            
+                    except Exception as e:
+                        print(f"Failed to plot rod sleeve {unique_name}: {e}")
+                        import traceback
+                        traceback.print_exc()
+        
+        return self.rod_sleeves
 
     def get_all_grouped(self) -> Layout:
         # create x-raster
@@ -223,7 +283,7 @@ class PlotMaker(object):
 
         panels.add_text("panels_all")
 
-        # Add reinforcements layout above ribs
+        # Add reinforcements layout (halfmoons + attachment sleeves)
         reinforcements_layout = Layout()
         if self.reinforcements:
             reinforcements_layout = Layout.stack_row(
@@ -232,10 +292,21 @@ class PlotMaker(object):
             reinforcements_layout.draw_border(border=0.02)
             reinforcements_layout.add_text("reinforcements")
 
+        # Add rod sleeves layout (profile rod sleeves - separate frame)
+        rod_sleeves_layout = Layout()
+        if self.rod_sleeves:
+            rod_sleeves_layout = Layout.stack_row(
+                self.rod_sleeves, self.config.patterns_align_dist_x
+            )
+            rod_sleeves_layout.draw_border(border=0.02)
+            rod_sleeves_layout.add_text("rod_sleeves")
+
         all_layouts = [panels]
         all_layouts += panels_grouped
         if self.reinforcements:
-            all_layouts += [reinforcements_layout]  # Above ribs
+            all_layouts += [reinforcements_layout]
+        if self.rod_sleeves:
+            all_layouts += [rod_sleeves_layout]
         all_layouts += ribs_grouped
         all_layouts += dribs_grouped
         all_layouts += straps_grouped
@@ -250,6 +321,7 @@ class PlotMaker(object):
         self.get_straps()
         self.get_rigidfoils()
         self.get_reinforcements()
+        self.get_rod_sleeves()
         return self
 
     def get_all_parts(self):

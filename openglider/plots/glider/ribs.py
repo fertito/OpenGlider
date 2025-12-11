@@ -110,6 +110,33 @@ class RibPlot(object):
             # Add profile mark at reinforcement position
             self.insert_mark(reinforcement.position, self.config.marks_attachment_point)
 
+        # Rod sleeves (profile extrados/intrados fourreaux) - add position marks
+        if hasattr(self.rib, 'rod_sleeves') and self.rib.rod_sleeves:
+            for sleeve in self.rib.rod_sleeves:
+                try:
+                    # Get start and end chord positions
+                    start_chord = sleeve.start_chord
+                    end_chord = sleeve.end_chord
+                    
+                    if sleeve.surface == 'extrados':
+                        # Extrados uses negative x values in profile coordinate system
+                        start_x = -start_chord
+                        end_x = -end_chord
+                    else:
+                        # Intrados uses positive x values
+                        start_x = start_chord
+                        end_x = end_chord
+                    
+                    # Insert marks at start and end positions
+                    # Use diagonal_front for start, diagonal_back for end
+                    self.insert_mark(start_x, self.config.marks_diagonal_front)
+                    self.insert_mark(end_x, self.config.marks_diagonal_back)
+                    
+                    # Also add laser marks
+                    self.insert_mark(start_x, self.config.marks_laser_diagonal, "L0")
+                    self.insert_mark(end_x, self.config.marks_laser_diagonal, "L0")
+                except Exception as e:
+                    print(f"Failed to add rod sleeve marks: {e}")
 
         self._insert_text(self.rib.name)
         self.insert_controlpoints()
