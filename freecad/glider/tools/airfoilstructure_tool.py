@@ -62,7 +62,9 @@ class AirfoilStructureTool(BaseTool):
         self.reinforcementLayout = QtGui.QFormLayout(self.reinforcementGroupBox)
         
         self.reinforcementEnabledCheckBox = QtGui.QCheckBox("Enable Reinforcements", self.reinforcementGroupBox)
+        self.reinforcementEnabledCheckBox.setChecked(True)  # Enabled by default
         self.reinforcementApplyAllCheckBox = QtGui.QCheckBox("Apply same parameters to all", self.reinforcementGroupBox)
+        self.reinforcementApplyAllCheckBox.setChecked(False)  # Individual config by default
         
         self.reinforcementStack = QtGui.QStackedWidget(self.reinforcementGroupBox)
         
@@ -662,7 +664,7 @@ class ReinforcementConfigWidget(QtGui.QWidget):
         self.surfaceOffsetSpinBox.setDecimals(1)
         self.surfaceOffsetSpinBox.setSuffix(" mm")
         self.surfaceOffsetSpinBox.setRange(0.0, 1000.0)
-        self.surfaceOffsetSpinBox.setValue(3.0)
+        self.surfaceOffsetSpinBox.setValue(0.5)  # 0.5mm default
         self.layout.addRow("Surface offset", self.surfaceOffsetSpinBox)
         
         self.halfmoonRadiusSpinBox = QtGui.QDoubleSpinBox()
@@ -670,7 +672,7 @@ class ReinforcementConfigWidget(QtGui.QWidget):
         self.halfmoonRadiusSpinBox.setDecimals(1)
         self.halfmoonRadiusSpinBox.setSuffix(" mm")
         self.halfmoonRadiusSpinBox.setRange(0.0, 1000.0)
-        self.halfmoonRadiusSpinBox.setValue(30.0)
+        self.halfmoonRadiusSpinBox.setValue(100.0)  # 100mm default
         self.layout.addRow("Half-moon radius", self.halfmoonRadiusSpinBox)
         
         self.rodEnabledCheckBox = QtGui.QCheckBox("Enable Rod Sleeve")
@@ -682,7 +684,7 @@ class ReinforcementConfigWidget(QtGui.QWidget):
         self.rodOffsetSpinBox.setDecimals(1)
         self.rodOffsetSpinBox.setSuffix(" mm")
         self.rodOffsetSpinBox.setRange(0.0, 1000.0)
-        self.rodOffsetSpinBox.setValue(5.0)
+        self.rodOffsetSpinBox.setValue(8.0)  # 8mm default
         self.layout.addRow("Rod offset", self.rodOffsetSpinBox)
         
         self.rodWidthSpinBox = QtGui.QDoubleSpinBox()
@@ -690,7 +692,7 @@ class ReinforcementConfigWidget(QtGui.QWidget):
         self.rodWidthSpinBox.setDecimals(1)
         self.rodWidthSpinBox.setSuffix(" mm")
         self.rodWidthSpinBox.setRange(0.0, 1000.0)
-        self.rodWidthSpinBox.setValue(5.0)
+        self.rodWidthSpinBox.setValue(9.0)  # 9mm default
         self.layout.addRow("Rod width", self.rodWidthSpinBox)
         
         self.rodEndOffsetSpinBox = QtGui.QDoubleSpinBox()
@@ -698,7 +700,7 @@ class ReinforcementConfigWidget(QtGui.QWidget):
         self.rodEndOffsetSpinBox.setDecimals(1)
         self.rodEndOffsetSpinBox.setSuffix(" °")
         self.rodEndOffsetSpinBox.setRange(0.0, 90.0)
-        self.rodEndOffsetSpinBox.setValue(10.0)
+        self.rodEndOffsetSpinBox.setValue(1.0)  # 1° default
         self.layout.addRow("Rod end offset", self.rodEndOffsetSpinBox)
         
         self.enableCheckBox.stateChanged.connect(self.emit_changed)

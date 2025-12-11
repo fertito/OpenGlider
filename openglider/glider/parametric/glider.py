@@ -148,10 +148,19 @@ class ParametricGlider(object):
         self.intrados_sleeve_te_length_ns = kwargs.get('intrados_sleeve_te_length_ns', 0.03)
         
         # Airfoil Structure - Reinforcements (suspended only)
-        self.reinforcement_enabled_s = kwargs.get('reinforcement_enabled_s', False)
-        self.reinforcement_apply_all_s = kwargs.get('reinforcement_apply_all_s', True)
-        self.reinforcement_master_s = kwargs.get('reinforcement_master_s', {})
+        self.reinforcement_enabled_s = kwargs.get('reinforcement_enabled_s', True)  # Enabled by default
+        self.reinforcement_apply_all_s = kwargs.get('reinforcement_apply_all_s', False)  # Individual config by default
+        self.reinforcement_master_s = kwargs.get('reinforcement_master_s', {
+            'enabled': True,
+            'surface_offset': 0.0005,  # 0.5mm
+            'halfmoon_radius': 0.1,    # 100mm
+            'rod_enabled': True,
+            'rod_offset': 0.008,       # 8mm
+            'rod_width': 0.009,        # 9mm
+            'rod_end_offset': 1.0,     # 1°
+        })
         self.reinforcement_configs_s = kwargs.get('reinforcement_configs_s', [])
+
 
 
     def apply_holes(self, glider):
@@ -370,15 +379,16 @@ class ParametricGlider(object):
                         
                         reinforcement = AttachmentReinforcement(
                             position=ap.rib_pos,
-                            surface_offset=config.get('surface_offset', 0.003),
-                            halfmoon_radius=config.get('halfmoon_radius', 0.03),
+                            surface_offset=config.get('surface_offset', 0.0005),  # 0.5mm
+                            halfmoon_radius=config.get('halfmoon_radius', 0.1),   # 100mm
                             rod_enabled=config.get('rod_enabled', True),
-                            rod_offset=config.get('rod_offset', 0.005),
-                            rod_width=config.get('rod_width', 0.005),
-                            rod_end_offset=config.get('rod_end_offset', 10.0),
+                            rod_offset=config.get('rod_offset', 0.008),           # 8mm
+                            rod_width=config.get('rod_width', 0.009),             # 9mm
+                            rod_end_offset=config.get('rod_end_offset', 1.0),     # 1°
                             name=name,
                         )
                         reinforcements.append(reinforcement)
+
                 
                 rib.reinforcements = reinforcements
             else:
@@ -475,11 +485,15 @@ class ParametricGlider(object):
             "intrados_sleeve_te_angle_ns": getattr(self, "intrados_sleeve_te_angle_ns", 100.0),
             "intrados_sleeve_te_length_ns": getattr(self, "intrados_sleeve_te_length_ns", 0.03),
             # Airfoil Structure - Reinforcements (suspended only)
-            "reinforcement_enabled_s": getattr(self, "reinforcement_enabled_s", False),
-            "reinforcement_apply_all_s": getattr(self, "reinforcement_apply_all_s", True),
-            "reinforcement_master_s": getattr(self, "reinforcement_master_s", {}),
+            "reinforcement_enabled_s": getattr(self, "reinforcement_enabled_s", True),
+            "reinforcement_apply_all_s": getattr(self, "reinforcement_apply_all_s", False),
+            "reinforcement_master_s": getattr(self, "reinforcement_master_s", {
+                'enabled': True, 'surface_offset': 0.0005, 'halfmoon_radius': 0.1,
+                'rod_enabled': True, 'rod_offset': 0.008, 'rod_width': 0.009, 'rod_end_offset': 1.0
+            }),
             "reinforcement_configs_s": getattr(self, "reinforcement_configs_s", []),
         }
+
 
 
     def generate_truss_holes(self, rib, v1, v2, v3, num_holes, margin, radius_top=0.0, radius_bottom=0.0):
