@@ -416,23 +416,43 @@ class AirfoilStructureTool(BaseTool):
         return glider_instance.ribs[0] if glider_instance.ribs else None
 
     def get_first_suspended_rib(self):
-        """Get the first suspended rib for reinforcement configuration."""
+        """Get the first suspended rib that has valid attachment points (< 90% chord)."""
         glider_instance = self.obj.Proxy.getGliderInstance()
         suspended_ribs = {att.rib for att in glider_instance.attachment_points if hasattr(att, 'rib')}
+        
         for rib in glider_instance.ribs:
             if rib in suspended_ribs:
-                return rib
+                # Check if this rib has valid attachment points (< 90%)
+                all_aps = glider_instance.get_rib_attachment_points(rib)
+                valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
+                if valid_aps:
+                    return rib
+        
         return glider_instance.ribs[0] if glider_instance.ribs else None
     
     def get_valid_attachment_points(self, rib):
-        """Get attachment points < 90% chord."""
+        """Get attachment points < 90% chord (excluding brake attachments)."""
         glider_instance = self.obj.Proxy.getGliderInstance()
         all_aps = glider_instance.get_rib_attachment_points(rib)
-        # Filter points by position (assuming rib_pos is normalized chord position 0-1)
+        # Filter out brake attachments (> 90% chord)
         valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
-        # Sort by position just in case
+        # Sort by position
         valid_aps.sort(key=lambda x: x.rib_pos)
         return valid_aps
+
+    def get_first_suspended_rib_index(self):
+        """Get the index of the first suspended rib with valid attachment points."""
+        glider_instance = self.obj.Proxy.getGliderInstance()
+        suspended_ribs = {att.rib for att in glider_instance.attachment_points if hasattr(att, 'rib')}
+        
+        for idx, rib in enumerate(glider_instance.ribs):
+            if rib in suspended_ribs:
+                # Check if this rib has valid attachment points (< 90%)
+                all_aps = glider_instance.get_rib_attachment_points(rib)
+                valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
+                if valid_aps:
+                    return idx
+        return 0
 
     def on_rib_type_change(self, new_index):
         previous_index = 1 - new_index
@@ -441,6 +461,11 @@ class AirfoilStructureTool(BaseTool):
         
         is_suspended = new_index == 1
         self.reinforcementGroupBox.setVisible(is_suspended)
+        
+        # Auto-switch preview rib to first suspended rib when switching to Suspended mode
+        if is_suspended:
+            first_suspended_idx = self.get_first_suspended_rib_index()
+            self.previewRibSpinBox.setValue(first_suspended_idx)
         
         # Reload data for new state
         self.update_form_from_glider_data()
