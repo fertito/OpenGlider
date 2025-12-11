@@ -165,12 +165,34 @@ class HoleDesignTool(BaseTool):
         Gui.SendMsgToActiveView("ViewFit")
 
     def get_representative_rib(self, suspended=False):
+        """Get a representative rib for preview.
+        
+        For suspended ribs, ensures the rib has valid attachment points (< 90% chord)
+        to avoid counting stabilo/brake-only ribs as suspended.
+        """
         glider_instance = self.obj.Proxy.getGliderInstance()
         suspended_ribs = {att.rib for att in glider_instance.lineset.attachment_points if hasattr(att, 'rib')}
-        for rib in glider_instance.ribs:
-            if suspended == (rib in suspended_ribs):
-                return rib
-        return None
+        
+        if suspended:
+            # Find a suspended rib that has valid attachment points (< 90%)
+            for rib in glider_instance.ribs:
+                if rib in suspended_ribs:
+                    all_aps = glider_instance.get_rib_attachment_points(rib)
+                    valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
+                    if valid_aps:
+                        return rib
+            return glider_instance.ribs[0] if glider_instance.ribs else None
+        else:
+            # Find a non-suspended rib (no attachment points, or only brake attachments)
+            for rib in glider_instance.ribs:
+                if rib not in suspended_ribs:
+                    return rib
+                # Also consider ribs with only brake attachments as non-suspended for holes
+                all_aps = glider_instance.get_rib_attachment_points(rib)
+                valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
+                if not valid_aps:
+                    return rib
+            return glider_instance.ribs[0] if glider_instance.ribs else None
 
     def on_height_mode_change(self, index):
         is_margin = index == 1
