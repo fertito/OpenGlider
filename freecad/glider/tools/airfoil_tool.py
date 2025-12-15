@@ -131,7 +131,7 @@ class AirfoilTool(BaseTool):
         filename = QtGui.QFileDialog.getOpenFileName(
             parent=None,
             caption="import airfoil",
-            directory="~",
+            dir="~",
             filter="*.dat *.json",
             selectedFilter="*.dat *.json",
         )
@@ -149,8 +149,8 @@ class AirfoilTool(BaseTool):
     def export_file_dialog(self):
         filename = QtGui.QFileDialog.getSaveFileName(
             parent=None,
-            caption="import airfoil",
-            directory="~",
+            caption="export airfoil",
+            dir="~",
             filter="*.dat *.json",
             selectedFilter="*.dat *.json",
         )

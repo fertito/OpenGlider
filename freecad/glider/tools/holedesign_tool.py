@@ -19,7 +19,8 @@ class HoleDesignTool(BaseTool):
         self.numHolesSpinBox = QtGui.QSpinBox(self.base_widget)
         self.holeWidthSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.holeHeightSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
-        self.holeHeightModeComboBox = QtGui.QComboBox(self.base_widget)
+        self.holeHeightSpinBox.hide()  # Not in layout, hide to prevent floating widget
+
         self.holeMarginSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.verticalShiftSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.minPosSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
@@ -28,8 +29,12 @@ class HoleDesignTool(BaseTool):
 
         # Controls for no-hole zones on suspended ribs
         self.noHoleZoneLabel = QtGui.QLabel("<b>No-Hole Zone Geometry</b>", self.base_widget)
-        self.noHoleAngleSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
-        self.noHoleBaseWidthSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.noHoleArcAngleSpinBox = QtGui.QDoubleSpinBox(self.base_widget)  # Arc span angle
+        self.noHoleAngleSpinBox = QtGui.QDoubleSpinBox(self.base_widget)  # Direction to extrados
+
+        # Preview rib selector - ComboBox to show only relevant ribs with real names
+        self.previewRibComboBox = QtGui.QComboBox(self.base_widget)
+        self._rib_indices = []  # Mapping from combo index to actual rib index
 
         self.applyButton = QtGui.QPushButton("Apply", self.base_widget)
 
@@ -41,25 +46,23 @@ class HoleDesignTool(BaseTool):
         # Add items to combo box
         self.ribTypeComboBox.addItems(["Non-Suspended", "Suspended"])
         self.holeShapeComboBox.addItems(["Ellipse", "Rounded Rectangle"])
-        self.holeHeightModeComboBox.addItems(["Percentage", "Margin (mm)"])
+
 
         # Add widgets to the QFormLayout provided by BaseTool
         self.layout.addRow("Rib Type", self.ribTypeComboBox)
         self.layout.addRow("Hole Shape", self.holeShapeComboBox)
         self.layout.addRow("Number of Holes", self.numHolesSpinBox)
         self.layout.addRow("Hole Width (%)", self.holeWidthSpinBox)
-        self.layout.addRow("Height Mode", self.holeHeightModeComboBox)
-        self.layout.addRow("Hole Height (%)", self.holeHeightSpinBox)
-        self.layout.addRow("Hole Margin (m)", self.holeMarginSpinBox)
+        self.layout.addRow("Height Margin (mm)", self.holeMarginSpinBox)
         self.layout.addRow("Vertical Shift (%)", self.verticalShiftSpinBox)
         self.layout.addRow("Min Position (%)", self.minPosSpinBox)
         self.layout.addRow("Max Position (%)", self.maxPosSpinBox)
         self.layout.addRow("Corner Radius (mm)", self.holeCornerRadiusSpinBox)
 
-        # Add separator and controls for no-hole zones
         self.layout.addRow(self.noHoleZoneLabel)
-        self.layout.addRow("Angle (deg)", self.noHoleAngleSpinBox)
-        self.layout.addRow("Base Width (mm)", self.noHoleBaseWidthSpinBox)
+        self.layout.addRow("Arc Span (deg)", self.noHoleArcAngleSpinBox)
+        self.layout.addRow("Exclusion Angle (deg)", self.noHoleAngleSpinBox)
+        self.layout.addRow("Preview Rib", self.previewRibComboBox)
 
         # Right-align the apply button
         button_layout = QtGui.QHBoxLayout()
@@ -91,26 +94,40 @@ class HoleDesignTool(BaseTool):
         self.suspHoleNumSpinBox.setRange(0, 20)
         self.layout.addRow(QtGui.QLabel("Suspension Holes:", self.base_widget), self.suspHoleNumSpinBox)
 
+        self.suspHoleTopMarginSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.suspHoleTopMarginSpinBox.setSingleStep(1.0)
+        self.suspHoleTopMarginSpinBox.setDecimals(1)
+        self.suspHoleTopMarginSpinBox.setSuffix(" mm")
+        self.suspHoleTopMarginSpinBox.setRange(0.0, 100.0)
+        self.layout.addRow(QtGui.QLabel("Top Margin:", self.base_widget), self.suspHoleTopMarginSpinBox)
+
         self.suspHoleMarginSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.suspHoleMarginSpinBox.setSingleStep(1.0) # 1mm steps
         self.suspHoleMarginSpinBox.setDecimals(1)
         self.suspHoleMarginSpinBox.setSuffix(" mm")
         self.suspHoleMarginSpinBox.setRange(0.0, 100.0) # Reasonable max margin
-        self.layout.addRow(QtGui.QLabel("Susp. Hole Margin:", self.base_widget), self.suspHoleMarginSpinBox)
+        self.layout.addRow(QtGui.QLabel("Side Margin:", self.base_widget), self.suspHoleMarginSpinBox)
+
+        self.suspHoleBottomMarginSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.suspHoleBottomMarginSpinBox.setSingleStep(1.0)
+        self.suspHoleBottomMarginSpinBox.setDecimals(1)
+        self.suspHoleBottomMarginSpinBox.setSuffix(" mm")
+        self.suspHoleBottomMarginSpinBox.setRange(0.0, 100.0)
+        self.layout.addRow(QtGui.QLabel("Bottom Margin:", self.base_widget), self.suspHoleBottomMarginSpinBox)
 
         self.suspHoleRadiusTopSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
-        self.suspHoleRadiusTopSpinBox.setSingleStep(1.0) # 1mm steps
-        self.suspHoleRadiusTopSpinBox.setDecimals(1)
-        self.suspHoleRadiusTopSpinBox.setSuffix(" mm")
-        self.suspHoleRadiusTopSpinBox.setRange(0.0, 50.0)
-        self.layout.addRow(QtGui.QLabel("Top Radius:", self.base_widget), self.suspHoleRadiusTopSpinBox)
+        self.suspHoleRadiusTopSpinBox.setSingleStep(5.0)  # 5% steps
+        self.suspHoleRadiusTopSpinBox.setDecimals(0)
+        self.suspHoleRadiusTopSpinBox.setSuffix(" %")
+        self.suspHoleRadiusTopSpinBox.setRange(0.0, 100.0)  # 0% = sharp, 100% = max round
+        self.layout.addRow(QtGui.QLabel("Top Corner:", self.base_widget), self.suspHoleRadiusTopSpinBox)
 
         self.suspHoleRadiusBottomSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
-        self.suspHoleRadiusBottomSpinBox.setSingleStep(1.0) # 1mm steps
-        self.suspHoleRadiusBottomSpinBox.setDecimals(1)
-        self.suspHoleRadiusBottomSpinBox.setSuffix(" mm")
-        self.suspHoleRadiusBottomSpinBox.setRange(0.0, 50.0)
-        self.layout.addRow(QtGui.QLabel("Bottom Radius:", self.base_widget), self.suspHoleRadiusBottomSpinBox)
+        self.suspHoleRadiusBottomSpinBox.setSingleStep(5.0)  # 5% steps
+        self.suspHoleRadiusBottomSpinBox.setDecimals(0)
+        self.suspHoleRadiusBottomSpinBox.setSuffix(" %")
+        self.suspHoleRadiusBottomSpinBox.setRange(0.0, 100.0)  # 0% = sharp, 100% = max round
+        self.layout.addRow(QtGui.QLabel("Bottom Corner:", self.base_widget), self.suspHoleRadiusBottomSpinBox)
 
         for spinbox in [self.minPosSpinBox, self.maxPosSpinBox]:
             spinbox.setSingleStep(0.01)
@@ -118,14 +135,14 @@ class HoleDesignTool(BaseTool):
             spinbox.setMinimum(0.0)
             spinbox.setMaximum(1.0) # Relative to chord
 
+        self.noHoleArcAngleSpinBox.setSingleStep(5.0)
+        self.noHoleArcAngleSpinBox.setMinimum(0)
+        self.noHoleArcAngleSpinBox.setMaximum(180)
+        self.noHoleArcAngleSpinBox.setValue(120)  # Default: 120° arc span
+        
         self.noHoleAngleSpinBox.setSingleStep(1.0)
         self.noHoleAngleSpinBox.setMinimum(0)
         self.noHoleAngleSpinBox.setMaximum(90)
-
-        self.noHoleBaseWidthSpinBox.setSingleStep(1.0)
-        self.noHoleBaseWidthSpinBox.setDecimals(1)
-        self.noHoleBaseWidthSpinBox.setSuffix(" mm")
-        self.noHoleBaseWidthSpinBox.setRange(0.0, 200.0)  # 0 = full triangle, >0 = truncated
 
         # Load initial values
         self.update_form_from_glider_data()
@@ -135,81 +152,115 @@ class HoleDesignTool(BaseTool):
         self.holeShapeComboBox.currentIndexChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.numHolesSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.holeWidthSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
-        self.holeHeightModeComboBox.currentIndexChanged.connect(self.on_height_mode_change)
+
         self.holeHeightSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.holeMarginSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.verticalShiftSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.minPosSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.maxPosSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.holeCornerRadiusSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.noHoleArcAngleSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.noHoleAngleSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
-        self.noHoleBaseWidthSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.suspHoleNumSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.suspHoleTopMarginSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.suspHoleMarginSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.suspHoleBottomMarginSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.suspHoleRadiusTopSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.suspHoleRadiusBottomSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.previewRibComboBox.currentIndexChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.applyButton.clicked.connect(self.accept)
 
         # Set initial visibility of no-hole zone controls
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
         self.noHoleZoneLabel.setVisible(is_suspended)
+        self.noHoleArcAngleSpinBox.setVisible(is_suspended)
+        self.layout.labelForField(self.noHoleArcAngleSpinBox).setVisible(is_suspended)
         self.noHoleAngleSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
-        self.noHoleBaseWidthSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.noHoleBaseWidthSpinBox).setVisible(is_suspended)
         
         # Initial visibility of susp hole controls
         self.suspHoleNumSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.suspHoleNumSpinBox).setVisible(is_suspended)
+        self.suspHoleTopMarginSpinBox.setVisible(is_suspended)
+        self.layout.labelForField(self.suspHoleTopMarginSpinBox).setVisible(is_suspended)
         self.suspHoleMarginSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.suspHoleMarginSpinBox).setVisible(is_suspended)
+        self.suspHoleBottomMarginSpinBox.setVisible(is_suspended)
+        self.layout.labelForField(self.suspHoleBottomMarginSpinBox).setVisible(is_suspended)
         self.suspHoleRadiusTopSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.suspHoleRadiusTopSpinBox).setVisible(is_suspended)
         self.suspHoleRadiusBottomSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.suspHoleRadiusBottomSpinBox).setVisible(is_suspended)
 
-
     def setup_pivy(self):
         self.task_separator.addChild(self.preview_root)
+        # Set spinbox max to actual rib count
+        glider_instance = self.obj.Proxy.getGliderInstance()
+        num_ribs = len(glider_instance.ribs) if glider_instance.ribs else 1
+        self._populate_rib_combo()  # Populate with filtered ribs based on type
         self.update_preview()
         Gui.SendMsgToActiveView("ViewFit")
 
+    def _is_truly_suspended(self, rib, glider_instance):
+        """Check if rib has true suspension attachments (not just brake tabs)."""
+        # Filter attachment points - exclude brake tabs (>90% chord)
+        attachment_points = glider_instance.get_rib_attachment_points(rib)
+        true_suspension_aps = [ap for ap in attachment_points if hasattr(ap, 'rib_pos') and ap.rib_pos <= 0.9]
+        return len(true_suspension_aps) > 0
+    
+    def _populate_rib_combo(self):
+        """Populate rib combo box with filtered ribs based on suspended/non-suspended type."""
+        glider_instance = self.obj.Proxy.getGliderInstance()
+        is_suspended = self.ribTypeComboBox.currentIndex() == 1
+        
+        # Block signals while updating
+        self.previewRibComboBox.blockSignals(True)
+        
+        # Remember current selection if possible
+        old_rib_idx = None
+        if self._rib_indices and self.previewRibComboBox.currentIndex() >= 0:
+            old_combo_idx = self.previewRibComboBox.currentIndex()
+            if old_combo_idx < len(self._rib_indices):
+                old_rib_idx = self._rib_indices[old_combo_idx]
+        
+        self.previewRibComboBox.clear()
+        self._rib_indices = []
+        
+        for i, rib in enumerate(glider_instance.ribs):
+            truly_suspended = self._is_truly_suspended(rib, glider_instance)
+            
+            # Filter based on type
+            if is_suspended and truly_suspended:
+                self._rib_indices.append(i)
+                self.previewRibComboBox.addItem(f"{i}: {rib.name}")
+            elif not is_suspended and not truly_suspended:
+                self._rib_indices.append(i)
+                self.previewRibComboBox.addItem(f"{i}: {rib.name}")
+        
+        # Restore selection if possible
+        if old_rib_idx is not None and old_rib_idx in self._rib_indices:
+            new_combo_idx = self._rib_indices.index(old_rib_idx)
+            self.previewRibComboBox.setCurrentIndex(new_combo_idx)
+        elif self._rib_indices:
+            self.previewRibComboBox.setCurrentIndex(0)
+        
+        self.previewRibComboBox.blockSignals(False)
+    
     def get_representative_rib(self, suspended=False):
         """Get a representative rib for preview.
         
-        For suspended ribs, ensures the rib has valid attachment points (< 90% chord)
-        to avoid counting stabilo/brake-only ribs as suspended.
+        Get rib for preview based on spinner selection (like airfoil structure).
         """
         glider_instance = self.obj.Proxy.getGliderInstance()
-        suspended_ribs = {att.rib for att in glider_instance.lineset.attachment_points if hasattr(att, 'rib')}
+        combo_idx = self.previewRibComboBox.currentIndex()
+        rib_idx = self._rib_indices[combo_idx] if 0 <= combo_idx < len(self._rib_indices) else 0
         
-        if suspended:
-            # Find a suspended rib that has valid attachment points (< 90%)
-            for rib in glider_instance.ribs:
-                if rib in suspended_ribs:
-                    all_aps = glider_instance.get_rib_attachment_points(rib)
-                    valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
-                    if valid_aps:
-                        return rib
-            return glider_instance.ribs[0] if glider_instance.ribs else None
-        else:
-            # Find a non-suspended rib (no attachment points, or only brake attachments)
-            for rib in glider_instance.ribs:
-                if rib not in suspended_ribs:
-                    return rib
-                # Also consider ribs with only brake attachments as non-suspended for holes
-                all_aps = glider_instance.get_rib_attachment_points(rib)
-                valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
-                if not valid_aps:
-                    return rib
-            return glider_instance.ribs[0] if glider_instance.ribs else None
+        if rib_idx < len(glider_instance.ribs):
+            return glider_instance.ribs[rib_idx]
+        return glider_instance.ribs[0] if glider_instance.ribs else None
 
     def on_height_mode_change(self, index):
-        is_margin = index == 1
-        self.holeHeightSpinBox.setVisible(not is_margin)
-        self.layout.labelForField(self.holeHeightSpinBox).setVisible(not is_margin)
-        self.holeMarginSpinBox.setVisible(is_margin)
-        self.layout.labelForField(self.holeMarginSpinBox).setVisible(is_margin)
+        # Simplified - always use margin mode
         self.update_glider_data_and_preview(switch=False)
 
     def on_rib_type_change(self, new_index):
@@ -221,16 +272,20 @@ class HoleDesignTool(BaseTool):
 
         # Show/hide no-hole zone controls
         self.noHoleZoneLabel.setVisible(is_suspended)
+        self.noHoleArcAngleSpinBox.setVisible(is_suspended)
+        self.layout.labelForField(self.noHoleArcAngleSpinBox).setVisible(is_suspended)
         self.noHoleAngleSpinBox.setVisible(is_suspended)
         # Also hide the labels associated with the spinboxes
         self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
-        self.noHoleBaseWidthSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.noHoleBaseWidthSpinBox).setVisible(is_suspended)
         
         self.suspHoleNumSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.suspHoleNumSpinBox).setVisible(is_suspended)
+        self.suspHoleTopMarginSpinBox.setVisible(is_suspended)
+        self.layout.labelForField(self.suspHoleTopMarginSpinBox).setVisible(is_suspended)
         self.suspHoleMarginSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.suspHoleMarginSpinBox).setVisible(is_suspended)
+        self.suspHoleBottomMarginSpinBox.setVisible(is_suspended)
+        self.layout.labelForField(self.suspHoleBottomMarginSpinBox).setVisible(is_suspended)
         self.suspHoleRadiusTopSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.suspHoleRadiusTopSpinBox).setVisible(is_suspended)
         self.suspHoleRadiusBottomSpinBox.setVisible(is_suspended)
@@ -238,6 +293,8 @@ class HoleDesignTool(BaseTool):
 
         # Then, load the values for the newly selected rib type
         self.update_form_from_glider_data()
+        # Repopulate rib combo with filtered ribs for the new type
+        self._populate_rib_combo()
         self.update_preview()
 
     def update_preview(self, *args):
@@ -247,23 +304,30 @@ class HoleDesignTool(BaseTool):
         rib = self.get_representative_rib(suspended=is_suspended)
         if not rib: return
 
-        profile_points = list(rib.profile_2d.data)
-        self.preview_root.addChild(Line_old(profile_points + [profile_points[0]], width=2).object)
+        # Draw profile outline - scaled by chord (like airfoil structure)
+        scale = rib.chord  # All preview elements should be scaled by this
+        profile_points = [p * scale for p in rib.profile_2d.data]
+        profile_3d = [[p[0], p[1], 0] for p in profile_points]
+        self.preview_root.addChild(Line_old(profile_3d + [profile_3d[0]], width=2).object)
 
         no_hole_zones = []
+        halfmoon_circles = []  # List of (center, radius) for each halfmoon - used for exclusion
         if is_suspended:
             glider_instance = self.obj.Proxy.getGliderInstance()
-            attachment_points = glider_instance.get_rib_attachment_points(rib)
+            all_attachment_points = glider_instance.get_rib_attachment_points(rib)
+            # Filter to exclude brake tabs (>90% chord) - only true suspension attachments
+            attachment_points = [ap for ap in all_attachment_points if hasattr(ap, 'rib_pos') and ap.rib_pos <= 0.9]
             for ap in attachment_points:
-                # Visualize attachment point
-                ap_pos_on_surface = rib.profile_2d.align([ap.rib_pos, -1.0])
+                # Visualize attachment point - scale by chord
+                ap_pos_norm = rib.profile_2d.align([ap.rib_pos, -1.0])
+                ap_pos_scaled = ap_pos_norm * scale
                 marker = coin.SoSeparator()
                 trans = coin.SoTranslation()
-                trans.translation.setValue(ap_pos_on_surface[0], ap_pos_on_surface[1], 0)
+                trans.translation.setValue(ap_pos_scaled[0], ap_pos_scaled[1], 0)
                 mat = coin.SoMaterial()
                 mat.diffuseColor.setValue(1, 0, 0) # Red
                 sphere = coin.SoSphere()
-                sphere.radius = 0.005
+                sphere.radius = 0.005 * scale  # Scale marker size too
                 marker.addChild(trans)
                 marker.addChild(mat)
                 marker.addChild(sphere)
@@ -271,16 +335,142 @@ class HoleDesignTool(BaseTool):
 
                 # Define and draw no-hole zones
                 angle = self.noHoleAngleSpinBox.value()
-                v1 = ap_pos_on_surface # Apex on intrados
-
+                # Keep v1 normalized for geometric calculations (extrados_poly uses normalized coords)
+                v1 = ap_pos_norm  # Apex on intrados (normalized)
+                v1_scaled = ap_pos_scaled  # For drawing only
+                
                 angle_rad = np.deg2rad(angle)
 
-                upper_point = rib.profile_2d.align([ap.rib_pos, 1.0])
-                local_vertical = upper_point - v1
-                if np.linalg.norm(local_vertical) < 1e-9: continue
-                local_vertical /= np.linalg.norm(local_vertical)
-
-                angle_offset = np.arctan2(local_vertical[1], local_vertical[0])
+                # Get the actual pilot point from the lineset
+                # This is the main/pilot point where all lines converge
+                pilot_point_3d = None
+                if hasattr(glider_instance, 'lineset') and glider_instance.lineset:
+                    try:
+                        # Use the lineset's method to get the main attachment point
+                        main_ap = glider_instance.lineset.get_main_attachment_point()
+                        if main_ap is not None and hasattr(main_ap, 'vec') and main_ap.vec is not None:
+                            pilot_point_3d = np.array(main_ap.vec)
+                    except Exception:
+                        pass  # Will fall back to vertical
+                
+                # Calculate line direction in 2D profile coordinates
+                if pilot_point_3d is not None:
+                    # Get attachment point 3D position
+                    ap_pos_3d = np.array(ap.get_position())
+                    
+                    # Use actual LE and TE 3D positions to establish coordinate frame
+                    # This is the correct way to project onto the rib's plane
+                    
+                    # Leading edge 3D position (nose of profile)
+                    le_3d = np.array(rib.profile_3d.data[rib.profile_2d.noseindex])
+                    
+                    # Trailing edge 3D position (average of first and last points)
+                    te_3d = (np.array(rib.profile_3d.data[0]) + np.array(rib.profile_3d.data[-1])) / 2
+                    
+                    # DEBUG: Print all 3D coordinates
+                    print(f"[DEBUG] Pilot 3D: ({pilot_point_3d[0]:.3f}, {pilot_point_3d[1]:.3f}, {pilot_point_3d[2]:.3f})")
+                    print(f"[DEBUG] LE 3D: ({le_3d[0]:.3f}, {le_3d[1]:.3f}, {le_3d[2]:.3f})")
+                    print(f"[DEBUG] TE 3D: ({te_3d[0]:.3f}, {te_3d[1]:.3f}, {te_3d[2]:.3f})")
+                    print(f"[DEBUG] AP 3D: ({ap_pos_3d[0]:.3f}, {ap_pos_3d[1]:.3f}, {ap_pos_3d[2]:.3f})")
+                    
+                    # Chord vector: from TE to LE (so that LE is at x=0 in 2D, TE at x~=1)
+                    chord_3d = le_3d - te_3d
+                    chord_length = np.linalg.norm(chord_3d)
+                    chord_dir = chord_3d / chord_length if chord_length > 0 else np.array([0, 1, 0])
+                    
+                    print(f"[DEBUG] Chord length: {chord_length:.3f}")
+                    print(f"[DEBUG] Chord dir: ({chord_dir[0]:.3f}, {chord_dir[1]:.3f}, {chord_dir[2]:.3f})")
+                    
+                    # Span direction (perpendicular to chord, in the rib plane)
+                    # Use a point on the upper surface to define the plane
+                    upper_idx = len(rib.profile_3d.data) // 4  # A point on upper surface
+                    upper_3d = np.array(rib.profile_3d.data[upper_idx])
+                    
+                    # Normal to rib plane
+                    v1_3d = upper_3d - te_3d
+                    normal = np.cross(chord_3d, v1_3d)
+                    normal = normal / np.linalg.norm(normal) if np.linalg.norm(normal) > 0 else np.array([1, 0, 0])
+                    
+                    # Up direction (perpendicular to chord, in rib plane)
+                    up_dir = np.cross(normal, chord_dir)
+                    up_dir = up_dir / np.linalg.norm(up_dir) if np.linalg.norm(up_dir) > 0 else np.array([0, 0, 1])
+                    
+                    print(f"[DEBUG] Up dir: ({up_dir[0]:.3f}, {up_dir[1]:.3f}, {up_dir[2]:.3f})")
+                    
+                    # Project pilot point onto rib's coordinate frame
+                    # Reference is TE (so LE is at positive x)
+                    pilot_rel_3d = pilot_point_3d - te_3d
+                    pilot_chord_pos = np.dot(pilot_rel_3d, chord_dir) / chord_length  # 0=TE, 1=LE
+                    pilot_up_pos = np.dot(pilot_rel_3d, up_dir) / chord_length  # Positive = above chord
+                    
+                    print(f"[DEBUG] Pilot chord pos: {pilot_chord_pos:.3f} (0=TE, 1=LE)")
+                    print(f"[DEBUG] Pilot up pos: {pilot_up_pos:.3f}")
+                    
+                    # In profile_2d: LE (nose) is at x=0, TE is at x ≈ -0.5 (profile_2d.data[0] and [-1])
+                    # Get actual TE position in profile_2d coordinates
+                    te_2d_x = (rib.profile_2d.data[0][0] + rib.profile_2d.data[-1][0]) / 2  # Average of start/end
+                    le_2d_x = rib.profile_2d.data[rib.profile_2d.noseindex][0]  # LE is at noseindex
+                    
+                    # Interpolate: pilot_chord_pos 0=TE, 1=LE
+                    pilot_2d_x = te_2d_x + pilot_chord_pos * (le_2d_x - te_2d_x)
+                    pilot_2d_y = pilot_up_pos  # Y is already in chord-normalized units
+                    pilot_2d_norm = np.array([pilot_2d_x, pilot_2d_y])
+                    pilot_2d = pilot_2d_norm * scale  # Scale to real coordinates
+                    
+                    print(f"[DEBUG] TE 2D x: {te_2d_x:.3f}, LE 2D x: {le_2d_x:.3f}")
+                    print(f"[DEBUG] Pilot 2D (norm): ({pilot_2d_x:.3f}, {pilot_2d_y:.3f})")
+                    print(f"[DEBUG] Pilot 2D (scaled): ({pilot_2d[0]:.3f}, {pilot_2d[1]:.3f})")
+                    
+                    # VISUALIZATION: Draw the pilot point for verification (only once)
+                    # The nose is at profile_2d noseindex, which is typically x=0 in normalized coords
+                    nose_pos = rib.profile_2d.data[rib.profile_2d.noseindex]
+                    pilot_rel_to_nose = pilot_2d_norm - nose_pos
+                    print(f"[HoleDesign] Pilot point 2D coords: ({pilot_2d[0]:.3f}, {pilot_2d[1]:.3f})")
+                    print(f"[HoleDesign] Pilot relative to nose (LE): ({pilot_rel_to_nose[0]:.3f}, {pilot_rel_to_nose[1]:.3f})")
+                    
+                    # Draw pilot point marker (large blue sphere + cross)
+                    pilot_marker = coin.SoSeparator()
+                    pilot_trans = coin.SoTransform()
+                    pilot_trans.translation.setValue(pilot_2d[0], pilot_2d[1], 0)
+                    pilot_mat = coin.SoMaterial()
+                    pilot_mat.diffuseColor.setValue(0, 0, 1)  # Blue
+                    pilot_sphere = coin.SoSphere()
+                    pilot_sphere.radius = 0.05 * scale  # Scale marker size
+                    pilot_marker.addChild(pilot_trans)
+                    pilot_marker.addChild(pilot_mat)
+                    pilot_marker.addChild(pilot_sphere)
+                    self.preview_root.addChild(pilot_marker)
+                    
+                    # Draw cross lines at pilot point for visibility
+                    cross_size = 0.1 * scale
+                    cross_h = [np.array([pilot_2d[0] - cross_size, pilot_2d[1]]), 
+                               np.array([pilot_2d[0] + cross_size, pilot_2d[1]])]
+                    cross_v = [np.array([pilot_2d[0], pilot_2d[1] - cross_size]), 
+                               np.array([pilot_2d[0], pilot_2d[1] + cross_size])]
+                    self.preview_root.addChild(Line_old(cross_h, color='green', width=3).object)
+                    self.preview_root.addChild(Line_old(cross_v, color='green', width=3).object)
+                    
+                    # Draw line from pilot to this attachment point (both scaled)
+                    self.preview_root.addChild(Line_old([pilot_2d, v1_scaled], color='green', width=1).object)
+                    
+                    # Direction from pilot 2D position to attachment point (use NORMALIZED coords for angle calculation)
+                    line_direction = v1 - pilot_2d_norm
+                    
+                    if np.linalg.norm(line_direction) > 1e-9:
+                        line_direction = line_direction / np.linalg.norm(line_direction)
+                    else:
+                        line_direction = np.array([0, 1])
+                else:
+                    # Fallback to vertical if no lineset data
+                    line_direction = np.array([0, 1])
+                
+                # The angle_offset is now based on the suspension line direction
+                # This makes the exclusion angle centered on the line axis
+                angle_offset = np.arctan2(line_direction[1], line_direction[0])
+                
+                # Draw the suspension line axis for visualization (scaled)
+                axis_end_scaled = v1_scaled + line_direction * 0.1 * scale
+                self.preview_root.addChild(Line_old([v1_scaled, axis_end_scaled], color='yellow', width=2).object)
 
                 dir2 = np.array([np.cos(angle_offset - angle_rad), np.sin(angle_offset - angle_rad)])
                 dir3 = np.array([np.cos(angle_offset + angle_rad), np.sin(angle_offset + angle_rad)])
@@ -294,74 +484,307 @@ class HoleDesignTool(BaseTool):
                 v3 = extrados_poly.line_intersection(v1, v1 + dir3 * far_factor)
 
                 if v2 is not None and v3 is not None:
-                    # Get base width for trapezoid (width at intrados)
-                    base_width_m = self.noHoleBaseWidthSpinBox.value() / 1000.0  # mm to m
-                    base_width_norm = base_width_m / rib.chord  # normalize to chord
+                    # Get reinforcement config for this attachment point
+                    pg = self.parametric_glider
+                    halfmoon_radius_norm = 0.0
                     
-                    if base_width_norm > 1e-6:
-                        # Create trapezoid with base at intrados
-                        # Base is centered at attachment point (v1), with width = base_width
-                        # Sides go up at the specified angle to extrados
+                    if getattr(pg, 'reinforcement_enabled_s', False):
+                        apply_all = getattr(pg, 'reinforcement_apply_all_s', False)
+                        master_config = getattr(pg, 'reinforcement_master_s', {})
+                        configs = getattr(pg, 'reinforcement_configs_s', [])
                         
-                        # Find points on intrados at half base_width from v1
-                        # We move along the intrados tangent direction
-                        intrados_poly = rib.profile_2d.get_intrados_poly()
+                        # Find this AP's index among valid attachment points
+                        all_aps = glider_instance.get_rib_attachment_points(rib)
+                        valid_aps = [a for a in all_aps if a.rib_pos <= 0.90]
+                        valid_aps.sort(key=lambda x: x.rib_pos)
                         
-                        # Get tangent direction at v1 (along intrados)
-                        # Use the profile x-direction as approximation (left-right)
-                        half_base = base_width_norm / 2.0
+                        try:
+                            ap_index = valid_aps.index(ap)
+                            if apply_all:
+                                config = master_config
+                            else:
+                                config = configs[ap_index] if ap_index < len(configs) else master_config
+                            
+                            if config.get('enabled', True):
+                                halfmoon_radius = config.get('halfmoon_radius', 0.03)  # in meters
+                                halfmoon_radius_norm = halfmoon_radius / rib.chord
+                                # Store center (v1) and radius for hole exclusion check
+                                halfmoon_circles.append((v1, halfmoon_radius_norm))
+                        except (ValueError, IndexError):
+                            pass
+                    
+                    if halfmoon_radius_norm > 1e-6:
+                        # TWO-ANGLE SYSTEM:
+                        # 1. Arc Span angle defines where on the halfmoon the exclusion sides START
+                        # 2. Exclusion Angle defines the direction of sides going to extrados
+                        # BOTH are now centered on the suspension line axis (angle_offset)
                         
-                        # v1_left and v1_right are on intrados, at half_base distance from v1
-                        # Approximate by moving in x direction on intrados
-                        v1_left = np.array([v1[0] - half_base, v1[1]])
-                        v1_right = np.array([v1[0] + half_base, v1[1]])
+                        arc_span_deg = self.noHoleArcAngleSpinBox.value()  # e.g., 120 degrees
+                        arc_span_rad = np.deg2rad(arc_span_deg)
+                        half_arc = arc_span_rad / 2.0
                         
-                        # Now trace lines from v1_left and v1_right at the angle to extrados
-                        v2_new = extrados_poly.line_intersection(v1_left, v1_left + dir2 * far_factor)
-                        v3_new = extrados_poly.line_intersection(v1_right, v1_right + dir3 * far_factor)
+                        # Arc start points at ±(arc_span/2) from the SUSPENSION LINE AXIS
+                        # angle_offset = direction toward pilot point
+                        arc_angle_left = angle_offset + half_arc   # Left side of arc
+                        arc_angle_right = angle_offset - half_arc  # Right side of arc
+                        
+                        # Calculate arc start points (relative to v1 as center)
+                        v1_left = v1 + halfmoon_radius_norm * np.array([np.cos(arc_angle_left), np.sin(arc_angle_left)])
+                        v1_right = v1 + halfmoon_radius_norm * np.array([np.cos(arc_angle_right), np.sin(arc_angle_right)])
+                        
+                        # Now trace lines from arc points at the Side Angle to extrados
+                        v2_new = extrados_poly.line_intersection(v1_left, v1_left + dir3 * far_factor)
+                        v3_new = extrados_poly.line_intersection(v1_right, v1_right + dir2 * far_factor)
                         
                         if v2_new is not None and v3_new is not None:
-                            # Trapezoid: v1_left -> v2_new -> v3_new -> v1_right -> v1_left
-                            no_hole_zones.append((v1_left, v2_new, v3_new, v1_right))
-                            zone_points = [v1_left, v2_new, v3_new, v1_right, v1_left]
-                            self.preview_root.addChild(Line_old(zone_points, color='red', width=1).object)
+                            # Generate the FULL HALFMOON arc (from 0° to 180°)
+                            # This ensures holes are excluded from the entire reinforcement area
+                            full_halfmoon = []
+                            num_arc_pts = 20
+                            for i in range(num_arc_pts + 1):
+                                t = i / num_arc_pts
+                                arc_ang = np.pi + t * (-np.pi)  # 180° to 0° (left to right through top)
+                                arc_pt = v1 + halfmoon_radius_norm * np.array([np.cos(arc_ang), np.sin(arc_ang)])
+                                full_halfmoon.append(arc_pt)
+                            
+                            # Generate the upper arc portion (from arc_angle_left to arc_angle_right)
+                            upper_arc = []
+                            for i in range(num_arc_pts + 1):
+                                t = i / num_arc_pts
+                                arc_ang = arc_angle_left - t * (arc_angle_left - arc_angle_right)
+                                arc_pt = v1 + halfmoon_radius_norm * np.array([np.cos(arc_ang), np.sin(arc_ang)])
+                                upper_arc.append(arc_pt)
+                            
+                            # Trace the EXTRADOS curve between v2_new and v3_new
+                            # This makes the top of the exclusion zone follow the airfoil shape
+                            extrados_curve = []
+                            # Find the positions on extrados
+                            v2_x, v3_x = v2_new[0], v3_new[0]
+                            x_min, x_max = min(v2_x, v3_x), max(v2_x, v3_x)
+                            num_ext_pts = 15
+                            for i in range(num_ext_pts + 1):
+                                t = i / num_ext_pts
+                                x = v2_x + t * (v3_x - v2_x)
+                                # Find corresponding y on extrados at this x
+                                # Use profile_2d to get extrados point
+                                ext_pts = [p for p in rib.profile_2d.data if p[1] > 0]  # extrados points
+                                closest = min(ext_pts, key=lambda p: abs(p[0] - x), default=None)
+                                if closest is not None:
+                                    extrados_curve.append(np.array(closest))
+                                else:
+                                    # Fallback: interpolate
+                                    y = v2_new[1] + t * (v3_new[1] - v2_new[1])
+                                    extrados_curve.append(np.array([x, y]))
+                            
+                            # Exclusion zone: full halfmoon + extrados area
+                            # The zone polygon goes: full_halfmoon + sides to extrados + extrados curve back
+                            exclusion_polygon = full_halfmoon + [v3_new] + list(reversed(extrados_curve)) + [v2_new, full_halfmoon[0]]
+                            no_hole_zones.append(tuple(exclusion_polygon))
+                            
+                            # For visual, draw: upper arc -> right side -> extrados curve -> left side -> close
+                            zone_points = upper_arc + [v3_new] + list(reversed(extrados_curve)) + [v2_new, upper_arc[0]]
+                            # Scale for drawing
+                            zone_points_scaled = [p * scale for p in zone_points]
+                            self.preview_root.addChild(Line_old(zone_points_scaled, color='red', width=1).object)
                         else:
                             # Fallback to original triangle
                             no_hole_zones.append((v1, v2, v3))
                             zone_points = [v1, v2, v3, v1]
-                            self.preview_root.addChild(Line_old(zone_points, color='red', width=1).object)
+                            zone_points_scaled = [p * scale for p in zone_points]
+                            self.preview_root.addChild(Line_old(zone_points_scaled, color='red', width=1).object)
                     else:
-                        # Full triangle (no base width)
+                        # No reinforcement - use simple triangle
                         no_hole_zones.append((v1, v2, v3))
                         zone_points = [v1, v2, v3, v1]
-                        self.preview_root.addChild(Line_old(zone_points, color='red', width=1).object)
+                        zone_points_scaled = [p * scale for p in zone_points]
+                        self.preview_root.addChild(Line_old(zone_points_scaled, color='red', width=1).object)
                     
-                    # PREVIEW TRUSS HOLES
+                    # PREVIEW TRUSS HOLES with new geometry
                     susp_hole_num = self.suspHoleNumSpinBox.value()
-                    susp_hole_margin = self.suspHoleMarginSpinBox.value() / 1000.0 # to meters
-                    susp_hole_radius_top = self.suspHoleRadiusTopSpinBox.value() / 1000.0 # to meters
-                    susp_hole_radius_bottom = self.suspHoleRadiusBottomSpinBox.value() / 1000.0 # to meters
+                    # Force even number of holes to ensure no hole on the line axis
+                    if susp_hole_num % 2 == 1:
+                        susp_hole_num = susp_hole_num + 1  # Round up to even
                     
-                    if susp_hole_num > 0:
-                        truss_holes = self.parametric_glider.generate_truss_holes(
-                            rib, v1, v2, v3, 
-                            susp_hole_num, 
-                            susp_hole_margin, 
-                            radius_top=susp_hole_radius_top,
-                            radius_bottom=susp_hole_radius_bottom
-                        )
-                        for poly in truss_holes:
-                             closed_poly = list(poly)
-                             if len(closed_poly) > 0 and (closed_poly[0] != closed_poly[-1]).any():
-                                 closed_poly.append(closed_poly[0])
-                             self.preview_root.addChild(Line_old(closed_poly, color='green', width=1).object)
+                    susp_hole_top_margin = self.suspHoleTopMarginSpinBox.value() / 1000.0 / rib.chord  # normalize
+                    susp_hole_side_margin = self.suspHoleMarginSpinBox.value() / 1000.0 / rib.chord  # normalize
+                    susp_hole_bottom_margin = self.suspHoleBottomMarginSpinBox.value() / 1000.0 / rib.chord  # normalize
+                    
+                    # Get radii as percentages (0% = sharp, 100% = max round)
+                    # Use negative values to indicate percentage of max radius
+                    # -0.5 means 50% of max radius, -1.0 means 100% of max radius
+                    radius_top_pct = self.suspHoleRadiusTopSpinBox.value() / 100.0  # 0.0 to 1.0
+                    radius_bottom_pct = self.suspHoleRadiusBottomSpinBox.value() / 100.0
+                    susp_hole_radius_top = -radius_top_pct if radius_top_pct > 0 else 0.0
+                    susp_hole_radius_bottom = -radius_bottom_pct if radius_bottom_pct > 0 else 0.0
+                    
+                    if susp_hole_num > 0 and halfmoon_radius_norm > 1e-6:
+                        # SUSPENSION HOLES GENERATION - RADIAL MAPPING
+                        # =============================================
+                        # 
+                        # IMPORTANT: Radial lines emanate from the INTERSECTION of the two red side lines
+                        # (not from v1 which is the attachment point)
+                        #
+                        # Calculate intersection of the two red side lines:
+                        # Line 1: v1_left + t * dir3
+                        # Line 2: v1_right + s * dir2
+                        
+                        # Find intersection using parametric equations
+                        # v1_left + t * dir3 = v1_right + s * dir2
+                        # Solve: [dir3 | -dir2] * [t; s] = v1_right - v1_left
+                        A = np.array([[dir3[0], -dir2[0]], [dir3[1], -dir2[1]]])
+                        b = v1_right - v1_left
+                        det = A[0, 0] * A[1, 1] - A[0, 1] * A[1, 0]
+                        
+                        if abs(det) > 1e-10:
+                            t_param = (A[1, 1] * b[0] - A[0, 1] * b[1]) / det
+                            radial_center = v1_left + t_param * dir3
+                        else:
+                            # Fallback to v1 if lines are parallel
+                            radial_center = v1
+                        
+                        # Force even number
+                        if susp_hole_num % 2 == 1:
+                            susp_hole_num += 1
+                        holes_per_side = susp_hole_num // 2
+                        
+                        if holes_per_side < 1:
+                            continue
+                        
+                        # Angular margin
+                        arc_margin_rad = susp_hole_side_margin / halfmoon_radius_norm if halfmoon_radius_norm > 0 else 0.05
+                        
+                        # LEFT zone: from (arc_angle_left - margin) down to (angle_offset + margin)
+                        # RIGHT zone: from (angle_offset - margin) down to (arc_angle_right + margin)
+                        left_outer = arc_angle_left - arc_margin_rad
+                        left_inner = angle_offset + arc_margin_rad
+                        right_inner = angle_offset - arc_margin_rad
+                        right_outer = arc_angle_right + arc_margin_rad
+                        
+                        # Process each side
+                        for side in ['left', 'right']:
+                            if side == 'left':
+                                zone_outer = left_outer
+                                zone_inner = left_inner
+                            else:
+                                zone_outer = right_outer
+                                zone_inner = right_inner
+                            
+                            # Angular span for this zone
+                            zone_span = abs(zone_outer - zone_inner)
+                            
+                            if zone_span <= 0.02:  # Minimum ~1 degree
+                                continue
+                            
+                            # Inter-hole margin
+                            inter_margin = arc_margin_rad * (holes_per_side - 1) if holes_per_side > 1 else 0
+                            
+                            # Angular width per hole
+                            hole_width = (zone_span - inter_margin) / holes_per_side
+                            
+                            if hole_width <= 0.02:
+                                continue
+                            
+                            # Create each hole
+                            for hole_idx in range(holes_per_side):
+                                if side == 'left':
+                                    # Start from outer (arc_angle_left) toward inner (axis)
+                                    hole_ang_outer = zone_outer - hole_idx * (hole_width + arc_margin_rad)
+                                    hole_ang_inner = hole_ang_outer - hole_width
+                                else:
+                                    # Start from inner (axis) toward outer (arc_angle_right)
+                                    hole_ang_inner = zone_inner - hole_idx * (hole_width + arc_margin_rad)
+                                    hole_ang_outer = hole_ang_inner - hole_width
+                                
+                                # Ensure outer > inner (higher angle = more to left)
+                                ang_left = max(hole_ang_outer, hole_ang_inner)
+                                ang_right = min(hole_ang_outer, hole_ang_inner)
+                                
+                                # Clamp to zone boundaries
+                                if side == 'left':
+                                    ang_left = min(ang_left, left_outer)
+                                    ang_right = max(ang_right, left_inner)
+                                else:
+                                    ang_left = min(ang_left, right_inner)
+                                    ang_right = max(ang_right, right_outer)
+                                
+                                if ang_left - ang_right < 0.02:
+                                    continue
+                                
+                                # Generate arc bottom points (offset from halfmoon by bottom margin)
+                                num_pts = 6
+                                arc_bottom = []
+                                arc_bottom_radius = halfmoon_radius_norm + susp_hole_bottom_margin
+                                for i in range(num_pts + 1):
+                                    t = i / num_pts
+                                    ang = ang_left - t * (ang_left - ang_right)
+                                    pt = v1 + arc_bottom_radius * np.array([np.cos(ang), np.sin(ang)])
+                                    arc_bottom.append(pt)
+                                
+                                # Find extrados points by tracing radial lines from RADIAL_CENTER
+                                arc_top = []
+                                for i in range(num_pts + 1):
+                                    # Get bottom point
+                                    bottom_pt = arc_bottom[i]
+                                    # Direction from radial_center through bottom_pt
+                                    direction = bottom_pt - radial_center
+                                    dir_norm = np.linalg.norm(direction)
+                                    if dir_norm > 1e-10:
+                                        direction = direction / dir_norm
+                                    else:
+                                        direction = np.array([0, 1])
+                                    
+                                    # Trace line until extrados intersection
+                                    ext_pt = extrados_poly.line_intersection(radial_center, radial_center + direction * far_factor)
+                                    if ext_pt is not None:
+                                        # Apply top margin (move toward radial_center)
+                                        if susp_hole_top_margin > 0:
+                                            toward_center = (radial_center - ext_pt)
+                                            dist = np.linalg.norm(toward_center)
+                                            if dist > 0:
+                                                ext_pt = ext_pt + toward_center / dist * susp_hole_top_margin
+                                        arc_top.append(ext_pt)
+                                    else:
+                                        # Fallback: use bottom point scaled up
+                                        arc_top.append(bottom_pt + direction * 0.1)
+                                
+                                if len(arc_bottom) < 2 or len(arc_top) < 2:
+                                    continue
+                                
+                                # Assemble polygon: arc_bottom (left to right) + arc_top reversed (right to left)
+                                arc_top_reversed = list(reversed(arc_top))
+                                
+                                # For corner rounding, use a SIMPLIFIED 4-corner polygon first
+                                # This avoids the issue where intermediate arc points limit the radius
+                                corner_bl = arc_bottom[0]  # Bottom-left
+                                corner_br = arc_bottom[-1]  # Bottom-right
+                                corner_tr = arc_top_reversed[0]  # Top-right
+                                corner_tl = arc_top_reversed[-1]  # Top-left
+                                
+                                simplified_polygon = [corner_bl, corner_br, corner_tr, corner_tl]
+                                corner_radii = [susp_hole_radius_bottom, susp_hole_radius_bottom, 
+                                               susp_hole_radius_top, susp_hole_radius_top]
+                                
+                                # Round the 4 corners
+                                rounded_corners = self.parametric_glider.round_polygon_corners(simplified_polygon, corner_radii)
+                                
+                                if rounded_corners and len(rounded_corners) >= 4:
+                                    # Now we need to reconstruct the full polygon with arcs
+                                    # The rounded_corners list contains arc points for each corner
+                                    # We insert the original arc curve points between the corner arcs
+                                    
+                                    # For now, just use the rounded corners directly
+                                    # The arcs between corners are already curved from extrados/halfmoon
+                                    closed_hole = list(rounded_corners) + [rounded_corners[0]]
+                                    # Scale for drawing
+                                    closed_hole_scaled = [p * scale for p in closed_hole]
+                                    self.preview_root.addChild(Line_old(closed_hole_scaled, color='green', width=1).object)
                     
 
         # Get current parameters from the UI
         num_holes = self.numHolesSpinBox.value()
         hole_width_perc = self.holeWidthSpinBox.value()
         hole_height_perc = self.holeHeightSpinBox.value()
-        hole_height_mode = self.holeHeightModeComboBox.currentIndex()
+        hole_height_mode = 0  # Default: margin mode
         hole_margin_m = self.holeMarginSpinBox.value() / 1000.0 # Convert mm to m for usage
         vertical_shift_perc = self.verticalShiftSpinBox.value()
         hole_shape_index = self.holeShapeComboBox.currentIndex()
@@ -400,9 +823,8 @@ class HoleDesignTool(BaseTool):
                         )
                         inner_pts, outer_pts = sleeve.get_sleeve_points(rib)
                         if inner_pts and outer_pts:
-                            inner_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in inner_pts]
-                            outer_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in outer_pts]
-                            sleeve_poly = inner_norm + list(reversed(outer_norm)) + [inner_norm[0]]
+                            # Draw at full scale (already scaled by rib.chord in get_sleeve_points)
+                            sleeve_poly = list(inner_pts) + list(reversed(outer_pts)) + [inner_pts[0]]
                             self.preview_root.addChild(Line_old(sleeve_poly, color='green', width=2).object)
                     except Exception as e:
                         import traceback
@@ -427,9 +849,8 @@ class HoleDesignTool(BaseTool):
                         )
                         inner_pts, outer_pts = sleeve.get_sleeve_points(rib)
                         if inner_pts and outer_pts:
-                            inner_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in inner_pts]
-                            outer_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in outer_pts]
-                            sleeve_poly = inner_norm + list(reversed(outer_norm)) + [inner_norm[0]]
+                            # Draw at full scale (already scaled by rib.chord in get_sleeve_points)
+                            sleeve_poly = list(inner_pts) + list(reversed(outer_pts)) + [inner_pts[0]]
                             self.preview_root.addChild(Line_old(sleeve_poly, color='white', width=2).object)
                     except Exception as e:
                         import traceback
@@ -442,9 +863,8 @@ class HoleDesignTool(BaseTool):
                 try:
                     halfmoon_pts = reinf.get_halfmoon_points(rib)
                     if halfmoon_pts:
-                        # Normalize by chord for preview
-                        halfmoon_norm = [[p[0]/rib.chord, p[1]/rib.chord] for p in halfmoon_pts]
-                        self.preview_root.addChild(Line_old(halfmoon_norm, color='yellow', width=2).object)
+                        # Draw at full scale (already scaled in get_halfmoon_points)
+                        self.preview_root.addChild(Line_old(list(halfmoon_pts), color='yellow', width=2).object)
                 except Exception as e:
                     print(f"Error drawing reinforcement: {e}")
 
@@ -486,6 +906,17 @@ class HoleDesignTool(BaseTool):
                 if is_suspended:
                     hole_center_x = (upper_point[0] + lower_point[0]) / 2.0
                     min_y_ceiling = upper_point[1]
+                    
+                    # Check if this position is inside any halfmoon circle
+                    inside_halfmoon = False
+                    for hm_center, hm_radius in halfmoon_circles:
+                        dist = np.sqrt((hole_center_x - hm_center[0])**2 + (lower_point[1] - hm_center[1])**2)
+                        if dist < hm_radius:
+                            inside_halfmoon = True
+                            break
+                    
+                    if inside_halfmoon:
+                        continue  # Skip hole positions inside halfmoon
 
                     for zone in no_hole_zones:
                         # Get all x values from zone vertices
@@ -514,10 +945,8 @@ class HoleDesignTool(BaseTool):
                 if available_height < 1e-4:
                     continue
                 
-                if hole_height_mode == 1: # Margin mode
-                    hole_height = available_height - 2 * hole_margin_m
-                else: # Percent mode
-                    hole_height = hole_height_perc * available_height
+                # Always use margin mode for hole height
+                hole_height = available_height - 2 * hole_margin_m
                 
                 hole_width = hole_width_perc * rib.chord
 
@@ -538,7 +967,9 @@ class HoleDesignTool(BaseTool):
                 shape_poly += hole_center
 
                 shape_points_closed = list(shape_poly)
-                self.preview_root.addChild(Line_old(shape_points_closed + [shape_points_closed[0]], color='blue').object)
+                # Scale for drawing (points are in normalized coords)
+                shape_points_scaled = [p * scale for p in shape_points_closed]
+                self.preview_root.addChild(Line_old(shape_points_scaled + [shape_points_scaled[0]], color='blue').object)
 
     def create_rounded_rectangle(self, width, height, corner_radius_ratio=0.25):
         # corner_radius_ratio is a ratio of min(width, height)
@@ -576,9 +1007,9 @@ class HoleDesignTool(BaseTool):
         widgets_to_block = [self.holeShapeComboBox, self.numHolesSpinBox, self.holeWidthSpinBox,
                             self.holeHeightSpinBox, self.verticalShiftSpinBox,
                             self.minPosSpinBox, self.maxPosSpinBox,
-                            self.holeHeightModeComboBox, self.holeMarginSpinBox, self.holeCornerRadiusSpinBox]
+                            self.holeMarginSpinBox, self.holeCornerRadiusSpinBox]
         if is_suspended:
-            widgets_to_block.extend([self.noHoleAngleSpinBox, self.noHoleBaseWidthSpinBox, self.suspHoleNumSpinBox, self.suspHoleMarginSpinBox, self.suspHoleRadiusTopSpinBox, self.suspHoleRadiusBottomSpinBox])
+            widgets_to_block.extend([self.noHoleAngleSpinBox, self.suspHoleNumSpinBox, self.suspHoleTopMarginSpinBox, self.suspHoleMarginSpinBox, self.suspHoleRadiusTopSpinBox, self.suspHoleRadiusBottomSpinBox])
 
         # Block signals to prevent feedback loops
         for widget in widgets_to_block:
@@ -591,20 +1022,21 @@ class HoleDesignTool(BaseTool):
         self.verticalShiftSpinBox.setValue(getattr(pg, f'vertical_shift{suffix}', 0.0))
         self.minPosSpinBox.setValue(getattr(pg, f'min_hole_pos{suffix}', 0.2))
         self.maxPosSpinBox.setValue(getattr(pg, f'max_hole_pos{suffix}', 0.8))
-        self.holeHeightModeComboBox.setCurrentIndex(getattr(pg, f'hole_height_mode{suffix}', 0))
+
         self.holeMarginSpinBox.setValue(getattr(pg, f'hole_margin{suffix}', 0.02) * 1000.0) # Convert m to mm for UI
         self.holeCornerRadiusSpinBox.setValue(getattr(pg, f'hole_corner_radius{suffix}', 0.25) * 100.0) # Convert ratio to % for UI
 
         if is_suspended:
             self.noHoleAngleSpinBox.setValue(getattr(pg, 'hole_free_angle_s', 30.0))
-            self.noHoleBaseWidthSpinBox.setValue(getattr(pg, 'hole_base_width_s', 0.0))  # in mm
             self.suspHoleNumSpinBox.setValue(getattr(pg, 'susp_hole_num_s', 3))
+            self.suspHoleTopMarginSpinBox.setValue(getattr(pg, 'susp_hole_top_margin_s', 0.01) * 1000.0)
             self.suspHoleMarginSpinBox.setValue(getattr(pg, 'susp_hole_margin_s', 0.01) * 1000.0)
-            self.suspHoleRadiusTopSpinBox.setValue(getattr(pg, 'susp_hole_radius_top_s', 0.005) * 1000.0)
-            self.suspHoleRadiusBottomSpinBox.setValue(getattr(pg, 'susp_hole_radius_bottom_s', 0.005) * 1000.0)
+            self.suspHoleBottomMarginSpinBox.setValue(getattr(pg, 'susp_hole_bottom_margin_s', 0.005) * 1000.0)
+            self.suspHoleRadiusTopSpinBox.setValue(getattr(pg, 'susp_hole_radius_top_s', 0.5) * 100.0)  # Convert ratio to %
+            self.suspHoleRadiusBottomSpinBox.setValue(getattr(pg, 'susp_hole_radius_bottom_s', 0.5) * 100.0)  # Convert ratio to %
 
         # Initial visibility update
-        self.on_height_mode_change(self.holeHeightModeComboBox.currentIndex())
+        self.on_height_mode_change(0)  # Default mode
 
         # Unblock signals
         for widget in widgets_to_block:
@@ -621,13 +1053,14 @@ class HoleDesignTool(BaseTool):
             pg.min_hole_pos_s = self.minPosSpinBox.value()
             pg.max_hole_pos_s = self.maxPosSpinBox.value()
             pg.hole_free_angle_s = self.noHoleAngleSpinBox.value()
-            pg.hole_base_width_s = self.noHoleBaseWidthSpinBox.value()  # store in mm
-            pg.hole_height_mode_s = self.holeHeightModeComboBox.currentIndex()
+            pg.hole_height_mode_s = 1  # Margin mode (fixed mm margin instead of percent)
             pg.hole_margin_s = self.holeMarginSpinBox.value() / 1000.0 # Convert mm to m for storage
             pg.susp_hole_num_s = self.suspHoleNumSpinBox.value()
+            pg.susp_hole_top_margin_s = self.suspHoleTopMarginSpinBox.value() / 1000.0
             pg.susp_hole_margin_s = self.suspHoleMarginSpinBox.value() / 1000.0
-            pg.susp_hole_radius_top_s = self.suspHoleRadiusTopSpinBox.value() / 1000.0
-            pg.susp_hole_radius_bottom_s = self.suspHoleRadiusBottomSpinBox.value() / 1000.0
+            pg.susp_hole_bottom_margin_s = self.suspHoleBottomMarginSpinBox.value() / 1000.0
+            pg.susp_hole_radius_top_s = self.suspHoleRadiusTopSpinBox.value() / 100.0  # Store as ratio 0.0-1.0
+            pg.susp_hole_radius_bottom_s = self.suspHoleRadiusBottomSpinBox.value() / 100.0  # Store as ratio 0.0-1.0
             pg.hole_corner_radius_s = self.holeCornerRadiusSpinBox.value() / 100.0 # Convert % to ratio
         else:
             pg.hole_shape_ns = self.holeShapeComboBox.currentIndex()
@@ -637,7 +1070,7 @@ class HoleDesignTool(BaseTool):
             pg.vertical_shift_ns = self.verticalShiftSpinBox.value()
             pg.min_hole_pos_ns = self.minPosSpinBox.value()
             pg.max_hole_pos_ns = self.maxPosSpinBox.value()
-            pg.hole_height_mode_ns = self.holeHeightModeComboBox.currentIndex()
+            pg.hole_height_mode_ns = 1  # Margin mode (fixed mm margin instead of percent)
             pg.hole_margin_ns = self.holeMarginSpinBox.value() / 1000.0 # Convert mm to m for storage
             pg.hole_corner_radius_ns = self.holeCornerRadiusSpinBox.value() / 100.0 # Convert % to ratio
 

@@ -155,13 +155,22 @@ class CellTool(BaseTool):
     def auto_fill_diagonals(self):
         """
         Auto-generate diagonal ribs from attachment points.
-        Shows configuration dialog with per-line-type parameters.
+        Each attachment point generates diagonals to adjacent cells,
+        centered on the attachment point's rib_pos.
         """
         # Configuration dialog
         dialog = QtGui.QDialog()
         dialog.setWindowTitle("Configuration des diagonales")
         dialog.setMinimumWidth(550)
         layout = QtGui.QVBoxLayout(dialog)
+        
+        # Explanation
+        info_label = QtGui.QLabel(
+            "Chaque diagonale sera centrée sur la position de sa patte d'attache.\n"
+            "Configurez la largeur de la diagonale sur l'intrados et l'extrados."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
         
         # Header
         header = QtGui.QLabel("Paramètres par type de ligne")
@@ -170,22 +179,21 @@ class CellTool(BaseTool):
         
         # Create table for line parameters
         line_types = ["A", "B", "C", "D"]
-        param_table = QtGui.QTableWidget(len(line_types), 3)
+        param_table = QtGui.QTableWidget(len(line_types), 2)
         param_table.setHorizontalHeaderLabels([
             "Largeur intrados (cm)",
-            "Extrados début (%)",
-            "Extrados fin (%)"
+            "Largeur extrados (cm)",
         ])
         param_table.setVerticalHeaderLabels(line_types)
         param_table.horizontalHeader().setStretchLastSection(True)
         
         # Default values for each line type
-        # (intrados_cm, extrados_start_%, extrados_end_%)
+        # (intrados_cm, extrados_cm) - full width, not half
         defaults = {
-            "A": (4.0, 5.0, 15.0),
-            "B": (4.0, 15.0, 30.0),
-            "C": (4.0, 30.0, 50.0),
-            "D": (4.0, 50.0, 75.0),
+            "A": (4.0, 10.0),
+            "B": (4.0, 15.0),
+            "C": (4.0, 20.0),
+            "D": (4.0, 20.0),
         }
         
         line_spinboxes = {}
@@ -195,21 +203,15 @@ class CellTool(BaseTool):
             intrados_spin.setValue(defaults[line_type][0])
             intrados_spin.setSuffix(" cm")
             
-            extrados_start_spin = QtGui.QDoubleSpinBox()
-            extrados_start_spin.setRange(0, 100)
-            extrados_start_spin.setValue(defaults[line_type][1])
-            extrados_start_spin.setSuffix(" %")
-            
-            extrados_end_spin = QtGui.QDoubleSpinBox()
-            extrados_end_spin.setRange(0, 100)
-            extrados_end_spin.setValue(defaults[line_type][2])
-            extrados_end_spin.setSuffix(" %")
+            extrados_spin = QtGui.QDoubleSpinBox()
+            extrados_spin.setRange(1, 50)
+            extrados_spin.setValue(defaults[line_type][1])
+            extrados_spin.setSuffix(" cm")
             
             param_table.setCellWidget(row, 0, intrados_spin)
-            param_table.setCellWidget(row, 1, extrados_start_spin)
-            param_table.setCellWidget(row, 2, extrados_end_spin)
+            param_table.setCellWidget(row, 1, extrados_spin)
             
-            line_spinboxes[line_type] = (intrados_spin, extrados_start_spin, extrados_end_spin)
+            line_spinboxes[line_type] = (intrados_spin, extrados_spin)
         
         layout.addWidget(param_table)
         
@@ -236,19 +238,19 @@ class CellTool(BaseTool):
         if dialog.exec_() != QtGui.QDialog.Accepted:
             return
         
-        # Get vertical offset in mm - will be converted per position using real profile thickness
+        # Get vertical offset in mm
         offset_mm = offset_spin.value()
         
         # Get glider 3D data for profile information
         glider_3d = self.parametric_glider.get_glider_3d()
         
-        # Get a reference rib for profile thickness calculation
-        # Use middle rib as reference
+        # Get a reference rib for chord calculation
         ref_rib_index = len(glider_3d.ribs) // 2
         ref_rib = glider_3d.ribs[ref_rib_index]
         ref_chord = ref_rib.chord
+        chord_cm = ref_chord * 100
         
-        print(f"DEBUG: Reference rib {ref_rib_index}, chord = {ref_chord*100:.1f} cm")
+        print(f"DEBUG: Reference rib {ref_rib_index}, chord = {chord_cm:.1f} cm")
         
         # Function to calculate height value for a given x position with offset
         def get_extrados_height_with_offset(x_pos, offset_mm):
@@ -261,52 +263,29 @@ class CellTool(BaseTool):
             
             profile = ref_rib.profile_2d
             try:
-                # Get upper and lower points at this x position
                 upper_point = profile.profilepoint(x_pos, h=1.0)
                 lower_point = profile.profilepoint(x_pos, h=-1.0)
-                
-                # Local thickness in profile units (0-1 normalized)
                 local_thickness_normalized = upper_point[1] - lower_point[1]
-                
-                # Convert to real thickness in cm
                 local_thickness_cm = local_thickness_normalized * ref_chord * 100
                 
                 if local_thickness_cm < 0.1:
-                    return 1.0  # Very thin, no offset
+                    return 1.0
                 
-                # Height reduction: offset_mm / (local_thickness_cm * 10) gives fraction,
-                # multiply by 2 for height range (-1 to 1)
                 offset_cm = offset_mm / 10.0
                 height_reduction = (offset_cm / local_thickness_cm) * 2.0
-                
                 extrados_height = 1.0 - height_reduction
                 return max(0.0, min(1.0, extrados_height))
             except:
-                # Fallback to simple calculation
                 return 1.0 - offset_mm * 0.005
         
-        # Calculate extrados_height at a reference position (middle of chord)
-        ref_extrados_height = get_extrados_height_with_offset(0.3, offset_mm)
-        print(f"DEBUG: offset_mm={offset_mm}, ref_extrados_height at x=0.3 = {ref_extrados_height:.4f}")
-        
-        # Get per-line-type parameters
-        chord_cm = ref_chord * 100  # Convert to cm
+        # Get per-line-type parameters (convert cm to fraction of chord)
         line_params = {}
-        for line_type, (intrados_spin, ext_start_spin, ext_end_spin) in line_spinboxes.items():
-            # Convert cm to fraction of chord, % to fraction
-            half_width_intrados = (intrados_spin.value() / 2) / chord_cm
-            extrados_start = ext_start_spin.value() / 100.0
-            extrados_end = ext_end_spin.value() / 100.0
-            
-            # Calculate extrados height at the middle of the extrados range
-            mid_x = (extrados_start + extrados_end) / 2
-            ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
-            
+        for line_type, (intrados_spin, extrados_spin) in line_spinboxes.items():
+            half_intrados = (intrados_spin.value() / 2) / chord_cm
+            half_extrados = (extrados_spin.value() / 2) / chord_cm
             line_params[line_type] = {
-                "half_intrados": half_width_intrados,
-                "extrados_start": extrados_start,
-                "extrados_end": extrados_end,
-                "extrados_height": ext_height,
+                "half_intrados": half_intrados,
+                "half_extrados": half_extrados,
             }
         
         print(f"DEBUG: line_params = {line_params}")
@@ -314,139 +293,74 @@ class CellTool(BaseTool):
         # Default params for unknown line types
         default_params = line_params.get("A", {
             "half_intrados": 0.02,
-            "extrados_start": 0.05,
-            "extrados_end": 0.15,
-            "extrados_height": 1.0,
+            "half_extrados": 0.05,
         })
         
+        # Get attachment points with their layer
         rib_attachments = self._get_suspended_ribs_with_layer()
         cell_count = self._get_cell_count()
         
-        # Track which cells have diagonals from which direction
-        # cell_diagonals[cell_no] = {"from_left": [...], "from_right": [...]}
-        # Each entry is (rib_pos, layer, params)
-        cell_diagonals = {i: {"from_left": [], "from_right": []} for i in range(cell_count)}
+        print(f"DEBUG: Found {len(rib_attachments)} ribs with attachments")
+        for rib_no, attachments in sorted(rib_attachments.items()):
+            print(f"  Rib {rib_no}: {attachments}")
         
-        # Generate diagonals from each attachment point
+        # Group diagonals by their geometry
+        diagonals_grouped = {}
+        
+        # For each attachment point, create diagonals to adjacent cells
         for rib_no, attachments in sorted(rib_attachments.items()):
             for rib_pos, layer in attachments:
                 # Get params for this line type
                 params = line_params.get(layer, default_params)
+                half_intrados = params["half_intrados"]
+                half_extrados = params["half_extrados"]
                 
-                # Create diagonal to the left cell 
-                left_cell = rib_no
+                # Calculate extrados height at the rib_pos
+                ext_height = get_extrados_height_with_offset(rib_pos, offset_mm)
+                
+                print(f"DEBUG: Creating diagonals for rib {rib_no}, pos {rib_pos:.3f}, layer {layer}")
+                
+                # Diagonal to the LEFT cell (cell_no = rib_no - 1)
+                # Left cell: rib_no-1 to rib_no
+                # Attachment is on the RIGHT rib of this cell
+                # So: intrados on right, extrados on left
+                left_cell = rib_no - 1
                 if left_cell >= 0 and left_cell < cell_count:
-                    cell_diagonals[left_cell]["from_right"].append((rib_pos, layer, params))
-                
-                # Create diagonal to the right cell
-                right_cell = rib_no + 1
-                if right_cell >= 0 and right_cell < cell_count:
-                    cell_diagonals[right_cell]["from_left"].append((rib_pos, layer, params))
-        
-        # Group diagonals by parameters (separate lists for diagonals and bands)
-        diagonals_grouped = {}
-        bands_grouped = {}
-        
-        for cell_no in range(cell_count):
-            cell_data = cell_diagonals[cell_no]
-            
-            # Diagonals from left side of cell (attachment on left rib -> goes to right rib extrados)
-            for rib_pos, layer, params in cell_data["from_left"]:
-                half_bottom = params["half_intrados"]
-                ext_start = params["extrados_start"]
-                ext_end = params["extrados_end"]
-                ext_height = params["extrados_height"]
-                
-                # Intrados: centered on rib_pos
-                # Extrados: from ext_start to ext_end (absolute positions on chord)
-                key = (
-                    round(ext_start, 4), ext_height,           # right_front (extrados start)
-                    round(ext_end, 4), ext_height,             # right_back (extrados end)
-                    round(rib_pos + half_bottom, 4), -1.0,     # left_back (intrados)
-                    round(rib_pos - half_bottom, 4), -1.0,     # left_front (intrados)
-                )
-                if key not in diagonals_grouped:
-                    diagonals_grouped[key] = []
-                diagonals_grouped[key].append(cell_no)
-            
-            # Diagonals from right side of cell (attachment on right rib -> goes to left rib extrados)
-            for rib_pos, layer, params in cell_data["from_right"]:
-                half_bottom = params["half_intrados"]
-                ext_start = params["extrados_start"]
-                ext_end = params["extrados_end"]
-                ext_height = params["extrados_height"]
-                
-                # Intrados: centered on rib_pos
-                # Extrados: from ext_start to ext_end (absolute positions on chord)
-                key = (
-                    round(rib_pos - half_bottom, 4), -1.0,     # right_front (intrados)
-                    round(rib_pos + half_bottom, 4), -1.0,     # right_back (intrados)
-                    round(ext_end, 4), ext_height,             # left_back (extrados end)
-                    round(ext_start, 4), ext_height,           # left_front (extrados start)
-                )
-                if key not in diagonals_grouped:
-                    diagonals_grouped[key] = []
-                diagonals_grouped[key].append(cell_no)
-        
-        # Create horizontal bands on cells that need them, PER LINE TYPE
-        # Each line type (A, B, C, D) gets its own bands on cells that don't have diagonals of that type
-        # Bands connect extrados to extrados (never to intrados)
-        
-        print(f"DEBUG: Creating bands per line type")
-        
-        # Track which cells have diagonals of each line type
-        # cells_by_layer[layer] = set of cell numbers with diagonals of that layer
-        cells_by_layer = {}
-        layer_params = {}  # Store params for each layer
-        
-        for cell_no in range(cell_count):
-            cell_data = cell_diagonals[cell_no]
-            for diag_list in [cell_data["from_left"], cell_data["from_right"]]:
-                for rib_pos, layer, params in diag_list:
-                    if layer not in cells_by_layer:
-                        cells_by_layer[layer] = set()
-                        layer_params[layer] = params  # Store params for this layer
-                    cells_by_layer[layer].add(cell_no)
-        
-        print(f"DEBUG: Line types found: {list(cells_by_layer.keys())}")
-        for layer, cells in cells_by_layer.items():
-            print(f"DEBUG: Layer {layer}: cells with diagonals = {sorted(cells)}")
-        
-        # For each line type, find gaps and create bands
-        for layer, cells_with_diag in cells_by_layer.items():
-            params = layer_params[layer]
-            ext_start = params["extrados_start"]
-            ext_end = params["extrados_end"]
-            ext_height = params["extrados_height"]
-            
-            # Find cells that DON'T have diagonals of this layer
-            for cell_no in range(cell_count):
-                if cell_no in cells_with_diag:
-                    continue  # This cell has a diagonal of this layer, skip
-                
-                # Check if there are neighboring cells with this layer's diagonals
-                # (to know if we need a band here)
-                has_left_neighbor = (cell_no - 1) in cells_with_diag if cell_no > 0 else False
-                has_right_neighbor = (cell_no + 1) in cells_with_diag if cell_no < cell_count - 1 else False
-                
-                # Only create band if there are diagonals on both sides (gap to fill)
-                # OR if there's at least one neighbor with this layer
-                if has_left_neighbor or has_right_neighbor:
-                    print(f"DEBUG: Band on cell {cell_no} for layer {layer}: height={ext_height:.3f}")
-                    
-                    # Band is horizontal - all 4 corners at same height, same layer
-                    band_key = (
-                        round(ext_start, 4), ext_height,  # right_front
-                        round(ext_end, 4), ext_height,    # right_back
-                        round(ext_end, 4), ext_height,    # left_back
-                        round(ext_start, 4), ext_height,  # left_front
+                    # right side = intrados (on the attachment rib)
+                    # left side = extrados (on the opposite rib)
+                    key = (
+                        round(rib_pos - half_intrados, 4), -1.0,     # right_front (intrados)
+                        round(rib_pos + half_intrados, 4), -1.0,     # right_back (intrados)
+                        round(rib_pos + half_extrados, 4), ext_height,  # left_back (extrados)
+                        round(rib_pos - half_extrados, 4), ext_height,  # left_front (extrados)
                     )
-                    if band_key not in bands_grouped:
-                        bands_grouped[band_key] = []
-                    if cell_no not in bands_grouped[band_key]:
-                        bands_grouped[band_key].append(cell_no)
+                    if key not in diagonals_grouped:
+                        diagonals_grouped[key] = []
+                    if left_cell not in diagonals_grouped[key]:
+                        diagonals_grouped[key].append(left_cell)
+                        print(f"  -> Left cell {left_cell}")
+                
+                # Diagonal to the RIGHT cell (cell_no = rib_no)
+                # Right cell: rib_no to rib_no+1
+                # Attachment is on the LEFT rib of this cell
+                # So: intrados on left, extrados on right
+                right_cell = rib_no
+                if right_cell >= 0 and right_cell < cell_count:
+                    # left side = intrados (on the attachment rib)
+                    # right side = extrados (on the opposite rib)
+                    key = (
+                        round(rib_pos - half_extrados, 4), ext_height,  # right_front (extrados)
+                        round(rib_pos + half_extrados, 4), ext_height,  # right_back (extrados)
+                        round(rib_pos + half_intrados, 4), -1.0,     # left_back (intrados)
+                        round(rib_pos - half_intrados, 4), -1.0,     # left_front (intrados)
+                    )
+                    if key not in diagonals_grouped:
+                        diagonals_grouped[key] = []
+                    if right_cell not in diagonals_grouped[key]:
+                        diagonals_grouped[key].append(right_cell)
+                        print(f"  -> Right cell {right_cell}")
         
-        print(f"DEBUG: Total diagonals: {len(diagonals_grouped)}, bands: {len(bands_grouped)}")
+        print(f"DEBUG: Total diagonal groups: {len(diagonals_grouped)}")
         
         # Convert grouped diagonals to list format
         diagonals = []
@@ -459,17 +373,6 @@ class CellTool(BaseTool):
                 "cells": sorted(set(cells)),
             }
             diagonals.append(diag)
-        
-        # Add bands as SEPARATE entries (all 4 heights same)
-        for key, cells in bands_grouped.items():
-            band = {
-                "right_front": (key[0], key[1]),
-                "right_back": (key[2], key[3]),
-                "left_back": (key[4], key[5]),
-                "left_front": (key[6], key[7]),
-                "cells": sorted(set(cells)),
-            }
-            diagonals.append(band)
         
         print(f"DEBUG: Total entries in table: {len(diagonals)}")
         

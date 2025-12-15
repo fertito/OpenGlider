@@ -67,17 +67,9 @@ class Cell(CachedObject):
             self.panels = self.get_panels()
 
     def get_panels(self):
-
-        if self.suspended:
-            return []
-
-        # create a singleskin panel for the whole cell
-        return [
-            Panel(
-                {"left": -1.0, "right": -1.0, "type": Panel.CUT_TYPES.singleskin},
-                {"left": 1.0, "right": 1.0, "type": Panel.CUT_TYPES.singleskin},
-            )
-        ]
+        # Return empty list - panels should be explicitly defined
+        # for the parametric glider rather than auto-generated here
+        return []
 
     @property
     def suspended(self):
