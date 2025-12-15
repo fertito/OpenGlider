@@ -312,6 +312,10 @@ class AirfoilStructureTool(BaseTool):
         
         self.reinforcementStack = QtGui.QStackedWidget(self.reinforcementGroupBox)
         
+        # Excluded ribs for reinforcements
+        self.reinforcementExcludedRibsEdit = QtGui.QLineEdit(self.reinforcementGroupBox)
+        self.reinforcementExcludedRibsEdit.setPlaceholderText("e.g. 1, 3, 5 (rib numbers to exclude from reinforcements)")
+        
         # Master Config
         self.masterConfig = ReinforcementConfigWidget(self.reinforcementGroupBox)
         self.reinforcementStack.addWidget(self.masterConfig)
@@ -323,11 +327,10 @@ class AirfoilStructureTool(BaseTool):
 
         self.applyButton = QtGui.QPushButton("Apply", self.base_widget)
 
-        # Preview rib selector
+        # Preview rib selector - use ComboBox to show actual rib names
         self.previewRibLabel = QtGui.QLabel("Preview Rib:")
-        self.previewRibSpinBox = QtGui.QSpinBox(self.base_widget)
-        self.previewRibSpinBox.setRange(0, self.get_num_ribs() - 1)
-        self.previewRibSpinBox.setValue(0)
+        self.previewRibComboBox = QtGui.QComboBox(self.base_widget)
+        self._populate_rib_combo()
 
         self.preview_root = coin.SoSeparator()
         self.setup_widget()
@@ -344,6 +347,7 @@ class AirfoilStructureTool(BaseTool):
         # --- Configure Attachment Reinforcements ---
         self.reinforcementLayout.addRow(self.reinforcementEnabledCheckBox)
         self.reinforcementLayout.addRow(self.reinforcementApplyAllCheckBox)
+        self.reinforcementLayout.addRow("Excluded Ribs", self.reinforcementExcludedRibsEdit)
         self.reinforcementLayout.addRow(self.reinforcementStack)
         
         self.layout.addRow(self.reinforcementGroupBox)
@@ -351,7 +355,7 @@ class AirfoilStructureTool(BaseTool):
         # Preview selector
         preview_layout = QtGui.QHBoxLayout()
         preview_layout.addWidget(self.previewRibLabel)
-        preview_layout.addWidget(self.previewRibSpinBox)
+        preview_layout.addWidget(self.previewRibComboBox)
         preview_layout.addStretch()
         self.layout.addRow(preview_layout)
         
@@ -376,7 +380,7 @@ class AirfoilStructureTool(BaseTool):
         self.masterConfig.changed.connect(self.update_preview)
         
         self.ribTypeComboBox.currentIndexChanged.connect(self.on_rib_type_change)
-        self.previewRibSpinBox.valueChanged.connect(self.update_preview)
+        self.previewRibComboBox.currentIndexChanged.connect(self.update_preview)
         self.applyButton.clicked.connect(self.accept)
 
         # Set initial visibility of reinforcement group (only for suspended)
@@ -405,11 +409,23 @@ class AirfoilStructureTool(BaseTool):
             return len(glider_instance.ribs)
         except:
             return 1
+    
+    def _populate_rib_combo(self):
+        """Populate the rib combo box with actual rib names."""
+        self.previewRibComboBox.clear()
+        try:
+            glider_instance = self.obj.Proxy.getGliderInstance()
+            for rib in glider_instance.ribs:
+                # Use rib.name if available, otherwise use index+1
+                name = rib.name if hasattr(rib, 'name') and rib.name else f"r{glider_instance.ribs.index(rib) + 1}"
+                self.previewRibComboBox.addItem(name)
+        except Exception as e:
+            self.previewRibComboBox.addItem("r1")
 
     def get_representative_rib(self, suspended=False):
         """Get rib for preview based on spinner selection."""
         glider_instance = self.obj.Proxy.getGliderInstance()
-        rib_idx = self.previewRibSpinBox.value()
+        rib_idx = self.previewRibComboBox.currentIndex()
         
         if rib_idx < len(glider_instance.ribs):
             return glider_instance.ribs[rib_idx]
@@ -465,7 +481,7 @@ class AirfoilStructureTool(BaseTool):
         # Auto-switch preview rib to first suspended rib when switching to Suspended mode
         if is_suspended:
             first_suspended_idx = self.get_first_suspended_rib_index()
-            self.previewRibSpinBox.setValue(first_suspended_idx)
+            self.previewRibComboBox.setCurrentIndex(first_suspended_idx)
         
         # Reload data for new state
         self.update_form_from_glider_data()
@@ -681,6 +697,13 @@ class AirfoilStructureTool(BaseTool):
             apply_all = getattr(pg, 'reinforcement_apply_all_s', False)
             self.reinforcementApplyAllCheckBox.setChecked(apply_all)
             self.on_reinforcement_mode_change(None) # Update stack
+            
+            # Load excluded ribs for reinforcements
+            excluded = getattr(pg, 'reinforcement_excluded_ribs_s', [])
+            if excluded:
+                self.reinforcementExcludedRibsEdit.setText(', '.join(str(x + 1) for x in excluded))
+            else:
+                self.reinforcementExcludedRibsEdit.clear()
 
             # Load Master Config
             master_config = getattr(pg, 'reinforcement_master_s', {})
@@ -713,9 +736,23 @@ class AirfoilStructureTool(BaseTool):
             setattr(pg, 'reinforcement_apply_all_s', self.reinforcementApplyAllCheckBox.isChecked())
             setattr(pg, 'reinforcement_master_s', self.masterConfig.get_values())
             
+            # Save excluded ribs for reinforcements
+            setattr(pg, 'reinforcement_excluded_ribs_s', self.get_reinforcement_excluded_ribs())
+            
             # Save list of configs
             configs = [w.get_values() for w in self.reinforcement_widgets]
             setattr(pg, 'reinforcement_configs_s', configs)
+    
+    def get_reinforcement_excluded_ribs(self):
+        """Parse excluded ribs for reinforcements. Returns list of 0-based indices."""
+        text = self.reinforcementExcludedRibsEdit.text().strip()
+        if not text:
+            return []
+        try:
+            # Parse comma-separated rib numbers (1-based from user, convert to 0-based)
+            return [int(x.strip()) - 1 for x in text.split(',') if x.strip().isdigit()]
+        except:
+            return []
 
     def apply_reinforcements_to_ribs(self):
         """Apply reinforcement configurations to the actual rib objects for 2D export."""
@@ -732,12 +769,18 @@ class AirfoilStructureTool(BaseTool):
         apply_all = getattr(pg, 'reinforcement_apply_all_s', False)
         master_config = getattr(pg, 'reinforcement_master_s', {})
         configs = getattr(pg, 'reinforcement_configs_s', [])
+        excluded_ribs = getattr(pg, 'reinforcement_excluded_ribs_s', [])
         
         # Identify suspended ribs and build rib index map
         suspended_ribs = {att.rib for att in glider_instance.attachment_points if hasattr(att, 'rib')}
         
         for rib_idx, rib in enumerate(glider_instance.ribs):
             if rib in suspended_ribs:
+                # Check if this rib is excluded from reinforcements
+                if rib_idx in excluded_ribs:
+                    rib.reinforcements = []
+                    continue
+                
                 # Get valid attachment points for this rib
                 valid_aps = self.get_valid_attachment_points(rib)
                 
@@ -830,7 +873,26 @@ class AirfoilStructureTool(BaseTool):
 
     def accept(self):
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
+        
+        # Save current mode's data
         self.update_glider_data(is_suspended)
+        
+        # IMPORTANT: Also save rod sleeve configs to BOTH modes (suspended and non-suspended)
+        # This ensures exclusions work correctly regardless of rib suspension status
+        # The UI shows same rod sleeve groups for both modes, so we sync them
+        pg = self.parametric_glider
+        extrados_configs = self.extradosGroup.get_configs()
+        intrados_configs = self.intradosGroup.get_configs()
+        extrados_enabled = self.extradosGroup.is_enabled()
+        intrados_enabled = self.intradosGroup.is_enabled()
+        
+        # Save to both _s and _ns suffixes
+        for suffix in ['_s', '_ns']:
+            setattr(pg, f'extrados_sleeves_enabled{suffix}', extrados_enabled)
+            setattr(pg, f'extrados_sleeves{suffix}', extrados_configs)
+            setattr(pg, f'intrados_sleeves_enabled{suffix}', intrados_enabled)
+            setattr(pg, f'intrados_sleeves{suffix}', intrados_configs)
+        
         # Apply reinforcements and rod sleeves to ribs for 2D export
         self.apply_reinforcements_to_ribs()
         self.apply_rod_sleeves_to_ribs()

@@ -163,6 +163,7 @@ class ParametricGlider(object):
             'rod_end_offset': 1.0,     # 1°
         })
         self.reinforcement_configs_s = kwargs.get('reinforcement_configs_s', [])
+        self.reinforcement_excluded_ribs_s = kwargs.get('reinforcement_excluded_ribs_s', [])
 
         # Multi-rod sleeves (NEW FORMAT - list of configs)
         # Suspended ribs
@@ -500,12 +501,18 @@ class ParametricGlider(object):
         apply_all = getattr(self, 'reinforcement_apply_all_s', False)
         master_config = getattr(self, 'reinforcement_master_s', {})
         configs = getattr(self, 'reinforcement_configs_s', [])
+        excluded_ribs = getattr(self, 'reinforcement_excluded_ribs_s', [])
         
         # Identify suspended ribs
         suspended_ribs = {att.rib for att in glider.lineset.attachment_points if hasattr(att, 'rib')}
         
         for rib_idx, rib in enumerate(glider.ribs):
             if rib in suspended_ribs:
+                # Check if this rib is excluded from reinforcements
+                if rib_idx in excluded_ribs:
+                    rib.reinforcements = []
+                    continue
+                
                 # Get attachment points for this rib
                 attachment_points = glider.get_rib_attachment_points(rib)
                 # Filter to valid attachment points (< 90% chord)
@@ -702,6 +709,7 @@ class ParametricGlider(object):
                 'rod_enabled': True, 'rod_offset': 0.008, 'rod_width': 0.009, 'rod_end_offset': 1.0
             }),
             "reinforcement_configs_s": getattr(self, "reinforcement_configs_s", []),
+            "reinforcement_excluded_ribs_s": getattr(self, "reinforcement_excluded_ribs_s", []),
             # Multi-rod sleeves (NEW FORMAT)
             "extrados_sleeves_enabled_s": getattr(self, "extrados_sleeves_enabled_s", True),
             "extrados_sleeves_s": getattr(self, "extrados_sleeves_s", []),
