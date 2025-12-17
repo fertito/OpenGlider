@@ -3,6 +3,10 @@ from __future__ import division
 import math
 import numpy as np
 import copy
+try:
+    import matplotlib.path as mpl_path
+except ImportError:
+    mpl_path = None
 
 from openglider.glider.parametric.shape import ParametricShape
 from openglider.airfoil import Profile2D
@@ -89,22 +93,6 @@ class ParametricGlider(object):
 
         # No-hole zone parameters for suspended ribs
         self.hole_free_angle_s = kwargs.get('hole_free_angle_s', 30.0)  # degrees
-        self.susp_hole_num_s = kwargs.get('susp_hole_num_s', 4)  # Number of truss holes
-        self.susp_hole_margin_s = kwargs.get('susp_hole_margin_s', 0.015)  # Side margin 15mm
-        self.susp_hole_radius_top_s = kwargs.get('susp_hole_radius_top_s', 1.0)  # Top corner 100%
-        self.susp_hole_radius_bottom_s = kwargs.get('susp_hole_radius_bottom_s', 1.0)  # Bottom corner 100%
-        self.susp_hole_top_margin_s = kwargs.get('susp_hole_top_margin_s', 0.040)  # Top margin 40mm
-        self.susp_hole_arc_span_s = kwargs.get('susp_hole_arc_span_s', 120.0)  # Arc span in degrees
-        self.susp_hole_bottom_margin_s = kwargs.get('susp_hole_bottom_margin_s', 0.015)  # Bottom margin 15mm
-
-        # Minirib hole parameters
-        self.minirib_holes = kwargs.get('minirib_holes', False)  # Enable holes in miniribs (disabled by default)
-        self.minirib_num_holes = kwargs.get('minirib_num_holes', 1)  # Number of holes per minirib (when enabled)
-        self.minirib_hole_width = kwargs.get('minirib_hole_width', 0.5)  # Width ratio (0-1 of minirib width)
-        self.minirib_hole_height = kwargs.get('minirib_hole_height', 0.7)  # Height ratio (0-1 of minirib height)
-        self.minirib_hole_shape = kwargs.get('minirib_hole_shape', 0)  # 0=Ellipse, 1=Rounded Rectangle
-        self.minirib_hole_corner_radius = kwargs.get('minirib_hole_corner_radius', 0.25)  # Corner radius ratio
-        self.minirib_hole_max_pos = kwargs.get('minirib_hole_max_pos', 0.9)  # Max position (0-1, limits holes to avoid thin tip)
 
         # Airfoil Structure - Extrados Sleeve (suspended)
         self.extrados_sleeve_enabled_s = kwargs.get('extrados_sleeve_enabled_s', False)
@@ -348,10 +336,68 @@ class ParametricGlider(object):
                     else:
                         # Fallback to local vertical if no pilot point
                         upper_point = rib.profile_2d.align([ap.rib_pos, 1.0])
-                        local_vertical = upper_point - v1
-                        if np.linalg.norm(local_vertical) < 1e-9: continue
-                        local_vertical /= np.linalg.norm(local_vertical)
-                        angle_offset = np.arctan2(local_vertical[1], local_vertical[0])
+                        angle_offset = np.pi/2 # Default vertical
+
+                        # Try to get pilot point for smarter alignment (match preview)
+                        pilot_point_3d = None
+                        if hasattr(glider, 'lineset') and glider.lineset:
+                            try:
+                                main_ap = glider.lineset.get_main_attachment_point()
+                                if main_ap is not None and hasattr(main_ap, 'vec'):
+                                    pilot_point_3d = np.array(main_ap.vec)
+                            except:
+                                pass
+                        
+                        if pilot_point_3d is not None:
+                             try:
+                                 # 3D Project logic
+                                 le_3d = np.array(rib.profile_3d.data[rib.profile_2d.noseindex])
+                                 te_3d = (np.array(rib.profile_3d.data[0]) + np.array(rib.profile_3d.data[-1])) / 2
+                                 chord_3d = le_3d - te_3d
+                                 chord_len = np.linalg.norm(chord_3d)
+                                 
+                                 if chord_len > 1e-6:
+                                     chord_dir = chord_3d / chord_len
+                                     
+                                     # Normal to rib plane (using upper surface point)
+                                     upper_idx = len(rib.profile_3d.data) // 4
+                                     upper_3d = np.array(rib.profile_3d.data[upper_idx])
+                                     v1_3d = upper_3d - te_3d
+                                     normal = np.cross(chord_3d, v1_3d)
+                                     if np.linalg.norm(normal) > 1e-6:
+                                          normal /= np.linalg.norm(normal)
+                                          up_dir = np.cross(normal, chord_dir)
+                                          if np.linalg.norm(up_dir) > 1e-6:
+                                               up_dir /= np.linalg.norm(up_dir)
+                                               
+                                               # Project pilot
+                                               pilot_rel = pilot_point_3d - te_3d
+                                               pilot_chord_pos = np.dot(pilot_rel, chord_dir) / chord_len
+                                               pilot_up_pos = np.dot(pilot_rel, up_dir) / chord_len
+                                               
+                                               # Map to normalized 2D
+                                               te_2d_x = (rib.profile_2d.data[0][0] + rib.profile_2d.data[-1][0])/2
+                                               le_2d_x = rib.profile_2d.data[rib.profile_2d.noseindex][0]
+                                               
+                                               pilot_2d_x = te_2d_x + pilot_chord_pos * (le_2d_x - te_2d_x)
+                                               pilot_2d_y = pilot_up_pos
+                                               pilot_2d = np.array([pilot_2d_x, pilot_2d_y])
+                                               
+                                               # Vector from pilot to AP
+                                               line_dir = v1 - pilot_2d
+                                               if np.linalg.norm(line_dir) > 1e-9:
+                                                    angle_offset = np.arctan2(line_dir[1], line_dir[0])
+                             except Exception as e:
+                                  print("Angle calculation error: {}".format(e))
+                                  # Fallback to local vertical
+                                  local_vertical = upper_point - v1
+                                  if np.linalg.norm(local_vertical) > 1e-9:
+                                       angle_offset = np.arctan2(local_vertical[1], local_vertical[0])
+                        else:
+                             # Fallback
+                             local_vertical = upper_point - v1
+                             if np.linalg.norm(local_vertical) > 1e-9:
+                                  angle_offset = np.arctan2(local_vertical[1], local_vertical[0])
 
                     dir2 = np.array([np.cos(angle_offset - angle_rad), np.sin(angle_offset - angle_rad)])
                     dir3 = np.array([np.cos(angle_offset + angle_rad), np.sin(angle_offset + angle_rad)])
@@ -366,11 +412,6 @@ class ParametricGlider(object):
                     if v2 is not None and v3 is not None:
                         no_hole_zones.append((v1, v2, v3))
                         
-                        # DISABLED: Suspension holes cause Triangle mesh crashes
-                        # Debug showed 0 holes generated but crash still happens
-                        # The no_hole_zones logic may be causing issues
-                        if False and self.susp_hole_num_s > 0:
-                            pass  # Suspension holes disabled
 
             else:
                 shape_idx, num_holes, w_factor, h_factor, v_shift_factor, start_pos, end_pos, hole_height_mode, hole_margin, corner_radius = (
@@ -647,20 +688,6 @@ class ParametricGlider(object):
             "hole_margin_s": getattr(self, "hole_margin_s", 0.02),
             "hole_corner_radius_s": getattr(self, "hole_corner_radius_s", 0.005),
             "hole_free_angle_s": getattr(self, "hole_free_angle_s", 30.0),
-            "susp_hole_num_s": getattr(self, "susp_hole_num_s", 3),
-            "susp_hole_margin_s": getattr(self, "susp_hole_margin_s", 0.01),
-            "susp_hole_num_s": getattr(self, "susp_hole_num_s", 3),
-            "susp_hole_margin_s": getattr(self, "susp_hole_margin_s", 0.01),
-            "susp_hole_radius_top_s": getattr(self, "susp_hole_radius_top_s", 0.005),
-            "susp_hole_radius_bottom_s": getattr(self, "susp_hole_radius_bottom_s", 0.005),
-            # Minirib hole parameters
-            "minirib_holes": getattr(self, "minirib_holes", False),
-            "minirib_num_holes": getattr(self, "minirib_num_holes", 1),
-            "minirib_hole_width": getattr(self, "minirib_hole_width", 0.5),
-            "minirib_hole_height": getattr(self, "minirib_hole_height", 0.7),
-            "minirib_hole_shape": getattr(self, "minirib_hole_shape", 0),
-            "minirib_hole_corner_radius": getattr(self, "minirib_hole_corner_radius", 0.25),
-            "minirib_hole_max_pos": getattr(self, "minirib_hole_max_pos", 0.9),
             # Airfoil Structure - Extrados Sleeve (suspended)
             "extrados_sleeve_enabled_s": getattr(self, "extrados_sleeve_enabled_s", False),
             "extrados_sleeve_width_s": getattr(self, "extrados_sleeve_width_s", 0.015),
@@ -699,7 +726,7 @@ class ParametricGlider(object):
             "intrados_sleeve_end_ns": getattr(self, "intrados_sleeve_end_ns", 0.9),
             "intrados_sleeve_le_angle_ns": getattr(self, "intrados_sleeve_le_angle_ns", 100.0),
             "intrados_sleeve_le_length_ns": getattr(self, "intrados_sleeve_le_length_ns", 0.03),
-            "intrados_sleeve_te_angle_ns": getattr(self, "intrados_sleeve_te_angle_ns", 100.0),
+            "intrados_sleeve_te_angle_ns": getattr(self, "intrados_sleeve_te_length_ns", 100.0),
             "intrados_sleeve_te_length_ns": getattr(self, "intrados_sleeve_te_length_ns", 0.03),
             # Airfoil Structure - Reinforcements (suspended only)
             "reinforcement_enabled_s": getattr(self, "reinforcement_enabled_s", True),
@@ -722,421 +749,16 @@ class ParametricGlider(object):
         }
 
 
-
-    def generate_truss_holes(self, rib, v1, v2, v3, num_holes, margin, radius_top=0.0, radius_bottom=0.0, top_margin=0.0, bottom_margin=0.0, angle_offset_param=None, half_arc_param=None):
+    def __setstate__(self, state):
         """
-        Generate fan-shaped holes inside the exclusion zone using radial mapping.
-        v1 is the attachment point (apex). v2, v3 are the extrados intersections.
-        Uses the intersection of the two side lines as the radial center.
-        
-        If angle_offset_param and half_arc_param are provided, use them directly
-        for symmetric angle calculation instead of recalculating from v2/v3.
+        Restore state and ensure new attributes are initialized with defaults.
+        This fixes persistence issues when loading old objects that lack new fields.
         """
-        holes = []
-        if num_holes < 1: 
-            return holes
-        
-        # Get the directions of the side lines (from v1 toward v2 and v3)
-        dir2 = v2 - v1
-        dir3 = v3 - v1
-        if np.linalg.norm(dir2) < 1e-10 or np.linalg.norm(dir3) < 1e-10:
-            return holes
-        dir2 = dir2 / np.linalg.norm(dir2)
-        dir3 = dir3 / np.linalg.norm(dir3)
-        
-        # Use passed angles if available (for symmetric calculation)
-        if angle_offset_param is not None and half_arc_param is not None:
-            angle_offset = angle_offset_param
-            half_arc_span = half_arc_param
-        else:
-            # Fallback: calculate from v2/v3 directions
-            angle2 = np.arctan2(dir2[1], dir2[0])
-            angle3 = np.arctan2(dir3[1], dir3[0])
-            angle_offset = (angle2 + angle3) / 2
-            arc_span = abs(angle3 - angle2)
-            half_arc_span = arc_span / 2
-        
-        arc_angle_left = angle_offset + half_arc_span
-        arc_angle_right = angle_offset - half_arc_span
-        
-        # Get reinforcement halfmoon radius (from rib)
-        halfmoon_radius = getattr(rib, 'halfmoon_radius', None)
-        if halfmoon_radius is None:
-            # Check reinforcement_configs
-            for reinf in getattr(rib, 'reinforcement_configs', []):
-                if reinf.get('enabled', False):
-                    halfmoon_radius = reinf.get('halfmoon_radius', 0.02)
-                    break
-        if halfmoon_radius is None or halfmoon_radius < 1e-6:
-            halfmoon_radius = 0.02  # Default 20mm
-        
-        halfmoon_radius_norm = halfmoon_radius / rib.chord if rib.chord > 0 else halfmoon_radius
-        
-        # Get extrados poly for intersection
-        extrados_poly = rib.profile_2d.get_extrados_poly()
-        # far_factor is used for ray intersection - should be in normalized coords (0-1 range)
-        far_factor = 10.0  # Normalized distance, profile is ~1.0 in width
-        
-        # Calculate radial center (intersection of the two side lines extended backward)
-        # We need to find where the lines through v2 with dir2 and v3 with dir3 intersect
-        # But we have v1, not the arc points. We need the arc points.
-        v1_left = v1 + halfmoon_radius_norm * np.array([np.cos(arc_angle_left), np.sin(arc_angle_left)])
-        v1_right = v1 + halfmoon_radius_norm * np.array([np.cos(arc_angle_right), np.sin(arc_angle_right)])
-        
-        # Find intersection of lines: v1_left + t*dir3 and v1_right + s*dir2
-        A = np.array([[dir3[0], -dir2[0]], [dir3[1], -dir2[1]]])
-        b = v1_right - v1_left
-        det = A[0, 0] * A[1, 1] - A[0, 1] * A[1, 0]
-        
-        if abs(det) > 1e-10:
-            t_param = (A[1, 1] * b[0] - A[0, 1] * b[1]) / det
-            radial_center = v1_left + t_param * dir3
-        else:
-            radial_center = v1  # Fallback if lines are parallel
-        
-        # Force even number for symmetric distribution
-        if num_holes % 2 == 1:
-            num_holes += 1
-        holes_per_side = num_holes // 2
-        
-        if holes_per_side < 1:
-            return holes
-        
-        # Angular margin
-        arc_margin_rad = margin / halfmoon_radius_norm if halfmoon_radius_norm > 0 else 0.05
-        
-        # Define zone boundaries
-        left_outer = arc_angle_left - arc_margin_rad
-        left_inner = angle_offset + arc_margin_rad
-        right_inner = angle_offset - arc_margin_rad
-        right_outer = arc_angle_right + arc_margin_rad
-        
-        # Normalize top_margin
-        top_margin_norm = top_margin / rib.chord if rib.chord > 0 else top_margin
-        
-        # Generate holes for each side
-        for side in ['left', 'right']:
-            if side == 'left':
-                zone_outer = left_outer
-                zone_inner = left_inner
-            else:
-                zone_outer = right_outer
-                zone_inner = right_inner
-            
-            zone_span = abs(zone_outer - zone_inner)
-            if zone_span <= 0.02:
-                continue
-            
-            inter_margin = arc_margin_rad * (holes_per_side - 1) if holes_per_side > 1 else 0
-            hole_width = (zone_span - inter_margin) / holes_per_side
-            
-            if hole_width <= 0.02:
-                continue
-            
-            for hole_idx in range(holes_per_side):
-                if side == 'left':
-                    hole_ang_outer = zone_outer - hole_idx * (hole_width + arc_margin_rad)
-                    hole_ang_inner = hole_ang_outer - hole_width
-                else:
-                    hole_ang_inner = zone_inner - hole_idx * (hole_width + arc_margin_rad)
-                    hole_ang_outer = hole_ang_inner - hole_width
-                
-                # Ensure consistent ordering: ang_left > ang_right for arc generation
-                ang_left = max(hole_ang_outer, hole_ang_inner)
-                ang_right = min(hole_ang_outer, hole_ang_inner)
-                
-                if abs(ang_left - ang_right) < 0.02:
-                    continue
-                
-                # Generate arc bottom points (offset from halfmoon by bottom_margin)
-                # Use fewer points (3) for simpler geometry that doesn't confuse Triangle mesh
-                num_pts = 3
-                arc_bottom = []
-                arc_bottom_radius = halfmoon_radius_norm + (bottom_margin / rib.chord if rib.chord > 0 else bottom_margin)
-                for i in range(num_pts + 1):
-                    t = i / num_pts
-                    ang = ang_left - t * (ang_left - ang_right)
-                    pt = v1 + arc_bottom_radius * np.array([np.cos(ang), np.sin(ang)])
-                    arc_bottom.append(pt)
-                
-                # Find extrados points by tracing radial lines from radial_center
-                arc_top = []
-                for i in range(num_pts + 1):
-                    bottom_pt = arc_bottom[i]
-                    direction = bottom_pt - radial_center
-                    dir_norm = np.linalg.norm(direction)
-                    if dir_norm > 1e-10:
-                        direction = direction / dir_norm
-                    else:
-                        direction = np.array([0, 1])
-                    
-                    ext_pt = extrados_poly.line_intersection(radial_center, radial_center + direction * far_factor)
-                    if ext_pt is not None:
-                        # ALWAYS apply at least a small margin to keep points inside the profile boundary
-                        # This prevents Triangle mesh precision issues when points are exactly on boundary
-                        min_margin = 0.001 / rib.chord if rib.chord > 0 else 0.001  # At least 1mm margin
-                        effective_margin = max(top_margin_norm, min_margin)
-                        toward_center = radial_center - ext_pt
-                        dist = np.linalg.norm(toward_center)
-                        if dist > 0:
-                            ext_pt = ext_pt + toward_center / dist * effective_margin
-                        arc_top.append(ext_pt)
-                    else:
-                        arc_top.append(bottom_pt + direction * 0.1)
-                
-                if len(arc_bottom) < 2 or len(arc_top) < 2:
-                    continue
-                
-                # SIMPLE RECTANGLE APPROACH for mesh export
-                # Complex arc polygons crash Triangle mesh - use bounding box instead
-                # Take the 4 corners: bottom-left, bottom-right, top-right, top-left
-                corner_bl = arc_bottom[0]           # Bottom-left
-                corner_br = arc_bottom[-1]          # Bottom-right
-                corner_tr = arc_top[-1]             # Top-right (arc_top is reversed later, so -1 is top-right)
-                corner_tl = arc_top[0]              # Top-left
-                
-                # Simple 4-point rectangle
-                hole_polygon = [corner_bl, corner_br, corner_tr, corner_tl]
-                
-                # Validate polygon
-                if len(hole_polygon) < 4:
-                    continue
-                
-                # Ensure closure
-                if np.linalg.norm(np.array(hole_polygon[0]) - np.array(hole_polygon[-1])) > 1e-9:
-                    hole_polygon.append(hole_polygon[0])
-                
-                # CLEANUP: Remove duplicate/near-duplicate points that cause Triangle issues
-                cleaned_polygon = []
-                min_dist = 1e-6  # Minimum distance between consecutive points
-                for i, pt in enumerate(hole_polygon):
-                    if i == 0:
-                        cleaned_polygon.append(pt)
-                    else:
-                        prev_pt = cleaned_polygon[-1]
-                        dist = np.linalg.norm(np.array(pt) - np.array(prev_pt))
-                        if dist > min_dist:
-                            cleaned_polygon.append(pt)
-                
-                hole_polygon = cleaned_polygon
-                
-                if len(hole_polygon) < 4:
-                    continue
-                
-                # Check winding order using signed area - positive = counterclockwise
-                signed_area = self._polygon_area(hole_polygon)
-                if signed_area < 0:
-                    # Clockwise - reverse to make counterclockwise
-                    hole_polygon = list(reversed(hole_polygon))
-                    signed_area = -signed_area
-                
-                # Validate area
-                if signed_area < 1e-12:
-                    continue
-                
-                holes.append(hole_polygon)
-        
-        return holes
-        
-    def round_polygon_corners(self, points, radii):
-        """
-        Round the corners of a polygon with given radii.
-        points: list of numpy arrays (vertices)
-        radii: float or list of floats (per vertex)
-        """
-        # Handle scalar radius
-        if isinstance(radii, (int, float)):
-             if radii <= 1e-6: return points
-             radii = [float(radii)] * len(points)
-        
-        # Ensure radii list matches points length if list provided
-        # If points list is smaller than radii (e.g. polygon collapsed?), handle gracefully
-        # Or if points list is closed? we usually process unique vertices here.
-        # Calling logic passes 3 points.
-        
-        n = len(points)
-        if len(radii) < n:
-            radii = (list(radii) + [0.0] * n)[:n]
-            
-        new_points = []
-        
-        for i in range(n):
-            radius = radii[i]
-            
-            # Skip if radius is effectively zero (but allow negative = percentage)
-            if radius >= 0 and radius <= 1e-6:
-                new_points.append(points[i])
-                continue
-            
-            p_prev = points[(i - 1) % n]
-            p_curr = points[i]
-            p_next = points[(i + 1) % n]
-            
-            # ... (rest of rounding logic using 'radius') ...
-            
-            # Vectors from current point
-            v_prev = p_prev - p_curr
-            v_next = p_next - p_curr
-            
-            len_prev = np.linalg.norm(v_prev)
-            len_next = np.linalg.norm(v_next)
-            
-            if len_prev < 1e-9 or len_next < 1e-9:
-                new_points.append(p_curr)
-                continue
-                
-            v_prev /= len_prev
-            v_next /= len_next
-            
-            # Angle between vectors
-            angle = np.arccos(np.clip(np.dot(v_prev, v_next), -1.0, 1.0))
-            
-            # Distance from corner to tangent points
-            if angle < 1e-3 or abs(angle - np.pi) < 1e-3:
-                 new_points.append(p_curr)
-                 continue
-            
-            # Calculate the maximum possible radius for this corner
-            # (limited by edge lengths to prevent overlap)
-            limit = min(len_prev, len_next) * 0.45  # 45% of shortest edge = safe max
-            max_radius = limit * np.tan(angle / 2.0)
-            
-            # Interpret radius value:
-            # - Negative: percentage of max radius (e.g., -0.5 = 50% of max, -1.0 = 100% of max)
-            # - Positive: absolute value clamped to max
-            # - Zero: no rounding
-            if radius < 0:
-                percentage = abs(radius)  # Convert -0.5 to 0.5 (50%)
-                actual_radius = max_radius * min(percentage, 1.0)
-            elif radius == 0:
-                new_points.append(p_curr)
-                continue
-            else:
-                actual_radius = min(radius, max_radius)
-            
-            dist = actual_radius / np.tan(angle / 2.0)
-                
-            t_prev = p_curr + v_prev * dist
-            t_next = p_curr + v_next * dist
-            
-            # Generate arc points
-            v_bisect = v_prev + v_next
-            bisect_norm = np.linalg.norm(v_bisect)
-            if bisect_norm < 1e-9:
-                # Vectors are nearly opposite, just add the corner point
-                new_points.append(p_curr)
-                continue
-            v_bisect /= bisect_norm
-            
-            dist_center = actual_radius / np.sin(angle / 2.0)
-            center = p_curr + v_bisect * dist_center
-            
-            v_center_prev = t_prev - center
-            start_angle = np.arctan2(v_center_prev[1], v_center_prev[0])
-            
-            v_center_next = t_next - center
-            end_angle = np.arctan2(v_center_next[1], v_center_next[0])
-            
-            diff_angle = end_angle - start_angle
-            if diff_angle > np.pi: diff_angle -= 2*np.pi
-            if diff_angle < -np.pi: diff_angle += 2*np.pi
-            
-            num_arc_points = max(2, int(abs(diff_angle) * 10)) 
-            
-            for k in range(num_arc_points + 1):
-                alpha = start_angle + diff_angle * (k / float(num_arc_points))
-                arc_pt = center + np.array([actual_radius * np.cos(alpha), actual_radius * np.sin(alpha)])
-                new_points.append(arc_pt)
-                
-        return new_points
+        self.__dict__.update(state)
+        # Initialize default values for missing attributes (e.g. from schema updates)
+        # Using the same defaults as in __init__
+        self.hole_free_angle_s = getattr(self, 'hole_free_angle_s', 30.0)
 
-
-    def _polygon_area(self, points):
-        # A = 0.5 * sum(x_i * y_i+1 - x_i+1 * y_i)
-        area = 0.0
-        n = len(points)
-        for i in range(n):
-            p1 = points[i]
-            p2 = points[(i + 1) % n]
-            area += p1[0] * p2[1]
-            area -= p2[0] * p1[1]
-        return 0.5 * area
-
-    def inset_polygon(self, points, margin):
-        """
-        Inset a convex polygon (CCW or CW) by a margin.
-        """
-        original_area = self._polygon_area(points)
-        
-        # ... (rest of logic) ...
-        
-        def normalize(v):
-            n = np.linalg.norm(v)
-            return v / n if n > 1e-9 else v
-
-        new_points = []
-        n = len(points)
-        
-        # Compute edge lines: p + t * dir
-        lines = []
-        for i in range(n):
-            p_curr = points[i]
-            p_next = points[(i+1)%n]
-            edge_vec = p_next - p_curr
-            edge_len = np.linalg.norm(edge_vec)
-            if edge_len < 1e-9: continue
-            
-            tangent = edge_vec / edge_len
-            
-            # Re-calculating Normal
-            # We want "inward" normal.
-            centroid = np.mean(points, axis=0)
-            midpoint = (p_curr + p_next) / 2
-            to_centroid = centroid - midpoint
-            
-            normal1 = np.array([-tangent[1], tangent[0]])
-            if np.dot(normal1, to_centroid) < 0:
-                normal = -normal1
-            else:
-                normal = normal1
-                
-            # Displaced line point
-            p_disp = p_curr + normal * margin
-            lines.append((p_disp, tangent))
-            
-        if len(lines) < 3: return None
-        
-        # Compute intersections of offset lines
-        for i in range(len(lines)):
-            p1, t1 = lines[i]
-            p2, t2 = lines[(i+1)%len(lines)]
-            
-            A = np.array([t1, -t2]).T
-            b = p2 - p1
-            try:
-                x = np.linalg.solve(A, b)
-                s = x[0]
-                inter_pt = p1 + s * t1
-                new_points.append(inter_pt)
-            except np.linalg.LinAlgError:
-                return None 
-                
-        # VALIDITY CHECKS
-        # 1. Check winding / Area sign
-        new_area = self._polygon_area(new_points)
-        if abs(new_area) < 1e-9:
-             return None # Collapsed
-             
-        # If original and new area have different signs, it inverted -> Invalid
-        if np.sign(original_area) != np.sign(new_area):
-            return None
-            
-        # 2. Check overlap logic or size reduction
-        # If new area > original area, something is wrong (since we are insetting)
-        if abs(new_area) > abs(original_area):
-             return None
-
-        return new_points
 
     @classmethod
     def import_ods(cls, path):

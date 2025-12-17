@@ -89,46 +89,6 @@ class HoleDesignTool(BaseTool):
         self.holeCornerRadiusSpinBox.setSuffix(" %")
         self.holeCornerRadiusSpinBox.setRange(0.0, 50.0) # Max 50% = half the smallest dimension
 
-        # Suspension Hole controls
-        self.suspHoleNumSpinBox = QtGui.QSpinBox(self.base_widget)
-        self.suspHoleNumSpinBox.setRange(0, 20)
-        self.layout.addRow(QtGui.QLabel("Suspension Holes:", self.base_widget), self.suspHoleNumSpinBox)
-
-        self.suspHoleTopMarginSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
-        self.suspHoleTopMarginSpinBox.setSingleStep(1.0)
-        self.suspHoleTopMarginSpinBox.setDecimals(1)
-        self.suspHoleTopMarginSpinBox.setSuffix(" mm")
-        self.suspHoleTopMarginSpinBox.setRange(0.0, 100.0)
-        self.layout.addRow(QtGui.QLabel("Top Margin:", self.base_widget), self.suspHoleTopMarginSpinBox)
-
-        self.suspHoleMarginSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
-        self.suspHoleMarginSpinBox.setSingleStep(1.0) # 1mm steps
-        self.suspHoleMarginSpinBox.setDecimals(1)
-        self.suspHoleMarginSpinBox.setSuffix(" mm")
-        self.suspHoleMarginSpinBox.setRange(0.0, 100.0) # Reasonable max margin
-        self.layout.addRow(QtGui.QLabel("Side Margin:", self.base_widget), self.suspHoleMarginSpinBox)
-
-        self.suspHoleBottomMarginSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
-        self.suspHoleBottomMarginSpinBox.setSingleStep(1.0)
-        self.suspHoleBottomMarginSpinBox.setDecimals(1)
-        self.suspHoleBottomMarginSpinBox.setSuffix(" mm")
-        self.suspHoleBottomMarginSpinBox.setRange(0.0, 100.0)
-        self.layout.addRow(QtGui.QLabel("Bottom Margin:", self.base_widget), self.suspHoleBottomMarginSpinBox)
-
-        self.suspHoleRadiusTopSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
-        self.suspHoleRadiusTopSpinBox.setSingleStep(5.0)  # 5% steps
-        self.suspHoleRadiusTopSpinBox.setDecimals(0)
-        self.suspHoleRadiusTopSpinBox.setSuffix(" %")
-        self.suspHoleRadiusTopSpinBox.setRange(0.0, 100.0)  # 0% = sharp, 100% = max round
-        self.layout.addRow(QtGui.QLabel("Top Corner:", self.base_widget), self.suspHoleRadiusTopSpinBox)
-
-        self.suspHoleRadiusBottomSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
-        self.suspHoleRadiusBottomSpinBox.setSingleStep(5.0)  # 5% steps
-        self.suspHoleRadiusBottomSpinBox.setDecimals(0)
-        self.suspHoleRadiusBottomSpinBox.setSuffix(" %")
-        self.suspHoleRadiusBottomSpinBox.setRange(0.0, 100.0)  # 0% = sharp, 100% = max round
-        self.layout.addRow(QtGui.QLabel("Bottom Corner:", self.base_widget), self.suspHoleRadiusBottomSpinBox)
-
         for spinbox in [self.minPosSpinBox, self.maxPosSpinBox]:
             spinbox.setSingleStep(0.01)
             spinbox.setDecimals(3)
@@ -161,12 +121,6 @@ class HoleDesignTool(BaseTool):
         self.holeCornerRadiusSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.noHoleArcAngleSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.noHoleAngleSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
-        self.suspHoleNumSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
-        self.suspHoleTopMarginSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
-        self.suspHoleMarginSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
-        self.suspHoleBottomMarginSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
-        self.suspHoleRadiusTopSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
-        self.suspHoleRadiusBottomSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.previewRibComboBox.currentIndexChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.applyButton.clicked.connect(self.accept)
 
@@ -177,20 +131,6 @@ class HoleDesignTool(BaseTool):
         self.layout.labelForField(self.noHoleArcAngleSpinBox).setVisible(is_suspended)
         self.noHoleAngleSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
-        
-        # Initial visibility of susp hole controls
-        self.suspHoleNumSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleNumSpinBox).setVisible(is_suspended)
-        self.suspHoleTopMarginSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleTopMarginSpinBox).setVisible(is_suspended)
-        self.suspHoleMarginSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleMarginSpinBox).setVisible(is_suspended)
-        self.suspHoleBottomMarginSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleBottomMarginSpinBox).setVisible(is_suspended)
-        self.suspHoleRadiusTopSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleRadiusTopSpinBox).setVisible(is_suspended)
-        self.suspHoleRadiusBottomSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleRadiusBottomSpinBox).setVisible(is_suspended)
 
     def setup_pivy(self):
         self.task_separator.addChild(self.preview_root)
@@ -229,6 +169,17 @@ class HoleDesignTool(BaseTool):
         for i, rib in enumerate(glider_instance.ribs):
             truly_suspended = self._is_truly_suspended(rib, glider_instance)
             
+            # Check thickness to exclude flat ribs (like wingtips)
+            try:
+                # Check thickness at 30% chord (typical max thickness location)
+                p_up = rib.profile_2d.profilepoint(-0.3)
+                p_down = rib.profile_2d.profilepoint(0.3)
+                thickness = p_up[1] - p_down[1]
+                if thickness < 1e-3: # Less than 0.1% thickness -> Flat/Line
+                    continue
+            except:
+                pass # If calculation fails, include it (safer)
+
             # Filter based on type
             if is_suspended and truly_suspended:
                 self._rib_indices.append(i)
@@ -278,18 +229,6 @@ class HoleDesignTool(BaseTool):
         # Also hide the labels associated with the spinboxes
         self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
         
-        self.suspHoleNumSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleNumSpinBox).setVisible(is_suspended)
-        self.suspHoleTopMarginSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleTopMarginSpinBox).setVisible(is_suspended)
-        self.suspHoleMarginSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleMarginSpinBox).setVisible(is_suspended)
-        self.suspHoleBottomMarginSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleBottomMarginSpinBox).setVisible(is_suspended)
-        self.suspHoleRadiusTopSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleRadiusTopSpinBox).setVisible(is_suspended)
-        self.suspHoleRadiusBottomSpinBox.setVisible(is_suspended)
-        self.layout.labelForField(self.suspHoleRadiusBottomSpinBox).setVisible(is_suspended)
 
         # Then, load the values for the newly selected rib type
         self.update_form_from_glider_data()
@@ -599,185 +538,6 @@ class HoleDesignTool(BaseTool):
                         zone_points_scaled = [p * scale for p in zone_points]
                         self.preview_root.addChild(Line_old(zone_points_scaled, color='red', width=1).object)
                     
-                    # PREVIEW TRUSS HOLES with new geometry
-                    susp_hole_num = self.suspHoleNumSpinBox.value()
-                    # Force even number of holes to ensure no hole on the line axis
-                    if susp_hole_num % 2 == 1:
-                        susp_hole_num = susp_hole_num + 1  # Round up to even
-                    
-                    susp_hole_top_margin = self.suspHoleTopMarginSpinBox.value() / 1000.0 / rib.chord  # normalize
-                    susp_hole_side_margin = self.suspHoleMarginSpinBox.value() / 1000.0 / rib.chord  # normalize
-                    susp_hole_bottom_margin = self.suspHoleBottomMarginSpinBox.value() / 1000.0 / rib.chord  # normalize
-                    
-                    # Get radii as percentages (0% = sharp, 100% = max round)
-                    # Use negative values to indicate percentage of max radius
-                    # -0.5 means 50% of max radius, -1.0 means 100% of max radius
-                    radius_top_pct = self.suspHoleRadiusTopSpinBox.value() / 100.0  # 0.0 to 1.0
-                    radius_bottom_pct = self.suspHoleRadiusBottomSpinBox.value() / 100.0
-                    susp_hole_radius_top = -radius_top_pct if radius_top_pct > 0 else 0.0
-                    susp_hole_radius_bottom = -radius_bottom_pct if radius_bottom_pct > 0 else 0.0
-                    
-                    if susp_hole_num > 0 and halfmoon_radius_norm > 1e-6:
-                        # SUSPENSION HOLES GENERATION - RADIAL MAPPING
-                        # =============================================
-                        # 
-                        # IMPORTANT: Radial lines emanate from the INTERSECTION of the two red side lines
-                        # (not from v1 which is the attachment point)
-                        #
-                        # Calculate intersection of the two red side lines:
-                        # Line 1: v1_left + t * dir3
-                        # Line 2: v1_right + s * dir2
-                        
-                        # Find intersection using parametric equations
-                        # v1_left + t * dir3 = v1_right + s * dir2
-                        # Solve: [dir3 | -dir2] * [t; s] = v1_right - v1_left
-                        A = np.array([[dir3[0], -dir2[0]], [dir3[1], -dir2[1]]])
-                        b = v1_right - v1_left
-                        det = A[0, 0] * A[1, 1] - A[0, 1] * A[1, 0]
-                        
-                        if abs(det) > 1e-10:
-                            t_param = (A[1, 1] * b[0] - A[0, 1] * b[1]) / det
-                            radial_center = v1_left + t_param * dir3
-                        else:
-                            # Fallback to v1 if lines are parallel
-                            radial_center = v1
-                        
-                        # Force even number
-                        if susp_hole_num % 2 == 1:
-                            susp_hole_num += 1
-                        holes_per_side = susp_hole_num // 2
-                        
-                        if holes_per_side < 1:
-                            continue
-                        
-                        # Angular margin
-                        arc_margin_rad = susp_hole_side_margin / halfmoon_radius_norm if halfmoon_radius_norm > 0 else 0.05
-                        
-                        # LEFT zone: from (arc_angle_left - margin) down to (angle_offset + margin)
-                        # RIGHT zone: from (angle_offset - margin) down to (arc_angle_right + margin)
-                        left_outer = arc_angle_left - arc_margin_rad
-                        left_inner = angle_offset + arc_margin_rad
-                        right_inner = angle_offset - arc_margin_rad
-                        right_outer = arc_angle_right + arc_margin_rad
-                        
-                        # Process each side
-                        for side in ['left', 'right']:
-                            if side == 'left':
-                                zone_outer = left_outer
-                                zone_inner = left_inner
-                            else:
-                                zone_outer = right_outer
-                                zone_inner = right_inner
-                            
-                            # Angular span for this zone
-                            zone_span = abs(zone_outer - zone_inner)
-                            
-                            if zone_span <= 0.02:  # Minimum ~1 degree
-                                continue
-                            
-                            # Inter-hole margin
-                            inter_margin = arc_margin_rad * (holes_per_side - 1) if holes_per_side > 1 else 0
-                            
-                            # Angular width per hole
-                            hole_width = (zone_span - inter_margin) / holes_per_side
-                            
-                            if hole_width <= 0.02:
-                                continue
-                            
-                            # Create each hole
-                            for hole_idx in range(holes_per_side):
-                                if side == 'left':
-                                    # Start from outer (arc_angle_left) toward inner (axis)
-                                    hole_ang_outer = zone_outer - hole_idx * (hole_width + arc_margin_rad)
-                                    hole_ang_inner = hole_ang_outer - hole_width
-                                else:
-                                    # Start from inner (axis) toward outer (arc_angle_right)
-                                    hole_ang_inner = zone_inner - hole_idx * (hole_width + arc_margin_rad)
-                                    hole_ang_outer = hole_ang_inner - hole_width
-                                
-                                # Ensure outer > inner (higher angle = more to left)
-                                ang_left = max(hole_ang_outer, hole_ang_inner)
-                                ang_right = min(hole_ang_outer, hole_ang_inner)
-                                
-                                # Clamp to zone boundaries
-                                if side == 'left':
-                                    ang_left = min(ang_left, left_outer)
-                                    ang_right = max(ang_right, left_inner)
-                                else:
-                                    ang_left = min(ang_left, right_inner)
-                                    ang_right = max(ang_right, right_outer)
-                                
-                                if ang_left - ang_right < 0.02:
-                                    continue
-                                
-                                # Generate arc bottom points (offset from halfmoon by bottom margin)
-                                num_pts = 6
-                                arc_bottom = []
-                                arc_bottom_radius = halfmoon_radius_norm + susp_hole_bottom_margin
-                                for i in range(num_pts + 1):
-                                    t = i / num_pts
-                                    ang = ang_left - t * (ang_left - ang_right)
-                                    pt = v1 + arc_bottom_radius * np.array([np.cos(ang), np.sin(ang)])
-                                    arc_bottom.append(pt)
-                                
-                                # Find extrados points by tracing radial lines from RADIAL_CENTER
-                                arc_top = []
-                                for i in range(num_pts + 1):
-                                    # Get bottom point
-                                    bottom_pt = arc_bottom[i]
-                                    # Direction from radial_center through bottom_pt
-                                    direction = bottom_pt - radial_center
-                                    dir_norm = np.linalg.norm(direction)
-                                    if dir_norm > 1e-10:
-                                        direction = direction / dir_norm
-                                    else:
-                                        direction = np.array([0, 1])
-                                    
-                                    # Trace line until extrados intersection
-                                    ext_pt = extrados_poly.line_intersection(radial_center, radial_center + direction * far_factor)
-                                    if ext_pt is not None:
-                                        # Apply top margin (move toward radial_center)
-                                        if susp_hole_top_margin > 0:
-                                            toward_center = (radial_center - ext_pt)
-                                            dist = np.linalg.norm(toward_center)
-                                            if dist > 0:
-                                                ext_pt = ext_pt + toward_center / dist * susp_hole_top_margin
-                                        arc_top.append(ext_pt)
-                                    else:
-                                        # Fallback: use bottom point scaled up
-                                        arc_top.append(bottom_pt + direction * 0.1)
-                                
-                                if len(arc_bottom) < 2 or len(arc_top) < 2:
-                                    continue
-                                
-                                # Assemble polygon: arc_bottom (left to right) + arc_top reversed (right to left)
-                                arc_top_reversed = list(reversed(arc_top))
-                                
-                                # For corner rounding, use a SIMPLIFIED 4-corner polygon first
-                                # This avoids the issue where intermediate arc points limit the radius
-                                corner_bl = arc_bottom[0]  # Bottom-left
-                                corner_br = arc_bottom[-1]  # Bottom-right
-                                corner_tr = arc_top_reversed[0]  # Top-right
-                                corner_tl = arc_top_reversed[-1]  # Top-left
-                                
-                                simplified_polygon = [corner_bl, corner_br, corner_tr, corner_tl]
-                                corner_radii = [susp_hole_radius_bottom, susp_hole_radius_bottom, 
-                                               susp_hole_radius_top, susp_hole_radius_top]
-                                
-                                # Round the 4 corners
-                                rounded_corners = self.parametric_glider.round_polygon_corners(simplified_polygon, corner_radii)
-                                
-                                if rounded_corners and len(rounded_corners) >= 4:
-                                    # Now we need to reconstruct the full polygon with arcs
-                                    # The rounded_corners list contains arc points for each corner
-                                    # We insert the original arc curve points between the corner arcs
-                                    
-                                    # For now, just use the rounded corners directly
-                                    # The arcs between corners are already curved from extrados/halfmoon
-                                    closed_hole = list(rounded_corners) + [rounded_corners[0]]
-                                    # Scale for drawing
-                                    closed_hole_scaled = [p * scale for p in closed_hole]
-                                    self.preview_root.addChild(Line_old(closed_hole_scaled, color='green', width=1).object)
                     
 
         # Get current parameters from the UI
@@ -1001,15 +761,16 @@ class HoleDesignTool(BaseTool):
     def update_form_from_glider_data(self):
         pg = self.parametric_glider
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
-
-        suffix = "_s" if is_suspended else "_ns"
+        print(f"DEBUG: update_form - Current Tab: {'Suspended' if is_suspended else 'Non-Suspended'}")
+        
+        suffix = '_s' if is_suspended else '_ns'
 
         widgets_to_block = [self.holeShapeComboBox, self.numHolesSpinBox, self.holeWidthSpinBox,
                             self.holeHeightSpinBox, self.verticalShiftSpinBox,
                             self.minPosSpinBox, self.maxPosSpinBox,
                             self.holeMarginSpinBox, self.holeCornerRadiusSpinBox]
         if is_suspended:
-            widgets_to_block.extend([self.noHoleAngleSpinBox, self.suspHoleNumSpinBox, self.suspHoleTopMarginSpinBox, self.suspHoleMarginSpinBox, self.suspHoleRadiusTopSpinBox, self.suspHoleRadiusBottomSpinBox])
+            widgets_to_block.extend([self.noHoleAngleSpinBox])
 
         # Block signals to prevent feedback loops
         for widget in widgets_to_block:
@@ -1027,13 +788,10 @@ class HoleDesignTool(BaseTool):
         self.holeCornerRadiusSpinBox.setValue(getattr(pg, f'hole_corner_radius{suffix}', 0.25) * 100.0) # Convert ratio to % for UI
 
         if is_suspended:
+            val = getattr(pg, 'susp_hole_radius_top_s', 'MISSING')
+            print(f"DEBUG: update_form - Reading susp_hole_radius_top_s: {val} (Type: {type(val)})")
+            
             self.noHoleAngleSpinBox.setValue(getattr(pg, 'hole_free_angle_s', 30.0))
-            self.suspHoleNumSpinBox.setValue(getattr(pg, 'susp_hole_num_s', 3))
-            self.suspHoleTopMarginSpinBox.setValue(getattr(pg, 'susp_hole_top_margin_s', 0.01) * 1000.0)
-            self.suspHoleMarginSpinBox.setValue(getattr(pg, 'susp_hole_margin_s', 0.01) * 1000.0)
-            self.suspHoleBottomMarginSpinBox.setValue(getattr(pg, 'susp_hole_bottom_margin_s', 0.005) * 1000.0)
-            self.suspHoleRadiusTopSpinBox.setValue(getattr(pg, 'susp_hole_radius_top_s', 0.5) * 100.0)  # Convert ratio to %
-            self.suspHoleRadiusBottomSpinBox.setValue(getattr(pg, 'susp_hole_radius_bottom_s', 0.5) * 100.0)  # Convert ratio to %
 
         # Initial visibility update
         self.on_height_mode_change(0)  # Default mode
@@ -1055,12 +813,6 @@ class HoleDesignTool(BaseTool):
             pg.hole_free_angle_s = self.noHoleAngleSpinBox.value()
             pg.hole_height_mode_s = 1  # Margin mode (fixed mm margin instead of percent)
             pg.hole_margin_s = self.holeMarginSpinBox.value() / 1000.0 # Convert mm to m for storage
-            pg.susp_hole_num_s = self.suspHoleNumSpinBox.value()
-            pg.susp_hole_top_margin_s = self.suspHoleTopMarginSpinBox.value() / 1000.0
-            pg.susp_hole_margin_s = self.suspHoleMarginSpinBox.value() / 1000.0
-            pg.susp_hole_bottom_margin_s = self.suspHoleBottomMarginSpinBox.value() / 1000.0
-            pg.susp_hole_radius_top_s = self.suspHoleRadiusTopSpinBox.value() / 100.0  # Store as ratio 0.0-1.0
-            pg.susp_hole_radius_bottom_s = self.suspHoleRadiusBottomSpinBox.value() / 100.0  # Store as ratio 0.0-1.0
             pg.hole_corner_radius_s = self.holeCornerRadiusSpinBox.value() / 100.0 # Convert % to ratio
         else:
             pg.hole_shape_ns = self.holeShapeComboBox.currentIndex()
