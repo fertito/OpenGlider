@@ -21,6 +21,10 @@ class CellTool(BaseTool):
     DIAGONAL_HALF_WIDTH = 0.02  # 2cm half-width (4cm total)
     DIAGONAL_EXTRADOS_OFFSET = 0.0  # No offset from top of extrados
     VECTOR_STRAP_WIDTH = 0.04  # 4cm width
+    
+    # Persistent storage for auto-fill dialog values (class-level = shared across instances)
+    _last_diagonal_params = None  # Will store {"A": (intrados, start, end, bands), ...}
+    _last_diagonal_offset = 0
 
     def __init__(self, obj):
         super(CellTool, self).__init__(obj)
@@ -48,6 +52,10 @@ class CellTool(BaseTool):
         self.auto_straps_button = QtGui.QPushButton("Auto-fill Vector Straps")
         self.auto_straps_button.clicked.connect(self.auto_fill_vector_straps)
         self.layout.setWidget(4, input_field, self.auto_straps_button)
+        
+        self.custom_strap_button = QtGui.QPushButton("Add Custom Strap")
+        self.custom_strap_button.clicked.connect(self.add_custom_vector_strap)
+        self.layout.setWidget(5, input_field, self.custom_strap_button)
 
         self.draw_glider()
 
@@ -170,23 +178,30 @@ class CellTool(BaseTool):
         
         # Create table for line parameters
         line_types = ["A", "B", "C", "D"]
-        param_table = QtGui.QTableWidget(len(line_types), 3)
+        param_table = QtGui.QTableWidget(len(line_types), 4)
         param_table.setHorizontalHeaderLabels([
             "Largeur intrados (cm)",
             "Extrados début (%)",
-            "Extrados fin (%)"
+            "Extrados fin (%)",
+            "Nb bandes"
         ])
         param_table.setVerticalHeaderLabels(line_types)
         param_table.horizontalHeader().setStretchLastSection(True)
         
         # Default values for each line type
-        # (intrados_cm, extrados_start_%, extrados_end_%)
+        # (intrados_cm, extrados_start_%, extrados_end_%, num_bands)
         defaults = {
-            "A": (4.0, 5.0, 15.0),
-            "B": (4.0, 15.0, 30.0),
-            "C": (4.0, 30.0, 50.0),
-            "D": (4.0, 50.0, 75.0),
+            "A": (4.0, 5.0, 15.0, 1),
+            "B": (4.0, 15.0, 30.0, 1),
+            "C": (4.0, 30.0, 50.0, 1),
+            "D": (4.0, 50.0, 75.0, 1),
         }
+        
+        # Use last entered values if available
+        if CellTool._last_diagonal_params is not None:
+            for lt in defaults:
+                if lt in CellTool._last_diagonal_params:
+                    defaults[lt] = CellTool._last_diagonal_params[lt]
         
         line_spinboxes = {}
         for row, line_type in enumerate(line_types):
@@ -205,11 +220,16 @@ class CellTool(BaseTool):
             extrados_end_spin.setValue(defaults[line_type][2])
             extrados_end_spin.setSuffix(" %")
             
+            num_bands_spin = QtGui.QSpinBox()
+            num_bands_spin.setRange(1, 10)
+            num_bands_spin.setValue(defaults[line_type][3])
+            
             param_table.setCellWidget(row, 0, intrados_spin)
             param_table.setCellWidget(row, 1, extrados_start_spin)
             param_table.setCellWidget(row, 2, extrados_end_spin)
+            param_table.setCellWidget(row, 3, num_bands_spin)
             
-            line_spinboxes[line_type] = (intrados_spin, extrados_start_spin, extrados_end_spin)
+            line_spinboxes[line_type] = (intrados_spin, extrados_start_spin, extrados_end_spin, num_bands_spin)
         
         layout.addWidget(param_table)
         
@@ -219,7 +239,7 @@ class CellTool(BaseTool):
         offset_layout.addWidget(QtGui.QLabel("Décalage vertical (depuis extrados):"))
         offset_spin = QtGui.QSpinBox()
         offset_spin.setRange(0, 100)
-        offset_spin.setValue(0)  # Default 0 mm
+        offset_spin.setValue(CellTool._last_diagonal_offset)  # Restore last value
         offset_spin.setSuffix(" mm")
         offset_layout.addWidget(offset_spin)
         offset_layout.addStretch()
@@ -235,6 +255,17 @@ class CellTool(BaseTool):
         
         if dialog.exec_() != QtGui.QDialog.Accepted:
             return
+        
+        # Save entered values for next time
+        CellTool._last_diagonal_params = {}
+        for line_type, (intrados_spin, ext_start_spin, ext_end_spin, num_bands_spin) in line_spinboxes.items():
+            CellTool._last_diagonal_params[line_type] = (
+                intrados_spin.value(),
+                ext_start_spin.value(),
+                ext_end_spin.value(),
+                num_bands_spin.value()
+            )
+        CellTool._last_diagonal_offset = offset_spin.value()
         
         # Get vertical offset in mm - will be converted per position using real profile thickness
         offset_mm = offset_spin.value()
@@ -289,14 +320,38 @@ class CellTool(BaseTool):
         ref_extrados_height = get_extrados_height_with_offset(0.3, offset_mm)
         print(f"DEBUG: offset_mm={offset_mm}, ref_extrados_height at x=0.3 = {ref_extrados_height:.4f}")
         
+        # Function to split extrados range into multiple bands with gaps
+        def split_range_into_bands(start, end, num_bands):
+            """
+            Divise une plage [start, end] en num_bands bandes avec num_bands-1 espaces.
+            Retourne liste de tuples (band_start, band_end).
+            
+            Ex: split_range_into_bands(0.02, 0.28, 3) 
+            → [(0.02, 0.072), (0.124, 0.176), (0.228, 0.28)]
+            """
+            if num_bands <= 1:
+                return [(start, end)]
+            
+            total_width = end - start
+            num_segments = 2 * num_bands - 1  # bandes + espaces
+            segment_width = total_width / num_segments
+            
+            bands = []
+            for i in range(num_bands):
+                band_start = start + (2 * i) * segment_width
+                band_end = band_start + segment_width
+                bands.append((band_start, band_end))
+            return bands
+        
         # Get per-line-type parameters
         chord_cm = ref_chord * 100  # Convert to cm
         line_params = {}
-        for line_type, (intrados_spin, ext_start_spin, ext_end_spin) in line_spinboxes.items():
+        for line_type, (intrados_spin, ext_start_spin, ext_end_spin, num_bands_spin) in line_spinboxes.items():
             # Convert cm to fraction of chord, % to fraction
             half_width_intrados = (intrados_spin.value() / 2) / chord_cm
             extrados_start = ext_start_spin.value() / 100.0
             extrados_end = ext_end_spin.value() / 100.0
+            num_bands = num_bands_spin.value()
             
             # Calculate extrados height at the middle of the extrados range
             mid_x = (extrados_start + extrados_end) / 2
@@ -307,6 +362,7 @@ class CellTool(BaseTool):
                 "extrados_start": extrados_start,
                 "extrados_end": extrados_end,
                 "extrados_height": ext_height,
+                "num_bands": num_bands,
             }
         
         print(f"DEBUG: line_params = {line_params}")
@@ -317,6 +373,7 @@ class CellTool(BaseTool):
             "extrados_start": 0.05,
             "extrados_end": 0.15,
             "extrados_height": 1.0,
+            "num_bands": 1,
         })
         
         rib_attachments = self._get_suspended_ribs_with_layer()
@@ -360,18 +417,23 @@ class CellTool(BaseTool):
                 ext_start = params["extrados_start"]
                 ext_end = params["extrados_end"]
                 ext_height = params["extrados_height"]
+                num_bands = params.get("num_bands", 1)
                 
-                # Intrados: centered on rib_pos
-                # Extrados: from ext_start to ext_end (absolute positions on chord)
-                key = (
-                    round(ext_start, 4), ext_height,           # right_front (extrados start)
-                    round(ext_end, 4), ext_height,             # right_back (extrados end)
-                    round(rib_pos + half_bottom, 4), -1.0,     # left_back (intrados)
-                    round(rib_pos - half_bottom, 4), -1.0,     # left_front (intrados)
-                )
-                if key not in diagonals_grouped:
-                    diagonals_grouped[key] = []
-                diagonals_grouped[key].append(cell_no)
+                # Split extrados range into bands if num_bands > 1
+                bands = split_range_into_bands(ext_start, ext_end, num_bands)
+                
+                for band_start, band_end in bands:
+                    # Intrados: centered on rib_pos
+                    # Extrados: from band_start to band_end (absolute positions on chord)
+                    key = (
+                        round(band_start, 4), ext_height,          # right_front (extrados start)
+                        round(band_end, 4), ext_height,            # right_back (extrados end)
+                        round(rib_pos + half_bottom, 4), -1.0,     # left_back (intrados)
+                        round(rib_pos - half_bottom, 4), -1.0,     # left_front (intrados)
+                    )
+                    if key not in diagonals_grouped:
+                        diagonals_grouped[key] = []
+                    diagonals_grouped[key].append(cell_no)
             
             # Diagonals from right side of cell (attachment on right rib -> goes to left rib extrados)
             for rib_pos, layer, params in cell_data["from_right"]:
@@ -379,18 +441,23 @@ class CellTool(BaseTool):
                 ext_start = params["extrados_start"]
                 ext_end = params["extrados_end"]
                 ext_height = params["extrados_height"]
+                num_bands = params.get("num_bands", 1)
                 
-                # Intrados: centered on rib_pos
-                # Extrados: from ext_start to ext_end (absolute positions on chord)
-                key = (
-                    round(rib_pos - half_bottom, 4), -1.0,     # right_front (intrados)
-                    round(rib_pos + half_bottom, 4), -1.0,     # right_back (intrados)
-                    round(ext_end, 4), ext_height,             # left_back (extrados end)
-                    round(ext_start, 4), ext_height,           # left_front (extrados start)
-                )
-                if key not in diagonals_grouped:
-                    diagonals_grouped[key] = []
-                diagonals_grouped[key].append(cell_no)
+                # Split extrados range into bands if num_bands > 1
+                bands = split_range_into_bands(ext_start, ext_end, num_bands)
+                
+                for band_start, band_end in bands:
+                    # Intrados: centered on rib_pos
+                    # Extrados: from band_start to band_end (absolute positions on chord)
+                    key = (
+                        round(rib_pos - half_bottom, 4), -1.0,     # right_front (intrados)
+                        round(rib_pos + half_bottom, 4), -1.0,     # right_back (intrados)
+                        round(band_end, 4), ext_height,            # left_back (extrados end)
+                        round(band_start, 4), ext_height,          # left_front (extrados start)
+                    )
+                    if key not in diagonals_grouped:
+                        diagonals_grouped[key] = []
+                    diagonals_grouped[key].append(cell_no)
         
         # Create horizontal bands on cells that need them, PER LINE TYPE
         # Each line type (A, B, C, D) gets its own bands on cells that don't have diagonals of that type
@@ -422,6 +489,10 @@ class CellTool(BaseTool):
             ext_start = params["extrados_start"]
             ext_end = params["extrados_end"]
             ext_height = params["extrados_height"]
+            num_bands = params.get("num_bands", 1)
+            
+            # Split the horizontal bands using the same logic as diagonals
+            bands = split_range_into_bands(ext_start, ext_end, num_bands)
             
             # Find cells that DON'T have diagonals of this layer
             for cell_no in range(cell_count):
@@ -436,19 +507,21 @@ class CellTool(BaseTool):
                 # Only create band if there are diagonals on both sides (gap to fill)
                 # OR if there's at least one neighbor with this layer
                 if has_left_neighbor or has_right_neighbor:
-                    print(f"DEBUG: Band on cell {cell_no} for layer {layer}: height={ext_height:.3f}")
+                    print(f"DEBUG: Band on cell {cell_no} for layer {layer}: height={ext_height:.3f}, num_bands={num_bands}")
                     
-                    # Band is horizontal - all 4 corners at same height, same layer
-                    band_key = (
-                        round(ext_start, 4), ext_height,  # right_front
-                        round(ext_end, 4), ext_height,    # right_back
-                        round(ext_end, 4), ext_height,    # left_back
-                        round(ext_start, 4), ext_height,  # left_front
-                    )
-                    if band_key not in bands_grouped:
-                        bands_grouped[band_key] = []
-                    if cell_no not in bands_grouped[band_key]:
-                        bands_grouped[band_key].append(cell_no)
+                    # Create a mini-band for each segment
+                    for band_start, band_end in bands:
+                        # Band is horizontal - all 4 corners at same height
+                        band_key = (
+                            round(band_start, 4), ext_height,  # right_front
+                            round(band_end, 4), ext_height,    # right_back
+                            round(band_end, 4), ext_height,    # left_back
+                            round(band_start, 4), ext_height,  # left_front
+                        )
+                        if band_key not in bands_grouped:
+                            bands_grouped[band_key] = []
+                        if cell_no not in bands_grouped[band_key]:
+                            bands_grouped[band_key].append(cell_no)
         
         print(f"DEBUG: Total diagonals: {len(diagonals_grouped)}, bands: {len(bands_grouped)}")
         
@@ -496,7 +569,7 @@ class CellTool(BaseTool):
         
         # Width in mm
         width_spin = QtGui.QSpinBox()
-        width_spin.setRange(10, 100)
+        width_spin.setRange(10, 1000)
         width_spin.setValue(40)
         width_spin.setSuffix(" mm")
         layout.addRow("Largeur des bandes:", width_spin)
@@ -593,6 +666,98 @@ class CellTool(BaseTool):
         
         # Populate the vector straps table
         self.vector_table.set_straps(straps)
+        self.vector_table.show()
+
+    def add_custom_vector_strap(self):
+        """
+        Add a custom vector strap at any chord position.
+        Shows dialog to configure position, width, and cell range.
+        """
+        dialog = QtGui.QDialog()
+        dialog.setWindowTitle("Ajouter une bande de tension personnalisée")
+        layout = QtGui.QFormLayout(dialog)
+        
+        cell_count = self._get_cell_count()
+        
+        # Position on chord (%)
+        position_spin = QtGui.QDoubleSpinBox()
+        position_spin.setRange(0, 100)
+        position_spin.setValue(50.0)
+        position_spin.setSuffix(" %")
+        position_spin.setDecimals(1)
+        layout.addRow("Position sur corde:", position_spin)
+        
+        # Width in mm
+        width_spin = QtGui.QSpinBox()
+        width_spin.setRange(10, 1000)
+        width_spin.setValue(40)
+        width_spin.setSuffix(" mm")
+        layout.addRow("Largeur:", width_spin)
+        
+        # Cell range
+        cell_start_spin = QtGui.QSpinBox()
+        cell_start_spin.setRange(0, cell_count - 1)
+        cell_start_spin.setValue(0)
+        layout.addRow("Cellule début:", cell_start_spin)
+        
+        cell_end_spin = QtGui.QSpinBox()
+        cell_end_spin.setRange(0, cell_count - 1)
+        cell_end_spin.setValue(cell_count - 1)
+        layout.addRow("Cellule fin:", cell_end_spin)
+        
+        # Height on profile (-1 = intrados, 0 = middle, 1 = extrados)
+        height_spin = QtGui.QDoubleSpinBox()
+        height_spin.setRange(-1.0, 1.0)
+        height_spin.setValue(0.0)  # Default to middle
+        height_spin.setSingleStep(0.1)
+        height_spin.setDecimals(2)
+        layout.addRow("Hauteur (-1 int, 0 mid, 1 ext):", height_spin)
+        
+        # Button box
+        buttons = QtGui.QDialogButtonBox(
+            QtGui.QDialogButtonBox.Ok | QtGui.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        
+        if dialog.exec_() != QtGui.QDialog.Accepted:
+            return
+        
+        # Get values
+        position = position_spin.value() / 100.0  # Convert % to fraction
+        width_mm = width_spin.value()
+        width = width_mm / 1000.0  # Convert mm to meters (fraction)
+        cell_start = cell_start_spin.value()
+        cell_end = cell_end_spin.value()
+        height = height_spin.value()
+        
+        # Ensure cell_start <= cell_end
+        if cell_start > cell_end:
+            cell_start, cell_end = cell_end, cell_start
+        
+        # Create cells list
+        cells = list(range(cell_start, cell_end + 1))
+        
+        # Find next empty row in vector table
+        table = self.vector_table.table
+        insert_row = 0
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            if item is None or not item.text().strip():
+                insert_row = row
+                break
+            insert_row = row + 1
+        
+        # Add to table - now includes height column
+        cells_str = ",".join(map(str, cells))
+        table.setItem(insert_row, 0, round(position, 4))
+        table.setItem(insert_row, 1, round(position, 4))
+        table.setItem(insert_row, 2, round(width, 4))
+        table.setItem(insert_row, 3, round(height, 2))
+        table.setItem(insert_row, 4, cells_str)
+        
+        # Show table
         self.vector_table.show()
 
 
@@ -698,8 +863,8 @@ class vector_table(base_table_widget):
     def __init__(self):
         super(vector_table, self).__init__(name="vector straps")
         self.table.setRowCount(200)
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["left", "right", "width", "cells"])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["left", "right", "width", "height", "cells"])
 
     def get_from_ParametricGlider(self, ParametricGlider):
         # Try straps first, then tension_lines for backwards compatibility
@@ -711,7 +876,8 @@ class vector_table(base_table_widget):
             left = element.get("left", element.get("center_left", 0))
             right = element.get("right", element.get("center_right", 0))
             width = element.get("width", 0.04)  # Default 40mm
-            entries = [left, right, width, element["cells"]]
+            height = element.get("height", -1)  # Default to intrados
+            entries = [left, right, width, height, element["cells"]]
             self.table.setRow(row, entries)
 
     def apply_to_glider(self, ParametricGlider):
@@ -725,7 +891,8 @@ class vector_table(base_table_widget):
                     "left": row[0],
                     "right": row[1],
                     "width": row[2],
-                    "cells": row[3],
+                    "height": row[3],
+                    "cells": row[4],
                 }
                 ParametricGlider.elements["straps"].append(strap)
 
@@ -741,13 +908,14 @@ class vector_table(base_table_widget):
         # Fill with new data
         for row, element in enumerate(straps_list):
             cells_str = ",".join(map(str, element["cells"]))
-            entries = [element["left"], element["right"], element["width"], cells_str]
+            height = element.get("height", -1)  # Default height for auto-fill
+            entries = [element["left"], element["right"], element["width"], height, cells_str]
             for col, value in enumerate(entries):
                 self.table.setItem(row, col, value)
 
     def get_row(self, n_row):
         str_row = []
-        for i in range(4):
+        for i in range(5):
             item = self.table.item(n_row, i)
             if item:
                 text = item.text()
@@ -755,7 +923,7 @@ class vector_table(base_table_widget):
                     # Replace comma with dot for decimal separator
                     str_row.append(text.strip().replace(",", "."))
         
-        if len(str_row) != 4:
+        if len(str_row) != 5:
             return None
         try:
             return list(map(float, str_row[:-1])) + [
