@@ -4,97 +4,71 @@
 [![Coverage Status](https://img.shields.io/coveralls/hiaselhans/OpenGlider.svg)](https://coveralls.io/r/hiaselhans/OpenGlider)
 [![Documentation Status](https://readthedocs.org/projects/openglider/badge/?version=latest)](https://readthedocs.org/projects/openglider/?badge=latest)
 
-A future open source paraglider design software (still a WIP)
+OpenGlider is a **FreeCAD Workbench for Paraglider Design**. It provides a comprehensive set of tools to design, analyze, and manufacture paragliders.
 
-## Try It
+## Project Status & Origins
 
-Clone the git-repo first:
+This project is a fork of the original **OpenGlider** project initiated by [booya-at](https://github.com/booya-at/OpenGlider). We gratefully acknowledge their foundational work. This fork is currently maintained here to continue development and support modern FreeCAD versions.
+
+## Installation
+
+The recommended way to install and run OpenGlider is using **Pixi**.
+
+### Prerequisites
+*   **Pixi**: Ensure you have [Pixi](https://prefix.dev/) installed.
+
+### Run with Pixi
+To launch FreeCAD with the OpenGlider workbench pre-installed and configured:
+
 ```bash
-git clone https://github.com/hiaselhans/OpenGlider.git
+pixi run freecad
 ```
 
-### Install with pip
+This command will set up the environment and start FreeCAD. OpenGlider will be available in the workbench selector.
+
+### Legacy Installation
+For other installation methods (e.g., manual pip install), please refer to previous documentation or the `pixi.toml` file for dependency listings.
+
+## Tools and Features
+
+OpenGlider offers a wide range of tools for every stage of paraglider design:
+
+*   **Design**: Create gliders, modify shapes, define arcs, and adjust twist (washout).
+*   **Structure**: Configure internal structures, mini-ribs, and ballooning.
+*   **Analysis**: Perform aerodynamic calculations using the built-in Panel Method and view polars.
+*   **Production**: Unwrap the 3D model into 2D cutting patterns and export to various formats.
+
+For a detailed list of all available tools and their descriptions, please see the **[Tools Documentation](docs/TOOLS.md)**.
+
+## Screenshots
+
+![glider workbench gui](docs/freecad_gui.png)
+*The Glider Workbench GUI in FreeCAD*
+
+![testcell with miniribs](docs/screen.png)
+*Detailed view of cells with mini-ribs*
+
+![demokite plots](docs/screen3.png)
+*Aerodynamic plots*
+
+## Documentation & Help
+
+*   **[Tools Documentation](docs/TOOLS.md)**: Detailed reference for all workbench tools.
+*   **[Base Module](openglider/README.md)**: Developer documentation for the core `openglider` library.
+*   **[GUI Tutorial](https://booya-at.github.io/openglider-tutorial)**: Original tutorial (external link).
+
+## Development
+
+To run unittests:
+
 ```bash
-cd OpenGlider
-pip install -e .
+pixi run test
 ```
-
-Or manually install all dependencies (using distro-repos, easy_install or pip)
-* ezodf2
-* dxfwrite
-* scipy
-* (svgwrite)
-* (vtk)
-
-### Install with pixi
-if you have pixi installed just launch pixi and run this command 
-`pixi run freecad` to launch freecad with openglider installed.
-
-### Install with conda
-
-We are providing packages of OpenGlider and dependencies via `conda`. To install `conda` download [miniconda](https://docs.conda.io/en/latest/miniconda.html) and follow the install instructions. Once you have a working base-environment you can create a new environment for openglider:  
-```bash
-conda create -n openglider openglider freecad meshpy -c conda-forge
-```
-
-
-## Documentation
-
-Every module inside openglider *should* have a README where the functionality is documented.  
-Please have a look at the [base module](./openglider/README.md).
-
-Also have a look at the [gui-tutorial](https://booya-at.github.io/openglider-tutorial)
-
-### Unittests and Visual Tests
-
-To run all unittests, run this from the main directory:
-```bash
-./testall.py
-```
-
-Or use `-a` flag to also run visual tests
-```bash
-./testall.py -a
-```
-
-## Development Screenshots
-
-While still being in an early status, here are a few screenshots showing progress made so far:
-
-![screenshot gui](docs/freecad_gui.png)
-glider workbench gui  
-
-![screenshot testcell with miniribs](docs/screen.png)
-testcell with miniribs
-
-![screenshot demokite with central minirib](docs/screen2.png)
-demo kite with central minirib
-
-![screenshot demokite plots](docs/screen3.png)
-demo kite plots
-
-![plots](docs/plots.svg)
-plots
 
 ## Roadmap
-The plan is to build on the following technologies:
 
-* **Python** ([link](http://docs.python.org/2/tutorial/))
-
-* self-coded **panelmethod** (VSAERO) and/or apame implementation ([link](http://www.3dpanelmethod.com/)) for quick 3D-calculation (see [parabem](https://github.com/booya-at/parabem))
-
-* **[OpenFoam](http://www.openfoam.com/)** obj-file CFD export
-
-* **[paraFEM](https://www.github.com/booya-at/paraFEM)** - Explicit non linear **FEM** (membrane, truss) for line forces and deformation analysis 
-
-* **[FreeCAD](https://www.freecadweb.org/)** (Open-Source Cad, written in c++ with python API 
-
-* **[VTK](https://www.vtk.org/)** - visual toolkit for 3d-output
-
-* ~~Code_Aster FEM export (http://www.code-aster.org) - maybe calculix as we've done already, but it does currently not support membrane elements)~~
-
-* ~~xfoil//Pyxfoil for 2D-foil calculation (http://web.mit.edu/drela/Public/web/xfoil/) (http://www.python-science.org/project/pyxfoil)~~
-
-It will take some time, if you want to help, feel free to do so!
-
-Using some older code, we already created a few prototypes which can be seen on http://www.booya.at
+The project aims to integrate:
+*   **Python** scripting.
+*   **Panel Method** for aerodynamics (VSAERO/Apame).
+*   **OpenFoam** export for CFD.
+*   **ParaFEM** for structural analysis (membrane/truss).
