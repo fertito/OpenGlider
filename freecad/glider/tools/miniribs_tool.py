@@ -115,10 +115,14 @@ class MiniRibsTool(BaseTool):
 
         default_row = {
             "yvalue": 0.5,
+            "count": 1,
             "intrados_start": 0.8,
             "extrados_start": 0.75,
             "end_distance_cm": 2.0,
-            "transition_length": 0.05,
+            "le_enabled": True,  # LE enabled by default
+            "le_start_distance_cm": 1.0,  # 1cm from LE vertex
+            "le_extrados_end": 0.05,  # 5% chord on extrados
+            "le_intrados_end": 0.04,  # 4% chord on intrados
             "cells": all_cells
         }
         
@@ -130,7 +134,7 @@ class MiniRibsTool(BaseTool):
         pass  # We'll only use 2D preview now
 
     def update_preview(self):
-        """Draw 2D preview of a representative minirib with holes."""
+        """Draw 2D preview of a representative minirib with holes (TE and LE)."""
         self.preview_root.removeAllChildren()
         
         try:
@@ -173,22 +177,25 @@ class MiniRibsTool(BaseTool):
                 else:
                     minirib.num_holes = 0
 
-            # Get the 2D shape
-            shape_2d = minirib.get_2d_shape(cell)
-            if shape_2d is None or len(shape_2d.data) < 3:
-                return
+            # Draw Trailing Edge mini rib (always)
+            shape_2d_te = minirib.get_2d_shape(cell)
+            if shape_2d_te is not None and len(shape_2d_te.data) >= 3:
+                contour_pts = list(shape_2d_te.data) + [shape_2d_te.data[0]]
+                self.preview_root.addChild(Line_old(contour_pts, color='green', width=2).object)
             
-            # Draw the minirib contour
-            contour_pts = list(shape_2d.data) + [shape_2d.data[0]]  # Close the loop
-            self.preview_root.addChild(Line_old(contour_pts, color='green', width=2).object)
+            # Draw Leading Edge mini rib if enabled
+            if minirib.le_enabled:
+                shape_2d_le = minirib.get_2d_shape_le(cell)
+                if shape_2d_le is not None and len(shape_2d_le.data) >= 3:
+                    contour_pts_le = list(shape_2d_le.data) + [shape_2d_le.data[0]]
+                    self.preview_root.addChild(Line_old(contour_pts_le, color=(1, 0.5, 0), width=2).object)
             
-            # Draw holes if enabled
+            # Draw holes if enabled (only on TE for now)
             if minirib.num_holes > 0:
                 holes = minirib.generate_holes(cell)
                 for hole_pts, hole_center in holes:
                     if len(hole_pts) >= 3:
                         hole_contour = list(hole_pts)
-                        # Close the hole contour if not already closed
                         if not np.allclose(hole_contour[0], hole_contour[-1]):
                             hole_contour.append(hole_contour[0])
                         self.preview_root.addChild(Line_old(hole_contour, color='blue', width=2).object)
@@ -215,6 +222,7 @@ class MiniRibsTool(BaseTool):
         if miniribs:
             data = miniribs[0].copy()
             data.pop("cells", None)
+            data.pop("count", None)  # Remove count as we create individual mini ribs
             return data
         return {
             "yvalue": 0.5,
@@ -222,6 +230,10 @@ class MiniRibsTool(BaseTool):
             "extrados_start": 0.75,
             "end_distance": 0.02,
             "transition_length": 0.05,
+            "le_enabled": True,
+            "le_start_distance": 0.01,
+            "le_extrados_end": 0.05,
+            "le_intrados_end": 0.04,
         }
 
     def apply_elements(self):
@@ -252,14 +264,18 @@ class miniribs_table(base_table_widget):
     def __init__(self):
         super(miniribs_table, self).__init__(name="miniribs")
         self.table.setRowCount(200)
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels(
             [
                 "y_value",
+                "count",
                 "int_start",
                 "ext_start",
                 "end_cm",
-                "trans_len",
+                "le_on",
+                "le_st_cm",
+                "le_ext%",
+                "le_int%",
                 "cells",
             ]
         )
@@ -269,12 +285,17 @@ class miniribs_table(base_table_widget):
             miniribs = ParametricGlider.elements["miniribs"]
             for row, element in enumerate(miniribs):
                 end_dist_cm = (element.get("end_distance") or 0.02) * 100
+                le_start_cm = (element.get("le_start_distance") or 0.01) * 100
                 entries = [
                     element.get("yvalue", 0.5),
+                    element.get("count", 1),
                     element.get("intrados_start", 0.8),
                     element.get("extrados_start", 0.75),
                     end_dist_cm,
-                    element.get("transition_length", 0.05),
+                    1 if element.get("le_enabled", False) else 0,
+                    le_start_cm,
+                    element.get("le_extrados_end", 0.05),
+                    element.get("le_intrados_end", 0.04),
                 ]
                 entries.append(element.get("cells", [0]))
                 self.table.setRow(row, entries)
@@ -282,10 +303,14 @@ class miniribs_table(base_table_widget):
     def set_row(self, row_idx, data):
         entries = [
             data["yvalue"],
+            data.get("count", 1),
             data["intrados_start"],
             data["extrados_start"],
             data.get("end_distance_cm", 2.0),
-            data.get("transition_length", 0.05),
+            1 if data.get("le_enabled", False) else 0,
+            data.get("le_start_distance_cm", 1.0),
+            data.get("le_extrados_end", 0.05),
+            data.get("le_intrados_end", 0.04),
             data["cells"]
         ]
         self.table.setRow(row_idx, entries)
@@ -298,11 +323,16 @@ class miniribs_table(base_table_widget):
             if row:
                 minirib = {}
                 minirib["yvalue"] = row[0]
-                minirib["intrados_start"] = row[1]
-                minirib["extrados_start"] = row[2]
-                end_cm = row[3]
+                minirib["count"] = int(row[1]) if row[1] >= 1 else 1
+                minirib["intrados_start"] = row[2]
+                minirib["extrados_start"] = row[3]
+                end_cm = row[4]
                 minirib["end_distance"] = end_cm / 100 if end_cm > 0 else 0.02
-                minirib["transition_length"] = row[4]
+                minirib["le_enabled"] = bool(row[5])
+                le_start_cm = row[6]
+                minirib["le_start_distance"] = le_start_cm / 100 if le_start_cm > 0 else 0.01
+                minirib["le_extrados_end"] = row[7]
+                minirib["le_intrados_end"] = row[8]
                 minirib["cells"] = row[-1]
                 minirib["name"] = "minirib" 
                 ParametricGlider.elements["miniribs"].append(minirib)
@@ -310,11 +340,11 @@ class miniribs_table(base_table_widget):
     def get_row(self, n_row):
         str_row = [
             self.table.item(n_row, i).text()
-            for i in range(6)
+            for i in range(10)
             if self.table.item(n_row, i)
         ]
         str_row = [item for item in str_row if item != ""]
-        if len(str_row) != 6:
+        if len(str_row) != 10:
             return None
         try:
             # Replace comma with dot for French locale decimal separator

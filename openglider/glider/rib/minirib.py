@@ -7,6 +7,7 @@ class MiniRib:
     def __init__(
         self,
         yvalue,
+        # Trailing edge parameters (original names kept for backward compatibility)
         intrados_start=0.8,
         extrados_start=0.75,
         end_distance=0.02,  # Fixed distance from TE in meters (2cm default)
@@ -19,8 +20,14 @@ class MiniRib:
         hole_shape=0,  # 0=Ellipse, 1=Rounded Rectangle
         hole_corner_radius=0.25,  # Corner radius ratio for rounded rectangles
         hole_max_pos=0.9,  # Max position (0-1, limits holes to avoid thin tip)
+        # Leading edge parameters (new) - LE minirib starts at LE (0%) and ends at le_*_end
+        le_enabled=False,  # Enable leading edge mini rib portion
+        le_start_distance=0.01,  # Distance from LE point in meters (1cm default)
+        le_extrados_end=0.05,  # Where LE minirib ends on extrados (% of chord from LE, e.g., 5%)
+        le_intrados_end=0.04,  # Where LE minirib ends on intrados (% of chord from LE, e.g., 4%)
     ):
         self.y_value = yvalue
+        # Trailing edge parameters
         self.intrados_start = intrados_start
         self.extrados_start = extrados_start
         self.end_distance = end_distance  # in meters (e.g., 0.02 = 2cm)
@@ -33,6 +40,12 @@ class MiniRib:
         self.hole_shape = hole_shape
         self.hole_corner_radius = hole_corner_radius
         self.hole_max_pos = hole_max_pos
+        # Leading edge parameters
+        self.le_enabled = le_enabled
+        self.le_start_distance = le_start_distance
+        self.le_extrados_end = le_extrados_end
+        self.le_intrados_end = le_intrados_end
+
 
     def get_end_percentage(self, chord):
         """
@@ -44,9 +57,19 @@ class MiniRib:
             return max(0.0, min(1.0, end_pct))
         return 0.99  # Fallback
 
+    def get_le_start_percentage(self, chord):
+        """
+        Calculate start percentage for leading edge based on fixed distance from LE.
+        Returns a small positive value (close to 0) representing distance from LE vertex.
+        """
+        if chord > 0:
+            start_pct = self.le_start_distance / chord
+            return max(0.001, min(0.1, start_pct))
+        return 0.01
+
     def function(self, x, chord=None):
         """
-        Returns ballooning factor:
+        Returns ballooning factor for TRAILING EDGE:
         0 = Constrained (Rib shape)
         1 = Unconstrained (Ballooned shape)
         Values between 0-1 for progressive transition (smooth S-curve)
@@ -94,6 +117,36 @@ class MiniRib:
                 return 0.0  # Constrained zone
             else:
                 return 1.0  # Before start: fully ballooned
+
+    def function_le(self, x, chord=None):
+        """
+        Returns ballooning factor for LEADING EDGE:
+        0 = Constrained (Rib shape), 1 = Unconstrained (Ballooned shape)
+        LE minirib constrains from le_start (near LE vertex) to le_*_end positions.
+        """
+        import math
+        
+        if not self.le_enabled:
+            return 1.0
+        
+        le_start_pct = self.get_le_start_percentage(chord) if chord else 0.01
+        pos = abs(x)
+        
+        if x < 0:  # Extrados
+            end = self.le_extrados_end
+        else:  # Intrados
+            end = self.le_intrados_end
+        
+        # LE minirib zone: from le_start_pct to end
+        if pos < le_start_pct:
+            return 1.0  # Past LE vertex
+        elif pos <= end:
+            if self.transition_length > 0 and pos > end - self.transition_length:
+                t = (end - pos) / self.transition_length
+                return 0.5 * (1.0 + math.cos(math.pi * t))
+            return 0.0
+        else:
+            return 1.0  # Beyond end
 
     def get_3d(self, cell):
         """
@@ -266,6 +319,181 @@ class MiniRib:
             return None
         
         # Filter out duplicate consecutive points
+        filtered_points = [points_2d[0]]
+        for pt in points_2d[1:]:
+            if not np.allclose(pt, filtered_points[-1], atol=1e-10):
+                filtered_points.append(pt)
+        
+        if len(filtered_points) < 2:
+            return None
+        
+        return PolyLine2D(filtered_points)
+
+    def get_3d_le(self, cell):
+        """
+        Get the 3D profile for the leading edge mini rib.
+        Only returns points if le_enabled is True.
+        """
+        import numpy as np
+        
+        if not self.le_enabled:
+            return None
+        
+        rib1 = cell.rib1
+        rib2 = cell.rib2
+        y = self.y_value
+        
+        # Interpolate chord for fixed distance calculations
+        chord = rib1.chord * (1 - y) + rib2.chord * y
+        
+        # Calculate LE start percentage (distance from LE vertex)
+        le_start_pct = self.get_le_start_percentage(chord)
+        
+        # Number of points per side
+        num_points = 40
+        
+        # Generate x_values for LE mini rib:
+        # Extrados: from le_extrados_end toward LE (negative x, toward 0)
+        # Intrados: from LE toward le_intrados_end (positive x, from 0)
+        extrados_x = np.linspace(-self.le_extrados_end, -le_start_pct, num_points)[:-1]
+        intrados_x = np.linspace(le_start_pct, self.le_intrados_end, num_points)[1:]
+        le_x = le_start_pct  # Leading edge x position
+        
+        x_values_extrados = list(extrados_x)
+        x_values_intrados = list(intrados_x)
+        
+        # Get profiles
+        prof2d_1 = rib1.profile_2d
+        prof3d_1 = rib1.profile_3d
+        prof3d_2 = rib2.profile_3d
+        
+        # Get ballooned midrib
+        ballooned_midrib = cell.basic_cell.midrib(y, ballooning=True)
+        
+        def get_point_3d(x):
+            """Helper to get a 3D point at position x with LE ballooning."""
+            fakt = self.function_le(x, chord=chord)
+            ik = prof2d_1(x)
+            pt1 = prof3d_1[ik]
+            pt2 = prof3d_2[ik]
+            pt_unballooned = pt1 * (1 - y) + pt2 * y
+            pt_ballooned = ballooned_midrib[ik]
+            return pt_unballooned + fakt * (pt_ballooned - pt_unballooned)
+        
+        # Build 3D points: extrados, then LE point, then intrados
+        points_3d = []
+        
+        # Extrados points (from start toward LE)
+        for x in x_values_extrados:
+            try:
+                points_3d.append(get_point_3d(x))
+            except:
+                continue
+        
+        # Leading edge points
+        try:
+            pt_upper = get_point_3d(-le_x)  # Extrados at LE position
+            pt_lower = get_point_3d(le_x)   # Intrados at LE position
+            points_3d.append(pt_upper)
+            points_3d.append(pt_lower)
+        except:
+            pass
+        
+        # Intrados points (from LE toward start)
+        for x in x_values_intrados:
+            try:
+                points_3d.append(get_point_3d(x))
+            except:
+                continue
+        
+        if len(points_3d) < 3:
+            return None
+        
+        return Profile3D(points_3d)
+
+    def get_2d_shape_le(self, cell):
+        """
+        Get the 2D profile shape for the leading edge mini rib.
+        Only returns shape if le_enabled is True.
+        """
+        from openglider.vector import PolyLine2D
+        import numpy as np
+        
+        if not self.le_enabled:
+            return None
+        
+        rib1 = cell.rib1
+        rib2 = cell.rib2
+        y = self.y_value
+        
+        # Interpolate chord
+        chord = rib1.chord * (1 - y) + rib2.chord * y
+        
+        # Calculate LE start percentage
+        le_start_pct = self.get_le_start_percentage(chord)
+        
+        # Number of points per side
+        num_points = 40
+        
+        # Generate x_values for LE mini rib
+        extrados_x = np.linspace(-self.le_extrados_end, -le_start_pct, num_points)[:-1]
+        intrados_x = np.linspace(le_start_pct, self.le_intrados_end, num_points)[1:]
+        le_x = le_start_pct
+        
+        x_values_extrados = list(extrados_x)
+        x_values_intrados = list(intrados_x)
+        
+        # Get the flat 2D profile
+        prof_2d = rib1.profile_2d
+        
+        # Get the 3D ballooned midrib and flatten it
+        try:
+            midrib_3d = cell.basic_cell.midrib(y, ballooning=True)
+            midrib_flat = midrib_3d.flatten()
+            has_ballooned = True
+        except:
+            has_ballooned = False
+        
+        def get_point_2d(x):
+            """Helper to get a 2D point at position x with LE ballooning."""
+            ik = prof_2d(x)
+            pt_flat = np.array(prof_2d[ik]) * chord
+            fakt = self.function_le(x, chord=chord)
+            if fakt > 0 and has_ballooned:
+                pt_ballooned = np.array(midrib_flat[ik])
+                return pt_flat + fakt * (pt_ballooned - pt_flat)
+            return pt_flat
+        
+        # Build 2D points: extrados, then LE point, then intrados
+        points_2d = []
+        
+        # Extrados points
+        for x in x_values_extrados:
+            try:
+                points_2d.append(get_point_2d(x))
+            except:
+                continue
+        
+        # Leading edge points
+        try:
+            pt_upper = get_point_2d(-le_x)
+            pt_lower = get_point_2d(le_x)
+            points_2d.append(pt_upper)
+            points_2d.append(pt_lower)
+        except:
+            pass
+        
+        # Intrados points
+        for x in x_values_intrados:
+            try:
+                points_2d.append(get_point_2d(x))
+            except:
+                continue
+        
+        if len(points_2d) < 2:
+            return None
+        
+        # Filter out duplicates
         filtered_points = [points_2d[0]]
         for pt in points_2d[1:]:
             if not np.allclose(pt, filtered_points[-1], atol=1e-10):
@@ -533,6 +761,43 @@ class MiniRib:
             boundaries={self.name: list(range(n))},
         )
 
+    def get_mesh_le(self, cell, filled=True):
+        """Generate mesh for the LE minirib."""
+        if not self.le_enabled:
+            return Mesh.from_indexed([], {}, {})
+        
+        profile = self.get_3d_le(cell)
+        if profile is None:
+            return Mesh.from_indexed([], {}, {})
+        
+        points_3d = list(profile.data)
+        
+        if len(points_3d) < 2:
+            return Mesh.from_indexed([], {}, {})
+        if filled and len(points_3d) < 3:
+            return Mesh.from_indexed([], {}, {})
+        
+        n = len(points_3d)
+        
+        if not filled:
+            segments = [[i, (i + 1) % n] for i in range(n)]
+            return Mesh.from_indexed(points_3d, {"rib": segments}, {})
+        
+        centroid = np.mean(np.array(points_3d), axis=0)
+        points_3d.append(centroid)
+        centroid_idx = n
+        
+        triangles = []
+        for i in range(n):
+            j = (i + 1) % n
+            triangles.append([i, j, centroid_idx])
+        
+        return Mesh.from_indexed(
+            points_3d,
+            polygons={"ribs": triangles},
+            boundaries={self.name + "_le": list(range(n))},
+        )
+
     def _get_mesh_with_holes(self, cell):
         """Generate mesh with holes using 2D triangulation."""
         shape_2d = self.get_2d_shape(cell)
@@ -645,4 +910,10 @@ class MiniRib:
             "hole_shape": self.hole_shape,
             "hole_corner_radius": self.hole_corner_radius,
             "hole_max_pos": self.hole_max_pos,
+            # Leading edge parameters
+            "le_enabled": self.le_enabled,
+            "le_start_distance": self.le_start_distance,
+            "le_extrados_end": self.le_extrados_end,
+            "le_intrados_end": self.le_intrados_end,
         }
+

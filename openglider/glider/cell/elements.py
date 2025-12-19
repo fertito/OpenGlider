@@ -48,6 +48,7 @@ class DiagonalRib(object):
         right_back,
         material_code="",
         name="unnamed",
+        edge_curve=0.0,
     ):
         """
         [left_front, left_back, right_front, right_back]
@@ -58,6 +59,7 @@ class DiagonalRib(object):
         :param right_back as x-value
         :param material_code: color/material (optional)
         :param name: optional name of DiagonalRib (optional)
+        :param edge_curve: curvature of front/back edges (0=straight, 0.5=moderate ellipse)
         """
         # Attributes
         self.left_front = left_front
@@ -66,6 +68,7 @@ class DiagonalRib(object):
         self.right_back = right_back
         self.material_code = material_code
         self.name = name
+        self.edge_curve = edge_curve
 
     def __json__(self):
         return {
@@ -75,6 +78,7 @@ class DiagonalRib(object):
             "right_back": self.right_back,
             "material_code": self.material_code,
             "name": self.name,
+            "edge_curve": self.edge_curve,
         }
 
     @property
@@ -116,6 +120,65 @@ class DiagonalRib(object):
         p1 = cell.rib1.point(self.center_left)
         p2 = cell.rib2.point(self.center_right)
         return norm(p2 - p1)
+
+    def get_edge_curve_points(self, x_bottom, x_top, num_points=8):
+        """
+        Generate points for an edge with straight lower section + ellipse upper section.
+        
+        :param x_bottom: x position at bottom (intrados, height=-1)
+        :param x_top: x position at top (extrados, height=1)
+        :param num_points: number of points on the edge
+        :return: list of (x, height) tuples for the edge
+        """
+        if self.edge_curve <= 0 or num_points < 3:
+            # No curve - straight line
+            return [(x_bottom, -1.0), (x_top, 1.0)]
+        
+        points = []
+        transition_height = 0.0  # Height where we switch from straight to ellipse
+        
+        # Ellipse parameters
+        # Semi-axis a = difference in x between bottom and top
+        # Semi-axis b = height from transition to top (normalized)
+        dx = x_top - x_bottom
+        
+        for i in range(num_points):
+            t = i / (num_points - 1)  # 0 to 1
+            height = -1.0 + 2.0 * t  # -1 to 1
+            
+            if height <= transition_height:
+                # Straight section (lower half)
+                # Linear interpolation from x_bottom to x_middle
+                x_middle = x_bottom + (x_top - x_bottom) * 0.5 * (1 - self.edge_curve)
+                local_t = (height + 1.0) / (transition_height + 1.0)  # 0 to 1 in lower section
+                x = x_bottom + (x_middle - x_bottom) * local_t
+            else:
+                # Ellipse section (upper half)
+                # Parametric ellipse: x = a * cos(theta), y = b * sin(theta)
+                # Map height from transition_height to 1.0 -> theta from pi to pi/2
+                local_t = (height - transition_height) / (1.0 - transition_height)  # 0 to 1
+                theta = math.pi * (1 - local_t * 0.5)  # pi to pi/2
+                
+                # Ellipse center is at (x_top, transition_height)
+                # Semi-axis a (horizontal) = edge_curve * |dx|
+                # Semi-axis b (vertical) = 1.0 - transition_height
+                a = self.edge_curve * abs(dx) * 0.5
+                
+                # Calculate x offset from center using ellipse
+                x_offset = a * (1 + math.cos(theta))  # 0 at theta=pi, a at theta=pi/2
+                
+                # Base x position (straight continuation)
+                x_base = x_bottom + (x_top - x_bottom) * (1 + height) / 2
+                
+                # Apply curve offset (inward for front edge, outward for back)
+                if dx > 0:  # front edge (x increases from bottom to top)
+                    x = x_base - x_offset
+                else:  # back edge (x decreases from bottom to top)
+                    x = x_base + x_offset
+            
+            points.append((x, height))
+        
+        return points
 
     def get_3d(self, cell):
         """

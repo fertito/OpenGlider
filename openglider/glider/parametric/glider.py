@@ -1132,6 +1132,16 @@ class ParametricGlider(object):
         for minirib in self.elements.get("miniribs", []):
             data = minirib.copy()
             cells = data.pop("cells")
+            count = data.pop("count", 1)
+            base_y = data.get("yvalue", 0.5)
+            
+            # Generate y_values for multiple mini ribs
+            if count > 1:
+                # Distribute evenly across the cell span
+                # For count=3: y_values = [0.25, 0.5, 0.75]
+                y_values = [(i + 1) / (count + 1) for i in range(count)]
+            else:
+                y_values = [base_y]
             
             # Apply global minirib hole settings if enabled
             if getattr(self, 'minirib_holes', False):
@@ -1145,7 +1155,13 @@ class ParametricGlider(object):
                 data['num_holes'] = 0  # Disable holes
             
             for cell_no in cells:
-                glider.cells[cell_no].miniribs.append(MiniRib(**data))
+                for idx, y_val in enumerate(y_values):
+                    mr_data = data.copy()
+                    mr_data["yvalue"] = y_val
+                    base_name = data.get('name', 'minirib')
+                    if count > 1:
+                        mr_data["name"] = f"{base_name}_{idx + 1}"
+                    glider.cells[cell_no].miniribs.append(MiniRib(**mr_data))
 
         for rigidfoil in self.elements.get("cell_rigidfoils", []):
             data = rigidfoil.copy()

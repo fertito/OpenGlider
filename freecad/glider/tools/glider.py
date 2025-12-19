@@ -643,6 +643,8 @@ def draw_glider(
             for minirib in cell.miniribs:
                 try:
                     msh += minirib.get_mesh(cell, filled=fill_ribs)
+                    # Also render LE mini rib if enabled
+                    msh += minirib.get_mesh_le(cell, filled=fill_ribs)
                 except Exception as e:
                     print(f"Failed to render minirib in cell {cell.name}: {e}")
 
