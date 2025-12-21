@@ -210,6 +210,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.setMinimumWidth(520)
         
         self.setup_ui()
+        self.load_from_glider()  # Load saved configuration
         
     def setup_ui(self):
         main_layout = QtGui.QVBoxLayout(self)
@@ -373,6 +374,90 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             count += 1
         self.info_label.setText(f"Points: {count} | Élévateurs: {groups}")
     
+    def load_from_glider(self):
+        """Load configuration from ParametricGlider if available."""
+        config = getattr(self.parametric_glider, 'lines_placement_config', None)
+        if not config:
+            return
+        
+        # Point Pilote
+        if 'demi_ecartement' in config:
+            self.demi_ecartement.setValue(config['demi_ecartement'])
+        if 'profondeur' in config:
+            self.profondeur.setValue(config['profondeur'])
+        if 'hauteur_cone' in config:
+            self.hauteur_cone.setValue(config['hauteur_cone'])
+        
+        # Lengths
+        if 'riser_length' in config:
+            self.riser_length.setValue(config['riser_length'])
+        if 'basses_auto' in config:
+            self.basses_auto.setChecked(config['basses_auto'])
+        if 'basses_length' in config:
+            self.basses_length.setValue(config['basses_length'])
+        if 'inter_auto' in config:
+            self.inter_auto.setChecked(config['inter_auto'])
+        if 'inter_length' in config:
+            self.inter_length.setValue(config['inter_length'])
+        
+        # Line types
+        if 'line_types' in config:
+            for lt, lt_config in config['line_types'].items():
+                if lt in self.line_type_rows:
+                    row = self.line_type_rows[lt]
+                    if 'enabled' in lt_config:
+                        row.enable_checkbox.setChecked(lt_config['enabled'])
+                    if 'position' in lt_config:
+                        row.position_spinbox.setValue(lt_config['position'])
+                    if 'interval' in lt_config:
+                        row.interval_spinbox.setValue(lt_config['interval'])
+                    if 'start_cell' in lt_config:
+                        row.start_spinbox.setValue(lt_config['start_cell'])
+                    if 'patterns' in lt_config:
+                        row.patterns_edit.setText(lt_config['patterns'])
+        
+        # Stabilo
+        if 'include_stabilo' in config:
+            self.stabilo_checkbox.setChecked(config['include_stabilo'])
+        if 'stabilo_position' in config:
+            self.stabilo_position.setValue(config['stabilo_position'])
+        
+        # Material
+        if 'line_type_name' in config:
+            idx = self.line_type_combo.findText(config['line_type_name'])
+            if idx >= 0:
+                self.line_type_combo.setCurrentIndex(idx)
+        
+        self._update_info()
+    
+    def save_to_glider(self):
+        """Save configuration to ParametricGlider for persistence."""
+        config = {
+            "demi_ecartement": self.demi_ecartement.value(),
+            "profondeur": self.profondeur.value(),
+            "hauteur_cone": self.hauteur_cone.value(),
+            "riser_length": self.riser_length.value(),
+            "basses_auto": self.basses_auto.isChecked(),
+            "basses_length": self.basses_length.value(),
+            "inter_auto": self.inter_auto.isChecked(),
+            "inter_length": self.inter_length.value(),
+            "include_stabilo": self.stabilo_checkbox.isChecked(),
+            "stabilo_position": self.stabilo_position.value(),
+            "line_type_name": self.line_type_combo.currentText(),
+            "line_types": {}
+        }
+        
+        for lt, row in self.line_type_rows.items():
+            config["line_types"][lt] = {
+                "enabled": row.enable_checkbox.isChecked(),
+                "position": row.position_spinbox.value(),
+                "interval": row.interval_spinbox.value(),
+                "start_cell": row.start_spinbox.value(),
+                "patterns": row.patterns_edit.text(),
+            }
+        
+        self.parametric_glider.lines_placement_config = config
+    
     def get_configuration(self):
         basses = self.basses_length.value()
         if self.basses_auto.isChecked():
@@ -396,6 +481,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
     
     def generate_lineset(self):
         """Generate LineSet2D."""
+        self.save_to_glider()  # Persist configuration for next time
         config = self.get_configuration()
         lines = []
         

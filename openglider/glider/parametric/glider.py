@@ -165,6 +165,37 @@ class ParametricGlider(object):
         self.intrados_sleeves_enabled_ns = kwargs.get('intrados_sleeves_enabled_ns', True)
         self.intrados_sleeves_ns = kwargs.get('intrados_sleeves_ns', [])
 
+        # Edit Cells - Diagonals Auto-fill configuration
+        self.diagonal_autofill_params = kwargs.get('diagonal_autofill_params', {
+            "A": (4.0, 5.0, 15.0, 1),   # (intrados_cm, extrados_start_%, extrados_end_%, num_bands)
+            "B": (4.0, 15.0, 30.0, 1),
+            "C": (4.0, 30.0, 50.0, 1),
+            "D": (4.0, 50.0, 75.0, 1),
+        })
+        self.diagonal_autofill_offset = kwargs.get('diagonal_autofill_offset', 0)  # mm
+
+        # Lines Auto-Placement configuration
+        self.lines_placement_config = kwargs.get('lines_placement_config', {
+            "demi_ecartement": 0.2,
+            "profondeur": 0.5,
+            "hauteur_cone": 7.0,
+            "riser_length": 0.47,
+            "basses_auto": True,
+            "basses_length": 2.0,
+            "inter_auto": True,
+            "inter_length": 1.0,
+            "include_stabilo": True,
+            "stabilo_position": 50.0,
+            "line_type_name": "default",
+            "line_types": {
+                "A": {"enabled": True, "position": 8.5, "interval": 1, "start_cell": 0, "patterns": "3:1, 2:2:1"},
+                "B": {"enabled": True, "position": 27.5, "interval": 2, "start_cell": 0, "patterns": "2:2:1, 2:1"},
+                "C": {"enabled": True, "position": 53.0, "interval": 2, "start_cell": 0, "patterns": "2:1"},
+                "D": {"enabled": True, "position": 77.0, "interval": 3, "start_cell": 0, "patterns": "2:1"},
+                "F": {"enabled": True, "position": 100.0, "interval": 1, "start_cell": 0, "patterns": "1:1"},
+            }
+        })
+
     def get_sleeve_exclusion_zones(self, rib, rib_idx, is_suspended):
         """
         Get chord ranges that should be excluded from hole placement due to rod sleeves.
@@ -746,6 +777,35 @@ class ParametricGlider(object):
             "extrados_sleeves_ns": getattr(self, "extrados_sleeves_ns", []),
             "intrados_sleeves_enabled_ns": getattr(self, "intrados_sleeves_enabled_ns", True),
             "intrados_sleeves_ns": getattr(self, "intrados_sleeves_ns", []),
+            # Edit Cells - Diagonals Auto-fill configuration
+            "diagonal_autofill_params": getattr(self, "diagonal_autofill_params", {
+                "A": (4.0, 5.0, 15.0, 1),
+                "B": (4.0, 15.0, 30.0, 1),
+                "C": (4.0, 30.0, 50.0, 1),
+                "D": (4.0, 50.0, 75.0, 1),
+            }),
+            "diagonal_autofill_offset": getattr(self, "diagonal_autofill_offset", 0),
+            # Lines Auto-Placement configuration
+            "lines_placement_config": getattr(self, "lines_placement_config", {
+                "demi_ecartement": 0.2,
+                "profondeur": 0.5,
+                "hauteur_cone": 7.0,
+                "riser_length": 0.47,
+                "basses_auto": True,
+                "basses_length": 2.0,
+                "inter_auto": True,
+                "inter_length": 1.0,
+                "include_stabilo": True,
+                "stabilo_position": 50.0,
+                "line_type_name": "default",
+                "line_types": {
+                    "A": {"enabled": True, "position": 8.5, "interval": 1, "start_cell": 0, "patterns": "3:1, 2:2:1"},
+                    "B": {"enabled": True, "position": 27.5, "interval": 2, "start_cell": 0, "patterns": "2:2:1, 2:1"},
+                    "C": {"enabled": True, "position": 53.0, "interval": 2, "start_cell": 0, "patterns": "2:1"},
+                    "D": {"enabled": True, "position": 77.0, "interval": 3, "start_cell": 0, "patterns": "2:1"},
+                    "F": {"enabled": True, "position": 100.0, "interval": 1, "start_cell": 0, "patterns": "1:1"},
+                }
+            }),
         }
 
 

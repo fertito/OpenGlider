@@ -124,7 +124,7 @@ class CellTool(BaseTool):
             # Calculate actual rib number
             # cell_no is 0-indexed, cell_pos is usually 0
             # Attachment on left rib of cell N means rib N
-            rib_no = node.cell_no + int(node.cell_pos)
+            rib_no = node.cell_no + int(node.cell_pos) + self.parametric_glider.shape.has_center_cell
             
             if rib_no not in rib_attachments:
                 rib_attachments[rib_no] = []
@@ -151,7 +151,7 @@ class CellTool(BaseTool):
             if layer in ("BRAKE", "STABILO", "S", "FREIN", "F"):
                 continue
             
-            rib_no = node.cell_no + int(node.cell_pos)
+            rib_no = node.cell_no + int(node.cell_pos) + self.parametric_glider.shape.has_center_cell
             
             if rib_no not in rib_attachments:
                 rib_attachments[rib_no] = []
@@ -188,20 +188,18 @@ class CellTool(BaseTool):
         param_table.setVerticalHeaderLabels(line_types)
         param_table.horizontalHeader().setStretchLastSection(True)
         
-        # Default values for each line type
+        # Default values for each line type - read from ParametricGlider for persistence
         # (intrados_cm, extrados_start_%, extrados_end_%, num_bands)
-        defaults = {
-            "A": (4.0, 5.0, 15.0, 1),
-            "B": (4.0, 15.0, 30.0, 1),
-            "C": (4.0, 30.0, 50.0, 1),
-            "D": (4.0, 50.0, 75.0, 1),
-        }
-        
-        # Use last entered values if available
-        if CellTool._last_diagonal_params is not None:
-            for lt in defaults:
-                if lt in CellTool._last_diagonal_params:
-                    defaults[lt] = CellTool._last_diagonal_params[lt]
+        saved_params = getattr(self.parametric_glider, 'diagonal_autofill_params', None)
+        if saved_params:
+            defaults = dict(saved_params)  # Copy to avoid modifying the original
+        else:
+            defaults = {
+                "A": (4.0, 5.0, 15.0, 1),
+                "B": (4.0, 15.0, 30.0, 1),
+                "C": (4.0, 30.0, 50.0, 1),
+                "D": (4.0, 50.0, 75.0, 1),
+            }
         
         line_spinboxes = {}
         for row, line_type in enumerate(line_types):
@@ -239,7 +237,7 @@ class CellTool(BaseTool):
         offset_layout.addWidget(QtGui.QLabel("Décalage vertical (depuis extrados):"))
         offset_spin = QtGui.QSpinBox()
         offset_spin.setRange(0, 100)
-        offset_spin.setValue(CellTool._last_diagonal_offset)  # Restore last value
+        offset_spin.setValue(getattr(self.parametric_glider, 'diagonal_autofill_offset', 0))  # Restore saved value
         offset_spin.setSuffix(" mm")
         offset_layout.addWidget(offset_spin)
         offset_layout.addStretch()
@@ -256,16 +254,16 @@ class CellTool(BaseTool):
         if dialog.exec_() != QtGui.QDialog.Accepted:
             return
         
-        # Save entered values for next time
-        CellTool._last_diagonal_params = {}
+        # Save entered values to ParametricGlider for persistence
+        self.parametric_glider.diagonal_autofill_params = {}
         for line_type, (intrados_spin, ext_start_spin, ext_end_spin, num_bands_spin) in line_spinboxes.items():
-            CellTool._last_diagonal_params[line_type] = (
+            self.parametric_glider.diagonal_autofill_params[line_type] = (
                 intrados_spin.value(),
                 ext_start_spin.value(),
                 ext_end_spin.value(),
                 num_bands_spin.value()
             )
-        CellTool._last_diagonal_offset = offset_spin.value()
+        self.parametric_glider.diagonal_autofill_offset = offset_spin.value()
         
         # Get vertical offset in mm - will be converted per position using real profile thickness
         offset_mm = offset_spin.value()
