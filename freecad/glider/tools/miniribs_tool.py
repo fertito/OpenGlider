@@ -119,6 +119,7 @@ class MiniRibsTool(BaseTool):
             "intrados_start": 0.8,
             "extrados_start": 0.75,
             "end_distance_cm": 2.0,
+            "transition_length_pct": 5.0,  # 5% chord transition zone
             "le_enabled": True,  # LE enabled by default
             "le_start_distance_cm": 1.0,  # 1cm from LE vertex
             "le_extrados_end": 0.05,  # 5% chord on extrados
@@ -264,7 +265,7 @@ class miniribs_table(base_table_widget):
     def __init__(self):
         super(miniribs_table, self).__init__(name="miniribs")
         self.table.setRowCount(200)
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(11)  # Added transition column
         self.table.setHorizontalHeaderLabels(
             [
                 "y_value",
@@ -272,6 +273,7 @@ class miniribs_table(base_table_widget):
                 "int_start",
                 "ext_start",
                 "end_cm",
+                "trans%",   # NEW: transition length in % of chord
                 "le_on",
                 "le_st_cm",
                 "le_ext%",
@@ -285,6 +287,7 @@ class miniribs_table(base_table_widget):
             miniribs = ParametricGlider.elements["miniribs"]
             for row, element in enumerate(miniribs):
                 end_dist_cm = (element.get("end_distance") or 0.02) * 100
+                transition_pct = (element.get("transition_length") or 0.05) * 100  # Convert to %
                 le_start_cm = (element.get("le_start_distance") or 0.01) * 100
                 entries = [
                     element.get("yvalue", 0.5),
@@ -292,6 +295,7 @@ class miniribs_table(base_table_widget):
                     element.get("intrados_start", 0.8),
                     element.get("extrados_start", 0.75),
                     end_dist_cm,
+                    transition_pct,  # NEW
                     1 if element.get("le_enabled", False) else 0,
                     le_start_cm,
                     element.get("le_extrados_end", 0.05),
@@ -307,6 +311,7 @@ class miniribs_table(base_table_widget):
             data["intrados_start"],
             data["extrados_start"],
             data.get("end_distance_cm", 2.0),
+            data.get("transition_length_pct", 5.0),  # NEW: transition in %
             1 if data.get("le_enabled", False) else 0,
             data.get("le_start_distance_cm", 1.0),
             data.get("le_extrados_end", 0.05),
@@ -328,11 +333,13 @@ class miniribs_table(base_table_widget):
                 minirib["extrados_start"] = row[3]
                 end_cm = row[4]
                 minirib["end_distance"] = end_cm / 100 if end_cm > 0 else 0.02
-                minirib["le_enabled"] = bool(row[5])
-                le_start_cm = row[6]
+                transition_pct = row[5]  # NEW
+                minirib["transition_length"] = transition_pct / 100 if transition_pct > 0 else 0.05
+                minirib["le_enabled"] = bool(row[6])
+                le_start_cm = row[7]
                 minirib["le_start_distance"] = le_start_cm / 100 if le_start_cm > 0 else 0.01
-                minirib["le_extrados_end"] = row[7]
-                minirib["le_intrados_end"] = row[8]
+                minirib["le_extrados_end"] = row[8]
+                minirib["le_intrados_end"] = row[9]
                 minirib["cells"] = row[-1]
                 minirib["name"] = "minirib" 
                 ParametricGlider.elements["miniribs"].append(minirib)
@@ -340,11 +347,11 @@ class miniribs_table(base_table_widget):
     def get_row(self, n_row):
         str_row = [
             self.table.item(n_row, i).text()
-            for i in range(10)
+            for i in range(11)  # Updated to 11 columns
             if self.table.item(n_row, i)
         ]
         str_row = [item for item in str_row if item != ""]
-        if len(str_row) != 10:
+        if len(str_row) != 11:  # Updated to 11
             return None
         try:
             # Replace comma with dot for French locale decimal separator
