@@ -456,8 +456,14 @@ class LineTool(BaseTool):
         if type(event) == coin.SoLocation2Event or force:
             self.upper_preview_node = None
             pos = event.getPosition()
+            # Check if Qt widget is still valid (may be deleted during tool closing)
+            try:
+                hl_pos_value = self.Qhl_pos.value() / 100
+            except RuntimeError:
+                # Widget has been deleted, skip preview
+                return
             check_points = [
-                i.tolist() for i in self.help_line(self.Qhl_pos.value() / 100)
+                i.tolist() for i in self.help_line(hl_pos_value)
             ]
             for i, point in enumerate(check_points):
                 s = self.view.getPointOnScreen(point[0], point[1], 0.0)

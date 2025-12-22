@@ -199,12 +199,11 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.half_cell_num = parametric_glider.shape.half_cell_num
         self.half_rib_num = parametric_glider.shape.half_rib_num
         
-        # Calculate span
+        # Calculate span - shape.span gives half-span (from center to tip)
         try:
-            shape = parametric_glider.shape.get_half_shape()
-            self.span = abs(shape.front[-1][0] - shape.front[0][0])
+            self.half_span = self.parametric_glider.shape.span
         except:
-            self.span = 6.0
+            self.half_span = 6.0
         
         self.setWindowTitle("Auto-placement des suspentes")
         self.setMinimumWidth(520)
@@ -236,14 +235,64 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         lower_layout.addRow("Profondeur:", self.profondeur)
         
         # Hauteur cône (Z - height below wing)
+        hauteur_widget = QtGui.QWidget()
+        hauteur_layout = QtGui.QHBoxLayout(hauteur_widget)
+        hauteur_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.hauteur_cone = QtGui.QDoubleSpinBox()
         self.hauteur_cone.setRange(1, 15)
-        self.hauteur_cone.setValue(7)
+        # Auto value: ~75% of full wingspan (typical ratio for paragliders)
+        auto_hauteur = round(self.half_span * 2 * 0.75, 1)
+        self.hauteur_cone.setValue(auto_hauteur)
         self.hauteur_cone.setSingleStep(0.5)
         self.hauteur_cone.setSuffix(" m")
-        lower_layout.addRow("Hauteur cône:", self.hauteur_cone)
+        self.hauteur_cone.setEnabled(False)
+        hauteur_layout.addWidget(self.hauteur_cone)
+        
+        self.hauteur_auto = QtGui.QCheckBox("Auto (75% envergure)")
+        self.hauteur_auto.setChecked(True)
+        self.hauteur_auto.toggled.connect(self._update_hauteur_auto)
+        hauteur_layout.addWidget(self.hauteur_auto)
+        
+        lower_layout.addRow("Hauteur cône:", hauteur_widget)
         
         main_layout.addWidget(lower_group)
+        
+        # === Point Freins (offset from pilote) ===
+        brake_group = QtGui.QGroupBox("Point Freins (décalage par rapport au point pilote)")
+        brake_layout = QtGui.QFormLayout(brake_group)
+        
+        # Enable separate brake point
+        self.brake_separate = QtGui.QCheckBox("Point séparé pour les freins")
+        self.brake_separate.setChecked(True)
+        self.brake_separate.toggled.connect(self._update_brake_enabled)
+        brake_layout.addRow("", self.brake_separate)
+        
+        # Offset hauteur (Z - higher than pilote, positive = higher)
+        self.brake_offset_z = QtGui.QDoubleSpinBox()
+        self.brake_offset_z.setRange(-1.0, 2.0)
+        self.brake_offset_z.setValue(0.40)  # 40cm higher
+        self.brake_offset_z.setSingleStep(0.05)
+        self.brake_offset_z.setSuffix(" m")
+        brake_layout.addRow("Décalage hauteur:", self.brake_offset_z)
+        
+        # Offset écartement (Y - more outward, positive = more spread)
+        self.brake_offset_y = QtGui.QDoubleSpinBox()
+        self.brake_offset_y.setRange(-0.5, 1.0)
+        self.brake_offset_y.setValue(0.15)  # 15cm more outward
+        self.brake_offset_y.setSingleStep(0.05)
+        self.brake_offset_y.setSuffix(" m")
+        brake_layout.addRow("Décalage écartement:", self.brake_offset_y)
+        
+        # Offset profondeur (X - chord direction, positive = more backward)
+        self.brake_offset_x = QtGui.QDoubleSpinBox()
+        self.brake_offset_x.setRange(-1.0, 1.0)
+        self.brake_offset_x.setValue(0.0)  # 0cm by default
+        self.brake_offset_x.setSingleStep(0.05)
+        self.brake_offset_x.setSuffix(" m")
+        brake_layout.addRow("Décalage profondeur:", self.brake_offset_x)
+        
+        main_layout.addWidget(brake_group)
 
         
         # === Lengths ===
@@ -257,13 +306,15 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.riser_length.setSuffix(" m")
         lengths_layout.addRow("Élévateurs:", self.riser_length)
         
+        # Basses (longest)
         basses_widget = QtGui.QWidget()
         basses_layout = QtGui.QHBoxLayout(basses_widget)
         basses_layout.setContentsMargins(0, 0, 0, 0)
         self.basses_length = QtGui.QDoubleSpinBox()
         self.basses_length.setRange(0.5, 10.0)
-        self.basses_length.setValue(round(self.span / 3, 2))
+        self.basses_length.setValue(round(self.hauteur_cone.value() * 0.45, 2))
         self.basses_length.setSuffix(" m")
+        self.basses_length.setEnabled(False)
         basses_layout.addWidget(self.basses_length)
         self.basses_auto = QtGui.QCheckBox("Auto")
         self.basses_auto.setChecked(True)
@@ -271,19 +322,42 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         basses_layout.addWidget(self.basses_auto)
         lengths_layout.addRow("Basses:", basses_widget)
         
+        # Inter (medium)
         inter_widget = QtGui.QWidget()
         inter_layout = QtGui.QHBoxLayout(inter_widget)
         inter_layout.setContentsMargins(0, 0, 0, 0)
         self.inter_length = QtGui.QDoubleSpinBox()
-        self.inter_length.setRange(0.5, 10.0)
-        self.inter_length.setValue(max(0.5, round(self.span / 3 - 1, 2)))
+        self.inter_length.setRange(0.3, 8.0)
+        self.inter_length.setValue(round(self.hauteur_cone.value() * 0.30, 2))
         self.inter_length.setSuffix(" m")
+        self.inter_length.setEnabled(False)
         inter_layout.addWidget(self.inter_length)
         self.inter_auto = QtGui.QCheckBox("Auto")
         self.inter_auto.setChecked(True)
         self.inter_auto.toggled.connect(lambda c: self.inter_length.setEnabled(not c))
         inter_layout.addWidget(self.inter_auto)
         lengths_layout.addRow("Inter:", inter_widget)
+        
+        # Hautes (shortest)
+        hautes_widget = QtGui.QWidget()
+        hautes_layout = QtGui.QHBoxLayout(hautes_widget)
+        hautes_layout.setContentsMargins(0, 0, 0, 0)
+        self.hautes_length = QtGui.QDoubleSpinBox()
+        self.hautes_length.setRange(0.2, 5.0)
+        self.hautes_length.setValue(round(self.hauteur_cone.value() * 0.20, 2))
+        self.hautes_length.setSuffix(" m")
+        self.hautes_length.setEnabled(False)
+        hautes_layout.addWidget(self.hautes_length)
+        self.hautes_auto = QtGui.QCheckBox("Auto")
+        self.hautes_auto.setChecked(True)
+        self.hautes_auto.toggled.connect(lambda c: self.hautes_length.setEnabled(not c))
+        hautes_layout.addWidget(self.hautes_auto)
+        lengths_layout.addRow("Hautes:", hautes_widget)
+        
+        # Help text for auto calculation
+        lengths_help = QtGui.QLabel("Auto: Basses=45%, Inter=30%, Hautes=20% du cône")
+        lengths_help.setStyleSheet("color: gray; font-size: 10px;")
+        lengths_layout.addRow("", lengths_help)
         
         main_layout.addWidget(lengths_group)
         
@@ -313,13 +387,26 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         
         self.stabilo_checkbox = QtGui.QCheckBox("Inclure")
         self.stabilo_checkbox.setChecked(True)
+        self.stabilo_checkbox.toggled.connect(self._update_stabilo_enabled)
         stabilo_layout.addRow("", self.stabilo_checkbox)
+        
+        # Number of stabilo attachment points
+        self.stabilo_count = QtGui.QSpinBox()
+        self.stabilo_count.setRange(1, 5)
+        self.stabilo_count.setValue(2)
+        stabilo_layout.addRow("Nb points:", self.stabilo_count)
         
         self.stabilo_position = QtGui.QDoubleSpinBox()
         self.stabilo_position.setRange(0, 100)
         self.stabilo_position.setValue(50)
         self.stabilo_position.setSuffix(" %")
         stabilo_layout.addRow("Position:", self.stabilo_position)
+        
+        # Which riser to connect stabilo to
+        self.stabilo_riser = QtGui.QComboBox()
+        self.stabilo_riser.addItems(["A", "B", "C", "D", "F"])
+        self.stabilo_riser.setCurrentText("A")  # Default to A riser
+        stabilo_layout.addRow("Connecter à:", self.stabilo_riser)
         
         main_layout.addWidget(stabilo_group)
         
@@ -371,8 +458,27 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 count += n
                 groups += 1
         if hasattr(self, 'stabilo_checkbox') and self.stabilo_checkbox.isChecked():
-            count += 1
+            count += self.stabilo_count.value() if hasattr(self, 'stabilo_count') else 1
         self.info_label.setText(f"Points: {count} | Élévateurs: {groups}")
+    
+    def _update_stabilo_enabled(self, enabled):
+        """Update stabilo controls enabled state."""
+        self.stabilo_count.setEnabled(enabled)
+        self.stabilo_position.setEnabled(enabled)
+        self.stabilo_riser.setEnabled(enabled)
+    
+    def _update_brake_enabled(self, enabled):
+        """Update brake offset controls enabled state."""
+        self.brake_offset_z.setEnabled(enabled)
+        self.brake_offset_y.setEnabled(enabled)
+        self.brake_offset_x.setEnabled(enabled)
+    
+    def _update_hauteur_auto(self, auto):
+        """Update hauteur cone when auto is toggled."""
+        self.hauteur_cone.setEnabled(not auto)
+        if auto:
+            # Recalculate from full span (75% of wingspan)
+            self.hauteur_cone.setValue(round(self.half_span * 2 * 0.75, 1))
     
     def load_from_glider(self):
         """Load configuration from ParametricGlider if available."""
@@ -385,8 +491,20 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             self.demi_ecartement.setValue(config['demi_ecartement'])
         if 'profondeur' in config:
             self.profondeur.setValue(config['profondeur'])
+        if 'hauteur_auto' in config:
+            self.hauteur_auto.setChecked(config['hauteur_auto'])
         if 'hauteur_cone' in config:
             self.hauteur_cone.setValue(config['hauteur_cone'])
+        
+        # Point Freins
+        if 'brake_separate' in config:
+            self.brake_separate.setChecked(config['brake_separate'])
+        if 'brake_offset_z' in config:
+            self.brake_offset_z.setValue(config['brake_offset_z'])
+        if 'brake_offset_y' in config:
+            self.brake_offset_y.setValue(config['brake_offset_y'])
+        if 'brake_offset_x' in config:
+            self.brake_offset_x.setValue(config['brake_offset_x'])
         
         # Lengths
         if 'riser_length' in config:
@@ -399,6 +517,10 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             self.inter_auto.setChecked(config['inter_auto'])
         if 'inter_length' in config:
             self.inter_length.setValue(config['inter_length'])
+        if 'hautes_auto' in config:
+            self.hautes_auto.setChecked(config['hautes_auto'])
+        if 'hautes_length' in config:
+            self.hautes_length.setValue(config['hautes_length'])
         
         # Line types
         if 'line_types' in config:
@@ -419,8 +541,14 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         # Stabilo
         if 'include_stabilo' in config:
             self.stabilo_checkbox.setChecked(config['include_stabilo'])
+        if 'stabilo_count' in config:
+            self.stabilo_count.setValue(config['stabilo_count'])
         if 'stabilo_position' in config:
             self.stabilo_position.setValue(config['stabilo_position'])
+        if 'stabilo_riser' in config:
+            idx = self.stabilo_riser.findText(config['stabilo_riser'])
+            if idx >= 0:
+                self.stabilo_riser.setCurrentIndex(idx)
         
         # Material
         if 'line_type_name' in config:
@@ -435,14 +563,23 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         config = {
             "demi_ecartement": self.demi_ecartement.value(),
             "profondeur": self.profondeur.value(),
+            "hauteur_auto": self.hauteur_auto.isChecked(),
             "hauteur_cone": self.hauteur_cone.value(),
+            "brake_separate": self.brake_separate.isChecked(),
+            "brake_offset_z": self.brake_offset_z.value(),
+            "brake_offset_y": self.brake_offset_y.value(),
+            "brake_offset_x": self.brake_offset_x.value(),
             "riser_length": self.riser_length.value(),
             "basses_auto": self.basses_auto.isChecked(),
             "basses_length": self.basses_length.value(),
             "inter_auto": self.inter_auto.isChecked(),
             "inter_length": self.inter_length.value(),
+            "hautes_auto": self.hautes_auto.isChecked(),
+            "hautes_length": self.hautes_length.value(),
             "include_stabilo": self.stabilo_checkbox.isChecked(),
+            "stabilo_count": self.stabilo_count.value(),
             "stabilo_position": self.stabilo_position.value(),
+            "stabilo_riser": self.stabilo_riser.currentText(),
             "line_type_name": self.line_type_combo.currentText(),
             "line_types": {}
         }
@@ -459,24 +596,47 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.parametric_glider.lines_placement_config = config
     
     def get_configuration(self):
+        # Calculate cone height - auto uses full span (envergure totale)
+        if self.hauteur_auto.isChecked():
+            # ~75% of full wingspan (2 * half_span)
+            hauteur = round(self.half_span * 2 * 0.75, 2)
+        else:
+            hauteur = self.hauteur_cone.value()
+        
+        # Calculate lengths based on cone height with proper hierarchy
+        # Basses (longest): 45% of cone height
         basses = self.basses_length.value()
         if self.basses_auto.isChecked():
-            basses = round(self.span / 3, 2)
+            basses = round(hauteur * 0.45, 2)
+        
+        # Inter (medium): 30% of cone height
         inter = self.inter_length.value()
         if self.inter_auto.isChecked():
-            inter = max(0.5, basses - 1.0)
+            inter = round(hauteur * 0.30, 2)
+        
+        # Hautes (shortest): 20% of cone height  
+        hautes = self.hautes_length.value()
+        if self.hautes_auto.isChecked():
+            hautes = round(hauteur * 0.20, 2)
         
         return {
             "demi_ecartement": self.demi_ecartement.value(),  # X - span
             "profondeur": self.profondeur.value(),            # Y - chord
-            "hauteur_cone": self.hauteur_cone.value(),        # Z - height
+            "hauteur_cone": hauteur,                          # Z - height
+            "brake_separate": self.brake_separate.isChecked(),
+            "brake_offset_z": self.brake_offset_z.value(),    # Higher than pilote
+            "brake_offset_y": self.brake_offset_y.value(),    # More outward than pilote
+            "brake_offset_x": self.brake_offset_x.value(),    # Depth offset from pilote
             "riser_length": self.riser_length.value(),
             "basses_length": basses,
             "inter_length": inter,
+            "hautes_length": hautes,
             "line_types": {lt: row.get_config() for lt, row in self.line_type_rows.items()},
             "line_type_name": self.line_type_combo.currentText(),
             "include_stabilo": self.stabilo_checkbox.isChecked(),
+            "stabilo_count": self.stabilo_count.value(),
             "stabilo_position": self.stabilo_position.value() / 100.0,
+            "stabilo_riser": self.stabilo_riser.currentText(),
         }
     
     def generate_lineset(self):
@@ -501,29 +661,56 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             layer="",
         )
         
+        # Brake lower node (point freins) - separate if enabled
+        brake_lower = main_lower  # Default: same as main
+        if config["brake_separate"]:
+            brake_z = lower_z + config["brake_offset_z"]  # Higher (less negative)
+            brake_y = lower_y + config["brake_offset_y"]  # More outward
+            brake_x = lower_x + config["brake_offset_x"]  # Depth offset
+            brake_lower = LowerNode2D(
+                pos_2D=[brake_x, brake_z],
+                pos_3D=[brake_x, brake_y, brake_z],
+                name="freins",
+                layer="F",
+            )
+        
         # Get enabled types
         enabled = [lt for lt in ["A", "B", "C", "D", "F"] 
                   if config["line_types"][lt]["enabled"]]
         
-        # Create riser for each enabled type
-        # Spread risers slightly around the pilote X position
+        # Calculate layout parameters for clean 2D view
+        # Spread risers horizontally based on their chord position
+        # This creates a clear visual separation between line types
         riser_nodes = {}
-        riser_spread = 0.15  # Small spread for risers
+        
+        # Get the shape extent for scaling
+        try:
+            shape = self.parametric_glider.shape.get_half_shape()
+            x_extent = abs(shape.front[-1][0] - shape.front[0][0])  # Span
+        except:
+            x_extent = 6.0
+        
+        # Base height for risers (just above lower attachment points)
+        riser_base_z = lower_z + config["riser_length"]
         
         for i, lt in enumerate(enabled):
-            if len(enabled) > 1:
-                riser_x = lower_x + (i / (len(enabled) - 1) - 0.5) * riser_spread
-            else:
-                riser_x = lower_x
+            # Position risers based on chord position of the line type
+            # This spreads them out naturally along the chord
+            lt_position = config["line_types"][lt]["position"] / 100.0
+            riser_x = lt_position * 1.5  # Scale for visual clarity
+            
+            # Use brake_lower for F lines, main_lower for others
+            lower_node_for_riser = brake_lower if lt == "F" else main_lower
+            actual_lower_z = lower_node_for_riser.pos_3D[2] if hasattr(lower_node_for_riser, 'pos_3D') else lower_z
             
             riser = BatchNode2D(
-                pos_2D=[riser_x, lower_z + config["riser_length"]],
+                pos_2D=[riser_x, actual_lower_z + config["riser_length"]],
                 name=f"riser_{lt}",
                 layer=lt,
             )
             riser_nodes[lt] = riser
             lines.append(Line2D(
-                lower_node=main_lower,
+                lower_node=lower_node_for_riser,
                 upper_node=riser,
                 target_length=config["riser_length"],
                 line_type=config["line_type_name"],
@@ -543,46 +730,79 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                     group_patterns=lt_config["group_patterns"],
                     basses_length=config["basses_length"],
                     inter_length=config["inter_length"],
+                    hautes_length=config["hautes_length"],
                     line_type_name=config["line_type_name"],
                     layer=lt,
                 )
                 lines.extend(lt_lines)
         
-        # Stabilo
+        # Stabilo - connects to an existing riser, not to pilot point directly
         if config["include_stabilo"]:
-            stabilo_cell = self.half_cell_num - 1
-            stabilo = UpperNode2D(
-                cell_no=stabilo_cell,
-                rib_pos=config["stabilo_position"],
-                cell_pos=0,
-                force=1.0,
-                name="S1",
-                layer="S",
-            )
+            stabilo_riser_name = config["stabilo_riser"]
+            stabilo_count = config["stabilo_count"]
             
-            # Stabilo riser - position at outer edge
-            stab_riser_x = lower_x + riser_spread + 0.1
-            stab_riser = BatchNode2D(
-                pos_2D=[stab_riser_x, lower_z + config["riser_length"]],
-                name="riser_S",
-                layer="S",
-            )
-            lines.append(Line2D(
-                lower_node=main_lower,
-                upper_node=stab_riser,
-                target_length=config["riser_length"],
-                line_type=config["line_type_name"],
-                layer="S",
-                name="riser_S",
-            ))
-            lines.append(Line2D(
-                lower_node=stab_riser,
-                upper_node=stabilo,
-                target_length=config["basses_length"],
-                line_type=config["line_type_name"],
-                layer="S",
-                name="S1",
-            ))
+            # Find the riser to connect to
+            if stabilo_riser_name in riser_nodes:
+                stabilo_riser = riser_nodes[stabilo_riser_name]
+            else:
+                # Fallback: use first available riser or create one
+                stabilo_riser = list(riser_nodes.values())[0] if riser_nodes else None
+            
+            if stabilo_riser:
+                # Generate stabilo attachment points on the last cells
+                stabilo_nodes = []
+                for i in range(stabilo_count):
+                    # Distribute points on the outermost cells
+                    cell_no = self.half_cell_num - 1 - i
+                    if cell_no < 0:
+                        cell_no = 0
+                    
+                    stabilo = UpperNode2D(
+                        cell_no=cell_no,
+                        rib_pos=config["stabilo_position"],
+                        cell_pos=0,
+                        force=1.0,
+                        name=f"S{i + 1}",
+                        layer="S",
+                    )
+                    stabilo_nodes.append(stabilo)
+                
+                # Calculate basse position (average of all stabilo points)
+                stab_avg_pos = self._calc_batch_position(stabilo_nodes, 0)
+                riser_pos = stabilo_riser.pos_2D if hasattr(stabilo_riser, 'pos_2D') else [0, 0]
+                
+                # Basse node between riser and all stabilo points
+                # Position it proportionally based on basses vs hautes lengths
+                total_stab_height = config["basses_length"] + config["hautes_length"]
+                basse_ratio = config["basses_length"] / total_stab_height if total_stab_height > 0 else 0.6
+                basse_y = riser_pos[1] + (stab_avg_pos[1] - riser_pos[1]) * basse_ratio
+                
+                stab_basse = BatchNode2D(
+                    pos_2D=[stab_avg_pos[0], basse_y],
+                    name="S_basse",
+                    layer="S",
+                )
+                
+                # Connect basse to riser
+                lines.append(Line2D(
+                    lower_node=stabilo_riser,
+                    upper_node=stab_basse,
+                    target_length=config["basses_length"],
+                    line_type=config["line_type_name"],
+                    layer="S",
+                    name="S_basse",
+                ))
+                
+                # Connect each stabilo point (hautes) to the single basse
+                for i, stabilo in enumerate(stabilo_nodes):
+                    lines.append(Line2D(
+                        lower_node=stab_basse,
+                        upper_node=stabilo,
+                        target_length=config["hautes_length"],
+                        line_type=config["line_type_name"],
+                        layer="S",
+                        name=f"S{i + 1}",
+                    ))
         
         return LineSet2D(lines)
     
@@ -612,7 +832,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         return nodes
     
     def _generate_grouped_architecture(self, upper_nodes, riser_node, group_patterns,
-                                       basses_length, inter_length, line_type_name, layer):
+                                       basses_length, inter_length, hautes_length, line_type_name, layer):
         """
         Generate architecture with groups.
         Each group = 1 basse connected to riser.
@@ -623,10 +843,19 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         if not upper_nodes:
             return lines
         
-        # Determine how many nodes per group based on patterns
-        # Pattern [2] = 2:1, takes 2 nodes per group
-        # Pattern [2, 2] = 2:2:1, takes 4 nodes per group
-        # Pattern [3] = 3:1, takes 3 nodes per group
+        # Get riser position for reference
+        riser_pos = riser_node.pos_2D if hasattr(riser_node, 'pos_2D') else [0, 0]
+        
+        # Total number of groups for spacing calculation
+        total_groups = 0
+        temp_idx = 0
+        for g in range(len(upper_nodes)):
+            pattern = group_patterns[total_groups % len(group_patterns)]
+            nodes_per = self._calc_nodes_for_pattern(pattern)
+            if temp_idx >= len(upper_nodes):
+                break
+            temp_idx += nodes_per
+            total_groups += 1
         
         node_idx = 0
         group_idx = 0
@@ -644,12 +873,28 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             if not group_nodes:
                 break
             
-            # Create basse node for this group
-            basse_pos = self._calc_batch_position(group_nodes, 0)
-            basse_pos[1] = basse_pos[1] - 2.0  # Move down
+            # Calculate basse position:
+            # X: average of upper nodes X positions  
+            # Y: positioned between riser and upper nodes, proportional to basses_length
+            upper_avg_pos = self._calc_batch_position(group_nodes, 0)
+            
+            # Interpolate X position: spread from riser X toward upper nodes X
+            # This creates a nice fan-out effect
+            if total_groups > 1:
+                group_spread = (group_idx / (total_groups - 1)) - 0.5  # -0.5 to 0.5
+            else:
+                group_spread = 0
+            
+            basse_x = upper_avg_pos[0]  # Use upper nodes X position
+            
+            # Y position: between riser and upper nodes, scaled by basses_length ratio
+            # Total line length = basses + inter + hautes
+            total_line_height = basses_length + inter_length + hautes_length
+            basse_y_ratio = basses_length / total_line_height if total_line_height > 0 else 0.33
+            basse_y = riser_pos[1] + (upper_avg_pos[1] - riser_pos[1]) * basse_y_ratio
             
             basse_node = BatchNode2D(
-                pos_2D=basse_pos,
+                pos_2D=[basse_x, basse_y],
                 name=f"{layer}{group_idx + 1}_basse",
                 layer=layer,
             )
@@ -664,9 +909,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 name=f"{layer}{group_idx + 1}",
             ))
             
-            # Generate architecture within group
+            # Generate architecture within group (hautes connect via inter to basse)
             group_lines = self._generate_group_architecture(
-                group_nodes, basse_node, pattern, inter_length, line_type_name, layer, group_idx
+                group_nodes, basse_node, pattern, inter_length, hautes_length, line_type_name, layer, group_idx
             )
             lines.extend(group_lines)
             
@@ -690,17 +935,24 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         return result
     
     def _generate_group_architecture(self, nodes, basse_node, pattern, 
-                                    inter_length, line_type_name, layer, group_idx):
-        """Generate lines within a group."""
+                                    inter_length, hautes_length, line_type_name, layer, group_idx):
+        """
+        Generate lines within a group.
+        - hautes_length: length of lines connecting to wing (uppermost)
+        - inter_length: length of intermediate lines
+        """
         lines = []
         
+        # Get basse position for reference
+        basse_pos = basse_node.pos_2D if hasattr(basse_node, 'pos_2D') else [0, 0]
+        
         if pattern == [1] or len(nodes) == 1:
-            # Direct connection
+            # Direct connection: use hautes_length (direct basse to wing)
             for i, node in enumerate(nodes):
                 lines.append(Line2D(
                     lower_node=basse_node,
                     upper_node=node,
-                    target_length=inter_length,  # This becomes haute length
+                    target_length=hautes_length,  # Direct to wing = hautes
                     line_type=line_type_name,
                     layer=layer,
                     name=node.name,
@@ -708,13 +960,13 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             return lines
         
         if len(pattern) == 1:
-            # Simple pattern like 2:1 or 3:1
+            # Simple pattern like 2:1 or 3:1: hautes go directly from basse to wing
             merge = pattern[0]
             for i, node in enumerate(nodes):
                 lines.append(Line2D(
                     lower_node=basse_node,
                     upper_node=node,
-                    target_length=inter_length,
+                    target_length=hautes_length,  # Direct to wing = hautes
                     line_type=line_type_name,
                     layer=layer,
                     name=node.name,
@@ -722,8 +974,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             return lines
         
         # Multi-level pattern like 2:2:1
-        # First merge by first number, then by second, etc.
+        # First level connects to upper nodes (hautes), subsequent levels use inter
         current_nodes = list(nodes)
+        total_levels = len(pattern) - 1
         
         for level, merge in enumerate(pattern[:-1]):  # All but last (which connects to basse)
             next_nodes = []
@@ -734,21 +987,30 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                     next_nodes.append(group[0])
                     continue
                 
-                # Create inter node
-                inter_pos = self._calc_batch_position(group, level)
-                inter_pos[1] -= (level + 1) * 1.0
+                # Calculate inter position between basse and upper nodes
+                upper_avg_pos = self._calc_batch_position(group, level)
+                
+                # Position inter node proportionally between basse and upper
+                # Earlier levels are closer to upper nodes
+                level_ratio = (level + 1) / (total_levels + 1)  # 0.33, 0.5, 0.66...
+                inter_x = upper_avg_pos[0]  # Keep same X as upper nodes
+                inter_y = basse_pos[1] + (upper_avg_pos[1] - basse_pos[1]) * (1 - level_ratio * 0.5)
                 
                 inter_node = BatchNode2D(
-                    pos_2D=inter_pos,
+                    pos_2D=[inter_x, inter_y],
                     name=f"{layer}{group_idx + 1}_i{level}_{i // merge}",
                     layer=layer,
                 )
+                
+                # First level (level 0) connects to wing = hautes_length
+                # Other levels use inter_length
+                line_length = hautes_length if level == 0 else inter_length
                 
                 for node in group:
                     lines.append(Line2D(
                         lower_node=inter_node,
                         upper_node=node,
-                        target_length=inter_length / (level + 1),  # Shorter for higher levels
+                        target_length=line_length,
                         line_type=line_type_name,
                         layer=layer,
                         name=f"{node.name}_h",
@@ -758,7 +1020,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             
             current_nodes = next_nodes
         
-        # Connect remaining to basse
+        # Connect remaining inter nodes to basse with inter_length
         for node in current_nodes:
             lines.append(Line2D(
                 lower_node=basse_node,

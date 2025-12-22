@@ -387,6 +387,11 @@ class Line(CachedObject):
         diff = self.diff_vector
         l = np.linalg.norm(diff)
         r = np.linalg.norm(residual_force)
+        
+        # Avoid division by zero when residual force is zero or very small
+        if r < 1e-10 or l < 1e-10:
+            return self.force / max(l, 1e-10) if self.force else 0.0
+        
         normed_residual_force = residual_force / r
         normed_diff_vector = diff / l
         f = (

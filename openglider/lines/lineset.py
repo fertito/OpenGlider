@@ -341,7 +341,22 @@ class LineSet(object):
             # compute the compensation factor s with a system of linear equation. The movement
             # of the upper node has impact on the compensation of residual force
             # of the lower node (and the other way).
-            return normalize(line.diff_vector + r / s * 0.5)
+            
+            # Avoid division by zero and NaN values
+            if s < 1e-10 or np.isnan(s):
+                return normalize(line.diff_vector)
+            
+            correction = r / s * 0.5
+            # Check for NaN in correction
+            if np.any(np.isnan(correction)):
+                return normalize(line.diff_vector)
+            
+            result = line.diff_vector + correction
+            # Check for NaN in result
+            if np.any(np.isnan(result)):
+                return normalize(line.diff_vector)
+            
+            return normalize(result)
 
             # if norm(r) == 0:
             #     return line.diff_vector
