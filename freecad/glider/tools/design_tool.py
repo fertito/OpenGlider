@@ -8,6 +8,7 @@ from PySide import QtCore, QtGui
 
 from .tools import BaseTool, coin, input_field, text_field, vector3D
 from pivy.graphics import InteractionSeparator, Line, Marker
+from .design_path import DesignPath, BezierPath, LinePath
 
 
 def refresh():
@@ -37,23 +38,35 @@ class DesignTool(BaseTool):
         super(DesignTool, self).__init__(obj)
         self.side = "upper"
 
-        # get 2d shape properties
-        _shape = self.parametric_glider.shape.get_shape()
-        self.front = vector3D(_shape.front, z=-0.01)
-        self.back = vector3D(_shape.back, z=-0.01)
-        self.ribs = zip(self.front, self.back)
-        self.x_values = self.parametric_glider.shape.rib_x_values
-        CutLine.cuts_to_lines(self.parametric_glider)
+
+        # Initialize shape properties (will be set by update_shape_display)
+        self.front = None
+        self.back = None
+        self.ribs = None
+        self.x_values = None
+        self._shape_lines = []  # Track shape lines for redraw
+        
+        CutLine.cuts_to_lines(self.parametric_glider, symmetric_only=True)
 
         self._add_mode = False
+        
+        # Design paths (Bezier curves for panel design)
+        self.design_paths = []  # List of DesignPath objects
+        self._selected_path = None  # Currently selected design path
+        self._path_counter = 0  # Counter for unique path IDs
+        
         # setup the GUI
         self.setup_widget()
         self.setup_pivy()
+        
+        # Load existing design paths
+        self._load_design_paths()
 
     def setup_widget(self):
         """set up the qt stuff"""
         self.Qtoggle_side = QtGui.QPushButton("show lower side")
         self.layout.setWidget(0, input_field, self.Qtoggle_side)
+
 
         self.tool_widget = QtGui.QWidget()
         self.tool_widget.setWindowTitle("object properties")
@@ -82,12 +95,92 @@ class DesignTool(BaseTool):
         # event handlers
         self.Qtoggle_side.clicked.connect(self.toggle_side)
 
+        # Design Path section
+        self.Qadd_line = QtGui.QPushButton("+ Line")
+        self.Qadd_line.setToolTip("Add a straight line path")
+        self.Qadd_bezier = QtGui.QPushButton("+ Bezier")
+        self.Qadd_bezier.setToolTip("Add a cubic Bezier curve path")
+        path_buttons = QtGui.QHBoxLayout()
+        path_buttons.addWidget(self.Qadd_line)
+        path_buttons.addWidget(self.Qadd_bezier)
+        path_widget = QtGui.QWidget()
+        path_widget.setLayout(path_buttons)
+        self.tool_layout.setWidget(2, text_field, QtGui.QLabel("add path"))
+        self.tool_layout.setWidget(2, input_field, path_widget)
+        self.Qadd_line.clicked.connect(self.add_line_path)
+        self.Qadd_bezier.clicked.connect(self.add_bezier_path)
+
+        # Path cut type
+        self.Qpath_cut_type = QtGui.QComboBox(self.tool_widget)
+        for _, cut_type in Panel.CUT_TYPES():
+            self.Qpath_cut_type.addItem(cut_type)
+        self.tool_layout.setWidget(3, text_field, QtGui.QLabel("path cut type"))
+        self.tool_layout.setWidget(3, input_field, self.Qpath_cut_type)
+        self.Qpath_cut_type.currentIndexChanged.connect(self.path_cut_type_changed)
+
+        # Add cuts at percentage - quick tool
+        self.Qpercentage = QtGui.QDoubleSpinBox()
+        self.Qpercentage.setMinimum(0)
+        self.Qpercentage.setMaximum(100)
+        self.Qpercentage.setValue(20)
+        self.Qpercentage.setSuffix("%")
+        self.Qadd_at_percent = QtGui.QPushButton("Add")
+        self.Qadd_at_percent.setToolTip("Add cut line at this chord percentage across all ribs")
+        percent_layout = QtGui.QHBoxLayout()
+        percent_layout.addWidget(self.Qpercentage)
+        percent_layout.addWidget(self.Qadd_at_percent)
+        percent_widget = QtGui.QWidget()
+        percent_widget.setLayout(percent_layout)
+        self.tool_layout.setWidget(4, text_field, QtGui.QLabel("add at %"))
+        self.tool_layout.setWidget(4, input_field, percent_widget)
+        self.Qadd_at_percent.clicked.connect(self.add_cuts_at_percentage)
+
+        # Apply and Delete buttons
+        self.Qapply_paths = QtGui.QPushButton("Apply Paths")
+        self.Qapply_paths.setToolTip("Project all paths onto panel cuts")
+        self.Qdelete_path = QtGui.QPushButton("Delete Path")
+        self.Qdelete_path.setToolTip("Delete selected path")
+        action_buttons = QtGui.QHBoxLayout()
+        action_buttons.addWidget(self.Qapply_paths)
+        action_buttons.addWidget(self.Qdelete_path)
+        action_widget = QtGui.QWidget()
+        action_widget.setLayout(action_buttons)
+        self.tool_layout.setWidget(5, text_field, QtGui.QLabel("actions"))
+        self.tool_layout.setWidget(5, input_field, action_widget)
+        self.Qapply_paths.clicked.connect(self.apply_paths_to_cuts)
+        self.Qdelete_path.clicked.connect(self.delete_selected_path)
+
+        # Select Connected and Delete Selected section
+        self.Qselect_connected = QtGui.QPushButton("Select Connected")
+        self.Qselect_connected.setToolTip("Select all points and lines connected to current selection")
+        self.Qdelete_selected = QtGui.QPushButton("Delete Selected")
+        self.Qdelete_selected.setToolTip("Delete all selected points and lines")
+        selection_buttons = QtGui.QHBoxLayout()
+        selection_buttons.addWidget(self.Qselect_connected)
+        selection_buttons.addWidget(self.Qdelete_selected)
+        selection_widget = QtGui.QWidget()
+        selection_widget.setLayout(selection_buttons)
+        self.tool_layout.setWidget(6, text_field, QtGui.QLabel("selection"))
+        self.tool_layout.setWidget(6, input_field, selection_widget)
+        self.Qselect_connected.clicked.connect(self.select_connected)
+        self.Qdelete_selected.clicked.connect(self.delete_selected_cuts)
+
     def setup_pivy(self):
         """set up the scene"""
         self.shape = coin.SoSeparator()
         self.task_separator += [self.shape]
+        
+        # Separator for design paths (Bezier curves)
+        self.path_separator = InteractionSeparator(self.rm)
+        self.path_separator.selection_changed = self.path_selection_changed
+        self.path_separator.register()  # Register for marker interaction
+        self.shape += [self.path_separator]
+        
+        # Separator for add_neighbour temp markers  
         self.add_separator = InteractionSeparator(self.rm)
         self.shape += [self.add_separator]
+        
+        self.update_shape_display()  # Initialize shape properties based on mode
         self.draw_shape()
         self.event_separator = InteractionSeparator(self.rm)
         self.event_separator.selection_changed = self.selection_changed
@@ -96,6 +189,293 @@ class DesignTool(BaseTool):
         self.add_cb = self.view.addEventCallbackPivy(
             coin.SoKeyboardEvent.getClassTypeId(), self.add_geo
         )
+
+    def update_shape_display(self):
+        """Update shape properties - always uses half shape (symmetric mode)"""
+        _shape = self.parametric_glider.shape.get_half_shape()
+        
+        self.front = vector3D(_shape.front, z=-0.01)
+        self.back = vector3D(_shape.back, z=-0.01)
+        self.ribs = list(zip(self.front, self.back))
+        
+        # Extract x_values directly from the shape's front coordinates
+        self.x_values = [pt[0] for pt in _shape.front]
+
+    # ==================== Design Path Management ====================
+    
+    def _load_design_paths(self):
+        """Load design paths from parametric_glider.elements."""
+        paths_data = self.parametric_glider.elements.get("design_paths", [])
+        for data in paths_data:
+            path = DesignPath.from_dict(data)
+            # Only show visuals for paths matching current side
+            if path.side == self.side:
+                path.setup_visuals(self.path_separator)
+            self.design_paths.append(path)
+            self._path_counter = max(self._path_counter, 
+                                     int(data.get("id", "path_0").split("_")[-1]) + 1)
+    
+    def _save_design_paths(self):
+        """Save design paths to parametric_glider.elements."""
+        self.parametric_glider.elements["design_paths"] = [
+            path.to_dict() for path in self.design_paths
+        ]
+    
+    def add_line_path(self):
+        """Add a new straight line path."""
+        # Create line across current visible shape
+        if self.x_values and len(self.x_values) >= 2:
+            x_start = self.x_values[0]
+            x_end = self.x_values[-1]
+            # Default position at 20% chord
+            y_start = self.parametric_glider.shape[0, 0.2][1]
+            y_end = self.parametric_glider.shape[-1, 0.2][1]
+        else:
+            x_start, x_end = 0, 5
+            y_start, y_end = 0, 0
+        
+        path_id = f"path_{self._path_counter}"
+        self._path_counter += 1
+        
+        cut_type = self.Qpath_cut_type.currentText()
+        path = LinePath(
+            path_id,
+            cut_type,
+            self.side,
+            [[x_start, y_start], [x_end, y_end]]
+        )
+        path.setup_visuals(self.path_separator)
+        self.design_paths.append(path)
+        self._select_path(path)
+    
+    def add_bezier_path(self):
+        """Add a new cubic Bezier path."""
+        # Create Bezier across current visible shape
+        if self.x_values and len(self.x_values) >= 2:
+            x_start = self.x_values[0]
+            x_end = self.x_values[-1]
+            x_mid = (x_start + x_end) / 2
+            # Default position at 20% chord
+            y_start = self.parametric_glider.shape[0, 0.2][1]
+            y_end = self.parametric_glider.shape[-1, 0.2][1]
+            y_mid = (y_start + y_end) / 2
+        else:
+            x_start, x_end, x_mid = 0, 5, 2.5
+            y_start, y_end, y_mid = 0, 0, 0
+        
+        path_id = f"path_{self._path_counter}"
+        self._path_counter += 1
+        
+        cut_type = self.Qpath_cut_type.currentText()
+        # Create cubic Bezier with 4 control points
+        path = BezierPath(
+            path_id,
+            cut_type,
+            self.side,
+            [
+                [x_start, y_start],  # P0 - start
+                [x_start + (x_end - x_start) * 0.33, y_start],  # P1 - control 1
+                [x_start + (x_end - x_start) * 0.66, y_end],    # P2 - control 2
+                [x_end, y_end]       # P3 - end
+            ]
+        )
+        path.setup_visuals(self.path_separator)
+        self.design_paths.append(path)
+        self._select_path(path)
+    
+    def _select_path(self, path):
+        """Select a design path."""
+        if self._selected_path:
+            self._selected_path.unselect()
+        self._selected_path = path
+        if path:
+            path.select()
+            # Update UI to show path's cut type
+            idx = self.Qpath_cut_type.findText(path.cut_type)
+            if idx >= 0:
+                self.Qpath_cut_type.blockSignals(True)
+                self.Qpath_cut_type.setCurrentIndex(idx)
+                self.Qpath_cut_type.blockSignals(False)
+    
+    def path_cut_type_changed(self):
+        """Handle path cut type change."""
+        if self._selected_path:
+            self._selected_path.cut_type = self.Qpath_cut_type.currentText()
+    
+    def path_selection_changed(self):
+        """Handle selection change in path separator - select the path of clicked marker."""
+        for obj in self.path_separator.selected_objects:
+            if hasattr(obj, '_path') and obj._path in self.design_paths:
+                self._select_path(obj._path)
+                break
+    
+    def delete_selected_path(self):
+        """Delete the currently selected path."""
+        if self._selected_path:
+            # Remove from list
+            self.design_paths.remove(self._selected_path)
+            self._selected_path = None
+            
+            # Refresh all path visuals - clear and recreate
+            self._refresh_path_visuals()
+    
+    def _refresh_path_visuals(self):
+        """Clear and recreate all path visuals."""
+        # Clear all visuals from path_separator
+        self.path_separator.removeAllChildren()
+        self.path_separator.dynamic_objects = []
+        
+        # Recreate visuals only for paths matching current side
+        for path in self.design_paths:
+            path.curve_line = None
+            path.markers = []
+            if path.side == self.side:
+                path.setup_visuals(self.path_separator)
+    
+    def apply_paths_to_cuts(self):
+        """Project all design paths onto panel cuts."""
+        for path in self.design_paths:
+            if path.side != self.side:
+                continue  # Only apply paths for current side
+            
+            # get_rib_intersections now returns (rib_nr, y_pos) with correct rib numbers
+            intersections = path.get_rib_intersections(
+                self.x_values, 
+                self.parametric_glider.shape,
+                symmetric_mode=True
+            )
+            
+            if len(intersections) < 2:
+                continue
+            
+            # Create CutPoints and CutLines from intersections
+            cut_points = []
+            
+            for rib_nr, y_pos in intersections:
+                try:
+                    cp = CutPoint.from_position_and_rib(
+                        rib_nr,
+                        y_pos,
+                        self.side == "upper",
+                        self.parametric_glider
+                    )
+                    cut_points.append((rib_nr, cp))
+                except (IndexError, TypeError) as e:
+                    print(f"Skipping rib {rib_nr}: {e}")
+                    continue
+            
+            # Create lines between consecutive points
+            for (i1, cp1), (i2, cp2) in zip(cut_points[:-1], cut_points[1:]):
+                if abs(i1 - i2) == 1:  # Adjacent ribs
+                    if self.side == "upper":
+                        CutLine.upper_point_set.add(cp1)
+                        CutLine.upper_point_set.add(cp2)
+                    else:
+                        CutLine.lower_point_set.add(cp1)
+                        CutLine.lower_point_set.add(cp2)
+                    
+                    cut_line = CutLine(cp1, cp2, path.cut_type)
+                    cut_line.replace_points_by_set()
+                    cut_line.update_Line()
+                    cut_line.setup_visuals()
+                    self.event_separator += [cp1, cp2, cut_line]
+        
+        self.event_separator.color_selected()
+
+    def add_cuts_at_percentage(self):
+        """Add cut points and lines at a given chord percentage across all ribs."""
+        percentage = self.Qpercentage.value() / 100.0  # Convert to 0-1 range
+        cut_type = self.Qpath_cut_type.currentText()
+        
+        cut_points = []
+        num_ribs = len(self.x_values)
+        has_center = self.parametric_glider.shape.has_center_cell
+        
+        for i in range(num_ribs):
+            try:
+                # In symmetric mode, rib indices start at has_center_cell
+                # In asymmetric mode, we need different handling
+                rib_idx = i + has_center
+                
+                y_pos = self.parametric_glider.shape[rib_idx, percentage][1]
+                
+                cp = CutPoint.from_position_and_rib(
+                    rib_idx,
+                    y_pos,
+                    self.side == "upper",
+                    self.parametric_glider
+                )
+                cut_points.append((i, cp))
+            except (IndexError, TypeError) as e:
+                print(f"Skipping rib {i}: {e}")
+                continue
+        
+        # Create lines between consecutive points
+        for (i1, cp1), (i2, cp2) in zip(cut_points[:-1], cut_points[1:]):
+            if abs(i1 - i2) == 1:  # Adjacent ribs
+                if self.side == "upper":
+                    CutLine.upper_point_set.add(cp1)
+                    CutLine.upper_point_set.add(cp2)
+                else:
+                    CutLine.lower_point_set.add(cp1)
+                    CutLine.lower_point_set.add(cp2)
+                
+                cut_line = CutLine(cp1, cp2, cut_type)
+                cut_line.replace_points_by_set()
+                cut_line.update_Line()
+                cut_line.setup_visuals()
+                self.event_separator += [cp1, cp2, cut_line]
+        
+        self.event_separator.color_selected()
+
+    def select_connected(self):
+        """Select all points and lines connected to the current selection.
+        
+        Uses graph traversal to follow connections through CutLines.
+        """
+        if not self.event_separator.selected_objects:
+            return
+        
+        # Collect initial points from selection
+        visited_points = set()
+        visited_lines = set()
+        to_visit = []
+        
+        for elem in self.event_separator.selected_objects:
+            if isinstance(elem, CutPoint):
+                to_visit.append(elem)
+            elif isinstance(elem, CutLine):
+                to_visit.append(elem.point1)
+                to_visit.append(elem.point2)
+        
+        # Graph traversal - follow lines to find all connected points
+        while to_visit:
+            point = to_visit.pop()
+            if point in visited_points:
+                continue
+            visited_points.add(point)
+            
+            # Find all lines connected to this point
+            for line in point.lines:
+                if line not in visited_lines:
+                    visited_lines.add(line)
+                    # Add the other endpoint to visit
+                    other = line.point2 if line.point1 == point else line.point1
+                    if other not in visited_points:
+                        to_visit.append(other)
+        
+        # Select all connected elements
+        for point in visited_points:
+            if point not in self.event_separator.selected_objects:
+                self.event_separator.select_object(point, multi=True)
+        for line in visited_lines:
+            if line not in self.event_separator.selected_objects:
+                self.event_separator.select_object(line, multi=True)
+
+    def delete_selected_cuts(self):
+        """Delete all selected CutPoints and CutLines."""
+        # Simply use the native pivy remove_selected which works correctly
+        self.event_separator.remove_selected()
 
     def selection_changed(self):
         points = set()
@@ -154,11 +534,24 @@ class DesignTool(BaseTool):
         l2 = Line(self.back)
         l3 = Line([self.back[0], self.front[0]])
         l4 = Line([self.back[-1], self.front[-1]])
-        l_ribs = map(Line, self.ribs)
-        lines = [l1, l2, l3, l4] + list(l_ribs)
+        l_ribs = list(map(Line, self.ribs))
+        lines = [l1, l2, l3, l4] + l_ribs
         for l in lines:
             l.color.diffuseColor = (0.2, 0.2, 0.2)
+        self._shape_lines = lines  # Track lines for redraw
         self.shape += lines
+
+    def redraw_shape(self):
+        """Clear and redraw the shape (used when switching modes)"""
+        # Remove existing shape lines from the separator
+        for line in self._shape_lines:
+            try:
+                self.shape.removeChild(line)
+            except:
+                pass  # Line may not be part of shape anymore
+        self._shape_lines = []
+        # Draw new shape
+        self.draw_shape()
 
     def toggle_side(self):
         self.event_separator.select_object(None)
@@ -179,6 +572,10 @@ class DesignTool(BaseTool):
             self.event_separator += CutLine.upper_line_list
         self.task_separator += [self.event_separator]
         self.event_separator.register()
+        
+        # Update path visibility for new side
+        self._refresh_path_visuals()
+        self._selected_path = None
 
     def add_geo(self, event_callback):
         """this function provides some interaction functionality to create points and lines
@@ -363,7 +760,11 @@ class DesignTool(BaseTool):
         self.view.removeEventCallbackPivy(
             coin.SoKeyboardEvent.getClassTypeId(), self.add_cb
         )
-        self.parametric_glider.elements["cuts"] = CutLine.get_cut_dict()
+        # Save design paths
+        self._save_design_paths()
+        # Get cuts and handle symmetric mirroring if needed
+        cuts = CutLine.get_cut_dict()
+        self.parametric_glider.elements["cuts"] = cuts
         super(DesignTool, self).accept()
         self.update_view_glider()
 
@@ -525,21 +926,31 @@ class CutLine(Line):
         self.data.point.setValues(0, len(p), p)
 
     @classmethod
-    def cuts_to_lines(cls, parametric_glider):
+    def cuts_to_lines(cls, parametric_glider, symmetric_only=True):
+        """Convert cut dictionary to visual CutLine objects.
+        
+        Args:
+            parametric_glider: The parametric glider with cuts data
+            symmetric_only: If True, only load positive cell indices (half wing).
+                           If False, load all cell indices including negative (full wing).
+        """
         CutLine.upper_point_set = set()
         CutLine.lower_point_set = set()
         CutLine.upper_line_list = []
         CutLine.lower_line_list = []
-        for cut in parametric_glider.elements["cuts"]:
+        for cut in parametric_glider.elements.get("cuts", []):
             for cell_nr in cut["cells"]:
+                # Filter based on symmetric mode
+                if symmetric_only and cell_nr < 0:
+                    continue  # Skip negative (left wing) cells in symmetric mode
                 try:
                     CutLine(
                         CutPoint(cell_nr, cut["left"], parametric_glider),
                         CutPoint(cell_nr + 1, cut["right"], parametric_glider),
                         cut["type"],
                     )
-                except TypeError:
-                    # hack if cell_nr out of range
+                except (TypeError, IndexError):
+                    # Skip if cell_nr is out of range
                     pass
         for l in cls.upper_line_list:
             l.replace_points_by_set()
@@ -590,8 +1001,11 @@ class CutLine(Line):
             self.delete()
 
     def delete(self):
+        # Check if in list before removing (may already be removed)
         if self.is_upper:
-            CutLine.upper_line_list.remove(self)
+            if self in CutLine.upper_line_list:
+                CutLine.upper_line_list.remove(self)
         else:
-            CutLine.lower_line_list.remove(self)
+            if self in CutLine.lower_line_list:
+                CutLine.lower_line_list.remove(self)
         super(CutLine, self).delete()
