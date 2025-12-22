@@ -337,7 +337,7 @@ class miniribs_table(base_table_widget):
                 minirib["transition_length"] = transition_pct / 100 if transition_pct > 0 else 0.05
                 minirib["le_enabled"] = bool(row[6])
                 le_start_cm = row[7]
-                minirib["le_start_distance"] = le_start_cm / 100 if le_start_cm > 0 else 0.01
+                minirib["le_start_distance"] = le_start_cm / 100  # Allow 0
                 minirib["le_extrados_end"] = row[8]
                 minirib["le_intrados_end"] = row[9]
                 minirib["cells"] = row[-1]
