@@ -193,13 +193,63 @@ class DesignTool(BaseTool):
     def update_shape_display(self):
         """Update shape properties - always uses half shape (symmetric mode)"""
         _shape = self.parametric_glider.shape.get_half_shape()
+        has_center = self.parametric_glider.shape.has_center_cell
         
-        self.front = vector3D(_shape.front, z=-0.01)
-        self.back = vector3D(_shape.back, z=-0.01)
+        front_pts = list(_shape.front)
+        back_pts = list(_shape.back)
+        
+        # For odd cell count gliders, add the center rib at x=0
+        # The center rib is the first half-shape rib mirrored to x=0
+        if has_center:
+            # Get center rib by mirroring the first half-shape rib to x=0
+            first_front = _shape.front[0]
+            first_back = _shape.back[0]
+            # Center rib has x=0, same y coordinates as the first rib
+            center_front = [0, first_front[1]]
+            center_back = [0, first_back[1]]
+            # Insert center rib at the beginning
+            front_pts = [center_front] + front_pts
+            back_pts = [center_back] + back_pts
+        
+        self.front = vector3D(front_pts, z=-0.01)
+        self.back = vector3D(back_pts, z=-0.01)
         self.ribs = list(zip(self.front, self.back))
         
-        # Extract x_values directly from the shape's front coordinates
-        self.x_values = [pt[0] for pt in _shape.front]
+        # Store rib bounds for use in other methods
+        # front_pts and back_pts contain (x, y) for each rib, including center if has_center
+        self._rib_front_pts = front_pts
+        self._rib_back_pts = back_pts
+        
+        # Extract x_values from front coordinates
+        self.x_values = [pt[0] for pt in front_pts]
+    
+    def _get_rib_bounds(self, list_idx):
+        """Get front and back y coordinates for a rib at the given list index.
+        
+        Args:
+            list_idx: Index in self.x_values/self.ribs (0 = center for odd cells)
+            
+        Returns:
+            (front_y, back_y) - y coordinates of front and back of rib
+        """
+        front_y = self._rib_front_pts[list_idx][1]
+        back_y = self._rib_back_pts[list_idx][1]
+        return front_y, back_y
+    
+    def _list_idx_to_shape_idx(self, list_idx):
+        """Convert list index (0-based including center) to shape index.
+        
+        For odd cells: list_idx=0 is center (no shape equivalent), list_idx=1 maps to shape[0], etc.
+        For even cells: list_idx=i maps to shape[i]
+        
+        Returns shape index, or None if this is the center rib.
+        """
+        has_center = self.parametric_glider.shape.has_center_cell
+        if has_center:
+            if list_idx == 0:
+                return None  # Center rib has no shape index
+            return list_idx - 1
+        return list_idx
 
     # ==================== Design Path Management ====================
     
@@ -334,34 +384,72 @@ class DesignTool(BaseTool):
     
     def apply_paths_to_cuts(self):
         """Project all design paths onto panel cuts."""
+        has_center = self.parametric_glider.shape.has_center_cell
+        
+        # Build rib bounds from stored front/back points
+        rib_bounds = list(zip(
+            [pt[1] for pt in self._rib_front_pts],
+            [pt[1] for pt in self._rib_back_pts]
+        ))
+        
         for path in self.design_paths:
             if path.side != self.side:
                 continue  # Only apply paths for current side
             
-            # get_rib_intersections now returns (rib_nr, y_pos) with correct rib numbers
+            # Get intersections with rib bounds included for proper center rib handling
             intersections = path.get_rib_intersections(
                 self.x_values, 
-                self.parametric_glider.shape,
-                symmetric_mode=True
+                rib_bounds=rib_bounds
             )
             
             if len(intersections) < 2:
                 continue
             
+            # For odd cell count, force the center rib to be perpendicular/symmetric
+            # by using the same relative chord position as the first visible rib
+            if has_center and len(intersections) > 1:
+                # Find if index 0 (center) and index 1 (first visible) are in intersections
+                center_found = any(idx == 0 for idx, _ in intersections)
+                first_visible_found = any(idx == 1 for idx, _ in intersections)
+                
+                if center_found and first_visible_found:
+                    # Get the first visible rib's y position and compute relative chord position
+                    first_visible_y = None
+                    for idx, y in intersections:
+                        if idx == 1:
+                            first_visible_y = y
+                            break
+                    
+                    if first_visible_y is not None:
+                        # Compute relative position on first visible rib
+                        fv_front, fv_back = self._get_rib_bounds(1)
+                        fv_chord = fv_front - fv_back
+                        
+                        if abs(fv_chord) > 0.001:
+                            rel_pos = (fv_front - first_visible_y) / fv_chord
+                            
+                            # Apply same relative position to center rib
+                            c_front, c_back = self._get_rib_bounds(0)
+                            c_chord = c_front - c_back
+                            center_y_perpendicular = c_front - rel_pos * c_chord
+                            
+                            # Replace center intersection with perpendicular position
+                            intersections = [
+                                (0, center_y_perpendicular) if idx == 0 else (idx, y)
+                                for idx, y in intersections
+                            ]
+            
             # Create CutPoints and CutLines from intersections
             cut_points = []
             
-            for rib_nr, y_pos in intersections:
+            for list_idx, y_pos in intersections:
                 try:
-                    cp = CutPoint.from_position_and_rib(
-                        rib_nr,
-                        y_pos,
-                        self.side == "upper",
-                        self.parametric_glider
-                    )
-                    cut_points.append((rib_nr, cp))
+                    # Convert list_idx to the correct rib index for CutPoint
+                    # list_idx 0 = center for odd cells, needs special handling
+                    cp = self._create_cut_point_at_list_idx(list_idx, y_pos)
+                    cut_points.append((list_idx, cp))
                 except (IndexError, TypeError) as e:
-                    print(f"Skipping rib {rib_nr}: {e}")
+                    print(f"Skipping rib {list_idx}: {e}")
                     continue
             
             # Create lines between consecutive points
@@ -381,6 +469,39 @@ class DesignTool(BaseTool):
                     self.event_separator += [cp1, cp2, cut_line]
         
         self.event_separator.color_selected()
+    
+    def _create_cut_point_at_list_idx(self, list_idx, y_pos):
+        """Create a CutPoint for a rib at the given list index.
+        
+        Handles the conversion from list_idx (which includes center for odd cells)
+        to the proper shape index used by CutPoint.
+        """
+        has_center = self.parametric_glider.shape.has_center_cell
+        
+        # Get x coordinate and bounds for this rib
+        x_value = self.x_values[list_idx]
+        front_y, back_y = self._get_rib_bounds(list_idx)
+        chord = abs(front_y - back_y)
+        
+        if chord < 0.001:
+            rib_pos = 0
+        else:
+            # rib_pos is negative for upper, positive for lower
+            # It's the normalized position from front (0) to back (1)
+            upper = self.side == "upper"
+            rib_pos = -(upper * 2.0 - 1.0) * abs(y_pos - front_y) / chord
+        
+        # CutPoint expects rib_nr to be: list_idx + has_center_cell (then subtracts has_center_cell)
+        # After subtraction, rib_nr becomes list_idx, which is correct
+        rib_nr_for_cutpoint = list_idx + has_center
+        
+        # Pass x_value, min_y, max_y explicitly to handle center rib correctly
+        return CutPoint(
+            rib_nr_for_cutpoint, rib_pos, self.parametric_glider,
+            x_value=x_value,
+            min_y=front_y,
+            max_y=back_y
+        )
 
     def add_cuts_at_percentage(self):
         """Add cut points and lines at a given chord percentage across all ribs."""
@@ -389,25 +510,20 @@ class DesignTool(BaseTool):
         
         cut_points = []
         num_ribs = len(self.x_values)
-        has_center = self.parametric_glider.shape.has_center_cell
         
-        for i in range(num_ribs):
+        # Iterate through all ribs (x_values now includes center for odd cells)
+        for list_idx in range(num_ribs):
             try:
-                # In symmetric mode, rib indices start at has_center_cell
-                # In asymmetric mode, we need different handling
-                rib_idx = i + has_center
+                # Get rib bounds and compute y position from percentage
+                front_y, back_y = self._get_rib_bounds(list_idx)
+                chord = front_y - back_y
+                y_pos = front_y - percentage * chord
                 
-                y_pos = self.parametric_glider.shape[rib_idx, percentage][1]
-                
-                cp = CutPoint.from_position_and_rib(
-                    rib_idx,
-                    y_pos,
-                    self.side == "upper",
-                    self.parametric_glider
-                )
-                cut_points.append((i, cp))
+                # Create cut point using the helper
+                cp = self._create_cut_point_at_list_idx(list_idx, y_pos)
+                cut_points.append((list_idx, cp))
             except (IndexError, TypeError) as e:
-                print(f"Skipping rib {i}: {e}")
+                print(f"Skipping rib {list_idx}: {e}")
                 continue
         
         # Create lines between consecutive points
@@ -640,11 +756,10 @@ class DesignTool(BaseTool):
                     assert isinstance(self.add_separator.static_objects[1], Line)
                     marker = self.add_separator.static_objects[0]
                     line = self.add_separator.static_objects[1]
-                    cut_point_1 = CutPoint.from_position_and_rib(
+                    # Use helper for correct index conversion
+                    cut_point_1 = self._create_cut_point_at_list_idx(
                         marker.rib_nr,
-                        marker.points[0][1],
-                        self.side == "upper",
-                        self.parametric_glider,
+                        marker.points[0][1]
                     )
                     cut_point_2 = line.active_point
                     cut_line = CutLine(cut_point_1, cut_point_2, "folded")
@@ -658,11 +773,10 @@ class DesignTool(BaseTool):
                     assert len(self.add_separator.static_objects) == 1
                     assert isinstance(self.add_separator.static_objects[0], Marker)
                     marker = self.add_separator.static_objects[0]
-                    cut_point = CutPoint.from_position_and_rib(
+                    # Use helper for correct index conversion
+                    cut_point = self._create_cut_point_at_list_idx(
                         marker.rib_nr,
-                        marker.points[0][1],
-                        self.side == "upper",
-                        self.parametric_glider,
+                        marker.points[0][1]
                     )
                     self.event_separator += [cut_point]
                     self.event_separator.select_object(cut_point)
@@ -692,14 +806,19 @@ class DesignTool(BaseTool):
             if (not smallest_diff[0]) or smallest_diff[0] > diff:
                 smallest_diff = diff, index
         index = smallest_diff[1]
-        x, min_y = self.parametric_glider.shape[index, 1.0]
-        _, max_y = self.parametric_glider.shape[index, 0.0]
+        
+        # Use stored rib bounds (works correctly for center rib)
+        x = self.x_values[index]
+        front_y, back_y = self._get_rib_bounds(index)
+        min_y = min(front_y, back_y)
+        max_y = max(front_y, back_y)
+        
         pos[0] = x
         if pos[1] > min_y and pos[1] < max_y:
             if len(self.add_separator.static_objects) == 0:
                 self.add_separator.removeAllChildren()
                 marker = Marker([pos])
-                marker.rib_nr = index
+                marker.rib_nr = index  # This is the list index
                 self.add_separator += [marker]
             else:
                 marker = self.add_separator.static_objects[0]
@@ -711,33 +830,50 @@ class DesignTool(BaseTool):
     def add_neighbour(self, event_callback=None):
         event = event_callback.getEvent()
         select_obj = self.event_separator.selected_objects[0]
-        rib_nr = select_obj.rib_nr
-        try:
-            min1 = self.parametric_glider.shape[rib_nr - 1, 1.0][1]
-            x1, max1 = self.parametric_glider.shape[rib_nr - 1, 0.0]
-        except IndexError:
-            min1, x1, max1 = None, None, None
-        try:
-            min2 = self.parametric_glider.shape[rib_nr + 1, 1.0][1]
-            x2, max2 = self.parametric_glider.shape[rib_nr + 1, 0.0]
-        except IndexError:
-            min2, x2, max2 = None, None, None
+        rib_nr = select_obj.rib_nr  # This is the list index
+        
+        # Get bounds for left neighbour (rib_nr - 1)
+        x1, min1, max1 = None, None, None
+        if rib_nr > 0:
+            try:
+                x1 = self.x_values[rib_nr - 1]
+                front_y, back_y = self._get_rib_bounds(rib_nr - 1)
+                min1 = min(front_y, back_y)
+                max1 = max(front_y, back_y)
+            except (IndexError, KeyError):
+                pass
+        
+        # Get bounds for right neighbour (rib_nr + 1)
+        x2, min2, max2 = None, None, None
+        if rib_nr < len(self.x_values) - 1:
+            try:
+                x2 = self.x_values[rib_nr + 1]
+                front_y, back_y = self._get_rib_bounds(rib_nr + 1)
+                min2 = min(front_y, back_y)
+                max2 = max(front_y, back_y)
+            except (IndexError, KeyError):
+                pass
+        
         show_point = False
         pos = event.getPosition()
         pos = list(self.view.getPoint(*pos))
         pos[2] = 0
-        if not x2 or abs(pos[0] - x1) < abs(pos[0] - x2):
-            pos[0] = x1
-            if pos[1] > min1 and pos[1] < max1:
-                new_rib_nr = rib_nr - 1
-                show_point = True
+        
+        if not x2 or (x1 and abs(pos[0] - x1) < abs(pos[0] - x2)):
+            if x1:
+                pos[0] = x1
+                if pos[1] > min1 and pos[1] < max1:
+                    new_rib_nr = rib_nr - 1
+                    show_point = True
         elif not x1 or abs(pos[0] - x1) > abs(pos[0] - x2):
-            pos[0] = x2
-            if pos[1] > min2 and pos[1] < max2:
-                new_rib_nr = rib_nr + 1
-                show_point = True
+            if x2:
+                pos[0] = x2
+                if pos[1] > min2 and pos[1] < max2:
+                    new_rib_nr = rib_nr + 1
+                    show_point = True
         else:
             return
+            
         if show_point:
             if not self.add_separator.static_objects:
                 self.add_separator.removeAllChildren()
@@ -777,35 +913,65 @@ class DesignTool(BaseTool):
 
 
 class CutPoint(Marker):
-    def __init__(self, rib_nr, rib_pos, parametric_glider=None):
+    def __init__(self, rib_nr, rib_pos, parametric_glider=None, x_value=None, min_y=None, max_y=None):
         super(CutPoint, self).__init__([[0, 0, 0]], True)
         self.marker.markerIndex = coin.SoMarkerSet.CROSS_7_7
         self.parametric_glider = parametric_glider
         self.rib_nr = rib_nr - parametric_glider.shape.has_center_cell
         self.rib_pos = rib_pos
         self.lines = []
-        point = self.get_2D()
-        self.x_value = point[0]
-        self.max = self.parametric_glider.shape[self.rib_nr, 1.0][1]
-        self.min = self.parametric_glider.shape[self.rib_nr, 0.0][1]
+        
+        # Flag to indicate if bounds were explicitly provided (for center rib)
+        self._has_explicit_bounds = x_value is not None
+        
+        # Use provided values if available, otherwise compute from shape
+        if self._has_explicit_bounds:
+            self.x_value = x_value
+            self.min = min_y if min_y is not None else 0
+            self.max = max_y if max_y is not None else 0
+            # Compute 2D point directly
+            chord = self.min - self.max
+            y = self.min - abs(rib_pos) * chord
+            point = [self.x_value, y, 0]
+        else:
+            point = self._get_2D_from_shape()
+            self.x_value = point[0]
+            self.max = self.parametric_glider.shape[self.rib_nr, 1.0][1]
+            self.min = self.parametric_glider.shape[self.rib_nr, 0.0][1]
+        
         self.points = [point]
         self.on_drag_release.append(self.get_rib_pos)
 
     def update_position(self):
         self.points = [self.get_2D()]
 
-    def get_2D(self):
+    def _get_2D_from_shape(self):
+        """Get 2D position from shape indexing."""
         try:
             return list(
                 self.parametric_glider.shape[self.rib_nr, abs(self.rib_pos)] + [0]
             )
         except IndexError:
-            raise IndexError("index " + self.rib_nr + " out of range")
+            raise IndexError(f"index {self.rib_nr} out of range")
+
+    def get_2D(self):
+        """Get 2D position, using stored bounds if available."""
+        if self._has_explicit_bounds:
+            # Use stored bounds to compute position
+            chord = self.min - self.max
+            y = self.min - abs(self.rib_pos) * chord
+            return [self.x_value, y, 0]
+        else:
+            return self._get_2D_from_shape()
 
     def get_rib_pos(self):
-        # we have to do this
-        le = self.parametric_glider.shape[self.rib_nr, 0][1]
-        te = self.parametric_glider.shape[self.rib_nr, 1][1]
+        """Update rib_pos from current y position."""
+        if self._has_explicit_bounds:
+            le = self.min
+            te = self.max
+        else:
+            le = self.parametric_glider.shape[self.rib_nr, 0][1]
+            te = self.parametric_glider.shape[self.rib_nr, 1][1]
         chord = le - te
         sign = (self.rib_pos >= 0) * 2 - 1
         self.rib_pos = round(sign * (abs(le - self.pos[1])) / chord, 3)
@@ -961,10 +1127,12 @@ class CutLine(Line):
 
     @property
     def cell_nr(self):
-        return (
-            self.get_point(inner=True).rib_nr
-            + self.point1.parametric_glider.shape.has_center_cell
-        )
+        # With the new indexing where center rib is at index 0:
+        # - Cell 0 (center) is between ribs 0 and 1
+        # - Cell 1 is between ribs 1 and 2
+        # - etc.
+        # So cell_nr is just the inner rib number
+        return self.get_point(inner=True).rib_nr
 
     def get_point(self, inner=True):
         if (self.point1.rib_nr < self.point2.rib_nr) == inner:

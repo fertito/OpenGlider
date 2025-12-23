@@ -121,22 +121,24 @@ class DesignPath:
         """
         raise NotImplementedError("Subclass must implement get_curve_points")
     
-    def get_rib_intersections(self, x_values, shape, symmetric_mode=True):
+    def get_rib_intersections(self, x_values, shape=None, symmetric_mode=True, rib_bounds=None):
         """Find intersections of the curve with rib lines.
         
         Args:
             x_values: List of rib x positions
-            shape: The parametric shape for bounds checking
+            shape: The parametric shape for bounds checking (optional if rib_bounds provided)
             symmetric_mode: Ignored, kept for API compatibility (always symmetric)
+            rib_bounds: Optional list of (front_y, back_y) tuples for each rib.
+                       If provided, these are used for bounds checking instead of shape.
             
         Returns:
-            List of (rib_nr, y_position) tuples where rib_nr is the actual rib number
+            List of (rib_nr, y_position) tuples where rib_nr is the list index
         """
         curve_points = self.get_curve_points(num_samples=200)
         intersections = []
         
         for list_idx, x in enumerate(x_values):
-            # In symmetric mode, list_idx is the rib number
+            # list_idx is the rib number in the x_values list
             rib_nr = list_idx
             
             # Find where curve crosses this x value
@@ -152,8 +154,20 @@ class DesignPath:
                         
                         # Check if within rib bounds
                         try:
-                            min_y = shape[rib_nr, 1.0][1]
-                            max_y = shape[rib_nr, 0.0][1]
+                            if rib_bounds is not None and list_idx < len(rib_bounds):
+                                # Use provided bounds
+                                front_y, back_y = rib_bounds[list_idx]
+                                min_y = min(front_y, back_y)
+                                max_y = max(front_y, back_y)
+                            elif shape is not None:
+                                # Fall back to shape for bounds
+                                min_y = shape[rib_nr, 1.0][1]
+                                max_y = shape[rib_nr, 0.0][1]
+                            else:
+                                # No bounds checking, accept all
+                                min_y = float('-inf')
+                                max_y = float('inf')
+                            
                             if min_y <= y_intersect <= max_y:
                                 intersections.append((rib_nr, y_intersect))
                         except (IndexError, TypeError):
