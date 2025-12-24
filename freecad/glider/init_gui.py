@@ -33,9 +33,9 @@ class GliderWorkbench(Gui.Workbench):
         "MiniRibsCommand",
         "AirfoilStructureCommand",
         "HoleDesignCommand",
+        "LEPanelSplitCommand",
         "CutCommand",
         "ColorCommand",
-        "LEPanelSplitCommand",
         "Gl2dExport",
     ]
 
