@@ -524,7 +524,6 @@ class Cell(CachedObject):
         )
         return mesh
 
-    @cached_function("self")
     def get_flattened_cell(self, numribs=50, y_start=0.0, y_end=1.0):
         """
         Flatten the cell (or a portion of it) for 2D pattern generation.

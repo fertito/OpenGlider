@@ -82,6 +82,22 @@ class PanelPlot(object):
 
         shape_3d_amount_front = [-x for x in self.panel.cut_front["amount_3d"]]
         shape_3d_amount_back = self.panel.cut_back["amount_3d"]
+        
+        # For split panels, the inner list may have different length than amount_3d
+        # Interpolate amount_3d to match inner list length
+        num_inner = len(inner_front)
+        if len(shape_3d_amount_front) != num_inner:
+            shape_3d_amount_front = list(np.linspace(
+                shape_3d_amount_front[0],
+                shape_3d_amount_front[-1],
+                num_inner
+            ))
+        if len(shape_3d_amount_back) != num_inner:
+            shape_3d_amount_back = list(np.linspace(
+                shape_3d_amount_back[0],
+                shape_3d_amount_back[-1],
+                num_inner
+            ))
 
         if self.panel.cut_front["type"] != "cut_3d":
             dist = np.linspace(
@@ -99,11 +115,15 @@ class PanelPlot(object):
             )
             shape_3d_amount_back = list(dist)
 
+        # For cut_3d type, use outer_orig to avoid geometry mismatch from .check()
+        outer_left = self.outer_orig[0] if self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d" else self.outer[0]
+        outer_right = self.outer_orig[1] if self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d" else self.outer[1]
+        
         cut_front_result = cut_front.apply(
-            inner_front, self.outer[0], self.outer[1], shape_3d_amount_front
+            inner_front, outer_left, outer_right, shape_3d_amount_front
         )
         cut_back_result = cut_back.apply(
-            inner_back, self.outer[0], self.outer[1], shape_3d_amount_back
+            inner_back, outer_left, outer_right, shape_3d_amount_back
         )
 
         panel_left = self.outer[0][
