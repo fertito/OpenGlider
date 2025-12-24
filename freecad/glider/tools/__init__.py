@@ -20,6 +20,7 @@ from . import (
     line_tool,
     holedesign_tool,
     miniribs_tool,
+    le_panel_split_tool,
 )
 from . import panel_method as pm
 from . import shape_tool, span_mapping
@@ -417,6 +418,18 @@ class ColorCommand(BaseCommand):
 
     def tool(self, obj):
         return color_tool.ColorTool(obj)
+
+
+class LEPanelSplitCommand(BaseCommand):
+    def GetResources(self):
+        return {
+            "Pixmap": "le_panel_split.svg",
+            "MenuText": "LE Panel Split",
+            "ToolTip": "Split leading edge panels in half along the chord",
+        }
+
+    def tool(self, obj):
+        return le_panel_split_tool.LEPanelSplitTool(obj)
 
 
 class RefreshCommand:

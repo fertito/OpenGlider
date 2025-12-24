@@ -19,6 +19,7 @@ class PlotMaker(object):
         self.dribs = collections.OrderedDict()
         self.straps = collections.OrderedDict()
         self.rigidfoils = collections.OrderedDict()
+        self.le_splits = collections.OrderedDict()
         self.reinforcements = []  # Halfmoons and attachment rod sleeves
         self.rod_sleeves = []  # Profile rod sleeves (extrados/intrados)
         self.ribs = []
@@ -159,6 +160,17 @@ class PlotMaker(object):
             self.rigidfoils[cell] = rigidfoils
 
         return self.rigidfoils
+
+    def get_le_splits(self):
+        """Get LE panel spanwise split patterns for 2D export."""
+        self.le_splits.clear()
+
+        for cell in self.glider_3d.cells:
+            le_splits = self._get_cellplotmaker(cell).get_le_splits()
+            if le_splits:
+                self.le_splits[cell] = le_splits
+
+        return self.le_splits
 
     def get_reinforcements(self):
         """Get attachment reinforcement parts (halfmoons and their rod sleeves) for 2D export."""
@@ -320,6 +332,7 @@ class PlotMaker(object):
         self.get_dribs()
         self.get_straps()
         self.get_rigidfoils()
+        self.get_le_splits()
         self.get_reinforcements()
         self.get_rod_sleeves()
         return self

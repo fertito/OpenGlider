@@ -525,8 +525,17 @@ class Cell(CachedObject):
         return mesh
 
     @cached_function("self")
-    def get_flattened_cell(self, numribs=50):
-        midribs = self.get_midribs(numribs)
+    def get_flattened_cell(self, numribs=50, y_start=0.0, y_end=1.0):
+        """
+        Flatten the cell (or a portion of it) for 2D pattern generation.
+        
+        :param numribs: number of interpolation ribs
+        :param y_start: starting y position (0=rib1, 1=rib2)
+        :param y_end: ending y position (0=rib1, 1=rib2)
+        """
+        # Generate midribs for the y_start to y_end range
+        y_values = openglider.utils.linspace(y_start, y_end, numribs)
+        midribs = [self.midrib(y) for y in y_values]
         numpoints = len(midribs[0])
 
         len_dct = {}

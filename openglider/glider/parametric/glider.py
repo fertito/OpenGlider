@@ -12,7 +12,7 @@ from openglider.glider.parametric.shape import ParametricShape
 from openglider.airfoil import Profile2D
 from openglider.glider.glider import Glider
 from openglider.glider.cell import Panel, DiagonalRib, TensionStrap, TensionLine, Cell
-from openglider.glider.cell.elements import PanelRigidFoil
+from openglider.glider.cell.elements import PanelRigidFoil, LeadingEdgeClosure
 from openglider.glider.parametric.arc import ArcCurve
 from openglider.glider.parametric.export_ods import export_ods_2d
 from openglider.glider.parametric.import_ods import import_ods_2d
@@ -989,7 +989,63 @@ class ParametricGlider(object):
                     name="c{}p{}".format(cell_no + 1, part_no + 1),
                     material_code=material_code,
                 )
-                panel_lst.append(panel)
+                
+                # Check if this is an LE panel that should be split chordwise
+                le_splits = self.elements.get("le_panel_splits", [])
+                should_split = False
+                
+                for le_split in le_splits:
+                    if cell_no in le_split.get("cells", []):
+                        cut_limit = le_split.get("cut_limit", 0.1)
+                        # The LE panel is the one where:
+                        # - cut_front (cut1) is at -cut_limit (our cut_3d on extrados)
+                        # - cut_back (cut2) is at the LE entry (close to 0 or slightly positive)
+                        front_left = cut1.get("left", 0)
+                        back_left = cut2.get("left", 0)
+                        
+                        # Only match extrados (front_left negative) panels
+                        # Match if:
+                        # 1. front is near -cut_limit
+                        # 2. back is at LE entry (close to 0 or positive, i.e. > -0.02)
+                        is_extrados = front_left < 0
+                        front_matches = abs(abs(front_left) - cut_limit) < 0.02
+                        back_at_le_entry = back_left > -0.02  # At or past the leading edge
+                        
+                        if is_extrados and front_matches and back_at_le_entry:
+                            should_split = True
+                            break
+                
+                if should_split:
+                    # Split into 2 panels at y=0.5 using y_start/y_end
+                    # Lookup colors by panel name if available
+                    materials_by_name = self.elements.get("materials_by_name", {})
+                    name_L = "c{}p{}_L".format(cell_no + 1, part_no + 1)
+                    name_R = "c{}p{}_R".format(cell_no + 1, part_no + 1)
+                    
+                    # Panel L: from rib1 (y=0) to mid (y=0.5)
+                    panel_left = Panel(
+                        cut1,
+                        cut2,
+                        name=name_L,
+                        material_code=materials_by_name.get(name_L, material_code),
+                        y_start=0.0,
+                        y_end=0.5,
+                    )
+                    
+                    # Panel R: from mid (y=0.5) to rib2 (y=1)
+                    panel_right = Panel(
+                        cut1,
+                        cut2,
+                        name=name_R,
+                        material_code=materials_by_name.get(name_R, material_code),
+                        y_start=0.5,
+                        y_end=1.0,
+                    )
+                    
+                    panel_lst.append(panel_left)
+                    panel_lst.append(panel_right)
+                else:
+                    panel_lst.append(panel)
 
         return cells
 
@@ -1227,6 +1283,26 @@ class ParametricGlider(object):
             data = rigidfoil.copy()
             for cell_no in data.pop("cells"):
                 glider.cells[cell_no].rigidfoils.append(PanelRigidFoil(**data))
+
+        # LE Panel Splits - create LeadingEdgeClosure for spanwise split
+        for le_split in self.elements.get("le_panel_splits", []):
+            cut_limit = le_split.get("cut_limit", 0.1)
+            material = le_split.get("material_code", "")
+            cells = le_split.get("cells", [])
+            
+            for cell_no in cells:
+                if 0 <= cell_no < len(glider.cells):
+                    # Initialize le_closures list if needed
+                    if not hasattr(glider.cells[cell_no], 'le_closures'):
+                        glider.cells[cell_no].le_closures = []
+                    
+                    closure = LeadingEdgeClosure(
+                        cut_back_x=cut_limit,
+                        y_position=0.5,  # Center split
+                        material_code=material,
+                        name=f"le_split_c{cell_no+1}"
+                    )
+                    glider.cells[cell_no].le_closures.append(closure)
 
         # RIB-ELEMENTS
 

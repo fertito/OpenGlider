@@ -510,11 +510,15 @@ class Panel(object):
         singleskin = "singleskin"
         cut_3d = "cut_3d"
 
-    def __init__(self, cut_front, cut_back, material_code=None, name="unnamed"):
+    def __init__(self, cut_front, cut_back, material_code=None, name="unnamed", y_start=0.0, y_end=1.0):
         self.cut_front = cut_front  # (left, right, style(int))
         self.cut_back = cut_back
         self.material_code = material_code or ""
         self.name = name
+        # y_start and y_end define the spanwise range (0=rib1, 1=rib2)
+        # Default 0-1 covers the full cell, 0-0.5 and 0.5-1 for split panels
+        self.y_start = y_start
+        self.y_end = y_end
 
     def __json__(self):
         return {
@@ -522,6 +526,8 @@ class Panel(object):
             "cut_back": self.cut_back,
             "material_code": self.material_code,
             "name": self.name,
+            "y_start": self.y_start,
+            "y_end": self.y_end,
         }
 
     def __hash__(self) -> int:
@@ -568,7 +574,9 @@ class Panel(object):
         xvalues = cell.rib1.profile_2d.x_values
         ribs = []
         for i in range(numribs + 1):
-            y = i / numribs
+            # Map y from 0-1 to y_start-y_end range
+            t = i / numribs
+            y = self.y_start + t * (self.y_end - self.y_start)
 
             if midribs is None:
                 midrib = cell.midrib(y, with_numpy)
@@ -604,7 +612,9 @@ class Panel(object):
         nums = []
         count = 0
         for rib_no in range(numribs + 1):
-            y = rib_no / max(numribs, 1)
+            # Map y from 0-1 to y_start-y_end range
+            t = rib_no / max(numribs, 1)
+            y = self.y_start + t * (self.y_end - self.y_start)
             x1 = self.cut_front["left"] + y * (
                 self.cut_front["right"] - self.cut_front["left"]
             )
@@ -704,29 +714,48 @@ class Panel(object):
         ik_right_front = get_x_value(x_values_right, self.cut_front["right"])
         ik_right_back = get_x_value(x_values_right, self.cut_back["right"])
 
-        ik_values = [[ik_left_front, ik_left_back]]
+        ik_values = []
+        
+        # Use y_start and y_end for partial panels (default 0-1 for full panels)
+        y_start = getattr(self, 'y_start', 0.0)
+        y_end = getattr(self, 'y_end', 1.0)
 
-        for i in range(numribs):
-            y = float(i + 1) / (numribs + 1)
+        for i in range(numribs + 2):
+            # Map i to y within [y_start, y_end] range
+            t = float(i) / (numribs + 1)
+            y = y_start + t * (y_end - y_start)
 
             front = ik_left_front + y * (ik_right_front - ik_left_front)
             back = ik_left_back + y * (ik_right_back - ik_left_back)
 
             ik_values.append([front, back])
 
-        ik_values.append([ik_right_front, ik_right_back])
-
         if exact:
             ik_values_new = []
             inner = cell.get_flattened_cell(numribs)["inner"]
-            p_front_left = inner[0][ik_left_front]
-            p_front_right = inner[-1][ik_right_front]
-            p_back_left = inner[0][ik_left_back]
-            p_back_right = inner[-1][ik_right_back]
+            
+            # For split panels, we need to get the inner lines for the y range
+            # Calculate which inner lines correspond to our y range
+            total_inners = len(inner)
+            start_idx = int(y_start * (total_inners - 1))
+            end_idx = int(y_end * (total_inners - 1))
+            
+            # Get the first and last points for cut lines
+            p_front_left = inner[start_idx][ik_left_front + y_start * (ik_right_front - ik_left_front)]
+            p_front_right = inner[end_idx][ik_left_front + y_end * (ik_right_front - ik_left_front)]
+            p_back_left = inner[start_idx][ik_left_back + y_start * (ik_right_back - ik_left_back)]
+            p_back_right = inner[end_idx][ik_left_back + y_end * (ik_right_back - ik_left_back)]
 
+            # Map our ik_values indices to the appropriate inner lines
             for i, ik in enumerate(ik_values):
                 ik_front, ik_back = ik
-                line: openglider.vector.PolyLine2D = inner[i]
+                # Calculate which inner line corresponds to this y value
+                t = float(i) / (numribs + 1)
+                y = y_start + t * (y_end - y_start)
+                inner_idx = int(round(y * (total_inners - 1)))
+                inner_idx = max(0, min(inner_idx, total_inners - 1))
+                
+                line: openglider.vector.PolyLine2D = inner[inner_idx]
 
                 _cut_front = line.cut(p_front_left, p_front_right, ik_front, True)
                 _cut_back = line.cut(p_back_left, p_back_right, ik_back, True)
@@ -929,3 +958,304 @@ class PanelRigidFoil:
                 marks.append(openglider.vector.PolyLine2D([left[ik], right[ik]]))
 
         return openglider.vector.drawing.PlotPart(cuts=[contour], marks=marks)
+
+
+class LeadingEdgeClosure:
+    """
+    Defines a virtual partition at mid-span for leading edge shaping.
+    Creates two half-panels from LE to cut_back_x, with ballooned thickness.
+    
+    This creates a "virtual rib" in the middle of the cell, but only for a 
+    limited portion of the chord (from leading edge to cut_back_x). The two
+    resulting half-panels are flattened using mesh-based triangulation that
+    preserves 3D arc lengths, following the "Sewing Dart Principle".
+    
+    Parameters:
+    - cut_back_x: x position (0-1 normalized) where the partition ends
+                  0 = leading edge, 0.1 = 10% chord from LE
+    - y_position: spanwise position of the partition (0.5 = center)
+    - material_code: optional material/color code for the partition
+    - name: optional name for the closure element
+    """
+    
+    def __init__(
+        self, 
+        cut_back_x: float = 0.1, 
+        y_position: float = 0.5,
+        material_code: str = "",
+        name: str = "le_closure"
+    ):
+        self.cut_back_x = cut_back_x
+        self.y_position = y_position
+        self.material_code = material_code
+        self.name = name
+    
+    def __json__(self):
+        return {
+            "cut_back_x": self.cut_back_x,
+            "y_position": self.y_position,
+            "material_code": self.material_code,
+            "name": self.name
+        }
+    
+    def mirror(self):
+        """Mirror the closure (y_position stays the same for center)."""
+        pass  # y_position = 0.5 is symmetric
+    
+    def get_midrib_profile_3d(self, cell: "Cell"):
+        """
+        Get the ballooned 3D profile at y_position.
+        This is the virtual rib that forms the partition.
+        """
+        return cell.midrib(self.y_position, ballooning=True)
+    
+    def get_leading_edge_ik(self, cell: "Cell") -> float:
+        """Get the profile index for the leading edge (x=0)."""
+        x_values = cell.rib1.profile_2d.x_values
+        return get_x_value(x_values, 0.0)
+    
+    def get_cut_back_ik(self, cell: "Cell") -> float:
+        """Get the profile index for the cut_back_x position."""
+        x_values = cell.rib1.profile_2d.x_values
+        return get_x_value(x_values, self.cut_back_x)
+    
+    def get_3d_left(self, cell: "Cell", numribs: int = 8):
+        """
+        Get 3D geometry for left half-panel (y=0 to y_position).
+        Returns list of PolyLine representing midribs from LE to cut_back_x.
+        """
+        ribs = []
+        ik_le = self.get_leading_edge_ik(cell)
+        ik_back = self.get_cut_back_ik(cell)
+        
+        for i in range(numribs + 1):
+            y = i / numribs * self.y_position  # y from 0 to y_position
+            midrib = cell.midrib(y, ballooning=True)
+            ribs.append(midrib.get(ik_le, ik_back))
+        
+        return ribs
+    
+    def get_3d_right(self, cell: "Cell", numribs: int = 8):
+        """
+        Get 3D geometry for right half-panel (y_position to y=1).
+        Returns list of PolyLine representing midribs from LE to cut_back_x.
+        """
+        ribs = []
+        ik_le = self.get_leading_edge_ik(cell)
+        ik_back = self.get_cut_back_ik(cell)
+        
+        for i in range(numribs + 1):
+            y = self.y_position + i / numribs * (1.0 - self.y_position)  # y from y_position to 1
+            midrib = cell.midrib(y, ballooning=True)
+            ribs.append(midrib.get(ik_le, ik_back))
+        
+        return ribs
+    
+    def get_mesh(self, cell: "Cell", numribs: int = 8, with_numpy: bool = False):
+        """
+        Get combined mesh for 3D visualization of both half-panels.
+        """
+        mesh_left = self._get_panel_mesh(cell, "left", numribs, with_numpy)
+        mesh_right = self._get_panel_mesh(cell, "right", numribs, with_numpy)
+        
+        # Combine meshes
+        return mesh_left + mesh_right
+    
+    def _get_panel_mesh(
+        self, 
+        cell: "Cell", 
+        side: str, 
+        numribs: int = 8, 
+        with_numpy: bool = False
+    ) -> Mesh:
+        """
+        Generate mesh for one half-panel.
+        
+        :param side: "left" or "right"
+        """
+        if side == "left":
+            ribs_3d = self.get_3d_left(cell, numribs)
+        else:
+            ribs_3d = self.get_3d_right(cell, numribs)
+        
+        points = []
+        nums = []
+        count = 0
+        
+        for rib in ribs_3d:
+            rib_points = list(rib)
+            points.extend(rib_points)
+            nums.append([j + count for j in range(len(rib_points))])
+            count += len(rib_points)
+        
+        if len(nums) < 2:
+            return Mesh(polygons={})
+        
+        triangles = []
+        
+        def left_triangle(l_i, r_i):
+            return [l_i + 1, l_i, r_i]
+        
+        def right_triangle(l_i, r_i):
+            return [r_i + 1, l_i, r_i]
+        
+        def quad(l_i, r_i):
+            return [l_i + 1, l_i, r_i, r_i + 1]
+        
+        for rib_no in range(len(nums) - 1):
+            num_l = nums[rib_no]
+            num_r = nums[rib_no + 1]
+            len_l = len(num_l)
+            len_r = len(num_r)
+            l_i = r_i = 0
+            
+            while l_i < len_l - 1 or r_i < len_r - 1:
+                if l_i >= len_l - 1:
+                    if r_i < len_r - 1:
+                        triangles.append(right_triangle(num_l[min(l_i, len_l - 1)], num_r[r_i]))
+                    r_i += 1
+                elif r_i >= len_r - 1:
+                    if l_i < len_l - 1:
+                        triangles.append(left_triangle(num_l[l_i], num_r[min(r_i, len_r - 1)]))
+                    l_i += 1
+                else:
+                    # Use quad when possible
+                    triangles.append(quad(num_l[l_i], num_r[r_i]))
+                    l_i += 1
+                    r_i += 1
+        
+        mesh_name = f"le_closure_{side}_{self.material_code}"
+        return Mesh.from_indexed(
+            points, 
+            {mesh_name: triangles}, 
+            name=f"{self.name}_{side}"
+        )
+    
+    def get_flattened(self, cell: "Cell", side: str, numribs: int = 20):
+        """
+        Flatten one half-panel using mesh-based triangulation.
+        Preserves 3D arc lengths for sewability (Sewing Dart Principle).
+        
+        :param side: "left" or "right"
+        :return: tuple of (left_boundary, right_boundary) as PolyLine2D
+        """
+        if side == "left":
+            ribs_3d = self.get_3d_left(cell, numribs)
+        else:
+            ribs_3d = self.get_3d_right(cell, numribs)
+        
+        if len(ribs_3d) < 2:
+            return None, None
+        
+        numpoints = len(ribs_3d[0])
+        
+        # Calculate cross-span lengths
+        def get_length(ik, rib_idx1, rib_idx2):
+            """Get distance between same profile point on two ribs."""
+            p1 = ribs_3d[rib_idx1][ik]
+            p2 = ribs_3d[rib_idx2][ik]
+            return norm(p1 - p2)
+        
+        # Initialize first two points
+        l_0 = get_length(0, 0, len(ribs_3d) - 1)
+        
+        left_bal = [np.array([0, 0])]
+        right_bal = [np.array([l_0, 0])]
+        
+        def get_point(p1, p2, l_base, l_l, l_r, left=True):
+            """Calculate 2D point position preserving 3D distances."""
+            if l_base < 1e-10:
+                # Degenerate case - points are the same
+                return p1 + np.array([l_l, 0]) if left else p2 + np.array([-l_r, 0])
+            
+            lx = (l_base**2 + l_l**2 - l_r**2) / (2 * l_base)
+            ly_sq = l_l**2 - lx**2
+            ly = math.sqrt(max(0, ly_sq))
+            
+            diff = p2 - p1
+            diff_len = norm(diff)
+            if diff_len > 1e-10:
+                diff = diff / diff_len
+            else:
+                diff = np.array([1, 0])
+            
+            if left:
+                diff_y = np.array([-diff[1], diff[0]])
+            else:
+                diff_y = np.array([diff[1], -diff[0]])
+            
+            return p1 + lx * diff + ly * diff_y
+        
+        # Triangulate along the profile
+        for i in range(numpoints - 1):
+            p1 = left_bal[-1]
+            p2 = right_bal[-1]
+            
+            # Distances along first and last rib
+            d_l = norm(ribs_3d[0][i] - ribs_3d[0][i + 1])
+            d_r = norm(ribs_3d[-1][i] - ribs_3d[-1][i + 1])
+            
+            # Cross-span distances
+            l_current = get_length(i, 0, len(ribs_3d) - 1)
+            l_next = get_length(i + 1, 0, len(ribs_3d) - 1)
+            l_diag = norm(ribs_3d[0][i + 1] - ribs_3d[-1][i])
+            
+            # Calculate next points
+            pr_2 = get_point(p2, p1, l_current, d_r, l_diag, left=False)
+            pl_2 = get_point(p1, pr_2, l_diag, d_l, l_next)
+            
+            left_bal.append(pl_2)
+            right_bal.append(pr_2)
+        
+        return PolyLine2D(left_bal), PolyLine2D(right_bal)
+    
+    def get_flattened_plotpart(
+        self, 
+        cell: "Cell", 
+        side: str, 
+        numribs: int = 20,
+        seam_allowance: float = 0.006
+    ):
+        """
+        Get a PlotPart for 2D pattern export.
+        
+        :param side: "left" or "right"
+        :param seam_allowance: seam allowance in meters (default 6mm)
+        :return: PlotPart with cuts and marks
+        """
+        left, right = self.get_flattened(cell, side, numribs)
+        
+        if left is None or right is None:
+            return None
+        
+        # Build envelope with seam allowance
+        left_outer = left.copy()
+        left_outer.add_stuff(-seam_allowance)
+        
+        right_outer = right.copy()
+        right_outer.add_stuff(seam_allowance)
+        
+        # Create closed contour by combining boundaries
+        # Go: left_outer forward -> connect to right_outer end -> right_outer backward -> connect to start
+        contour_points = []
+        
+        # Add left outer boundary (forward)
+        contour_points.extend(left_outer.data)
+        
+        # Add connection to right outer end
+        contour_points.append(right_outer.data[-1])
+        
+        # Add right outer boundary (backward)
+        contour_points.extend(right_outer.data[::-1])
+        
+        # Close back to start
+        contour_points.append(left_outer.data[0])
+        
+        contour = PolyLine2D(contour_points)
+        
+        return openglider.vector.drawing.PlotPart(
+            cuts=[contour],
+            marks=[left, right],  # Inner edges as marks
+            name=f"{self.name}_{side}"
+        )
+

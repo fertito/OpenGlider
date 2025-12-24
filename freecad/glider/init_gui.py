@@ -35,6 +35,7 @@ class GliderWorkbench(Gui.Workbench):
         "HoleDesignCommand",
         "CutCommand",
         "ColorCommand",
+        "LEPanelSplitCommand",
         "Gl2dExport",
     ]
 
@@ -85,6 +86,7 @@ class GliderWorkbench(Gui.Workbench):
         Gui.addCommand("ZrotCommand", tools.ZrotCommand())
         Gui.addCommand("CutCommand", tools.CutCommand())
         Gui.addCommand("ColorCommand", tools.ColorCommand())
+        Gui.addCommand("LEPanelSplitCommand", tools.LEPanelSplitCommand())
 
         Gui.addCommand("PatternCommand", tools.PatternCommand())
         Gui.addCommand("PanelCommand", tools.PanelCommand())

@@ -81,10 +81,24 @@ class ColorTool(BaseTool):
             x_values = [-x_values[0]] + x_values
         for i, cell in enumerate(self.panels):
             for j, panel in enumerate(cell):
-                p1 = [x_values[i], panel.cut_front["left"], 0.0]
-                p2 = [x_values[i], panel.cut_back["left"], 0.0]
-                p3 = [x_values[i + 1], panel.cut_back["right"], 0.0]
-                p4 = [x_values[i + 1], panel.cut_front["right"], 0.0]
+                # Get panel y_start/y_end for split panels
+                y_start = getattr(panel, 'y_start', 0.0)
+                y_end = getattr(panel, 'y_end', 1.0)
+                
+                # Interpolate X positions based on y range
+                x_left = x_values[i] + y_start * (x_values[i + 1] - x_values[i])
+                x_right = x_values[i] + y_end * (x_values[i + 1] - x_values[i])
+                
+                # Interpolate cut positions based on y range
+                front_left = panel.cut_front["left"] + y_start * (panel.cut_front["right"] - panel.cut_front["left"])
+                front_right = panel.cut_front["left"] + y_end * (panel.cut_front["right"] - panel.cut_front["left"])
+                back_left = panel.cut_back["left"] + y_start * (panel.cut_back["right"] - panel.cut_back["left"])
+                back_right = panel.cut_back["left"] + y_end * (panel.cut_back["right"] - panel.cut_back["left"])
+                
+                p1 = [x_left, front_left, 0.0]
+                p2 = [x_left, back_left, 0.0]
+                p3 = [x_right, back_right, 0.0]
+                p4 = [x_right, front_right, 0.0]
                 vis_panel = ColorPolygon([p1, p2, p3, p4][::-1], True)
                 panel.vis_panel = vis_panel
                 if panel.material_code:
@@ -109,14 +123,21 @@ class ColorTool(BaseTool):
     def accept(self):
         self.selector.unregister()
         colors = []
+        colors_by_name = {}  # New: store by panel name for split panels
+        
         for cell in self.panels:
             cell_colors = []
             for panel in cell:
-                # TODO: make this parametric
-                cell_colors.append(rgb_to_hex(panel.vis_panel.std_col, "skytex32_"))
+                # Get the color and save it directly to the panel
+                color_code = rgb_to_hex(panel.vis_panel.std_col, "skytex32_")
+                panel.material_code = color_code
+                cell_colors.append(color_code)
+                # Also store by panel name for split panels
+                colors_by_name[panel.name] = color_code
             colors.append(cell_colors)
 
         self.parametric_glider.elements["materials"] = colors
+        self.parametric_glider.elements["materials_by_name"] = colors_by_name
         super(ColorTool, self).accept()
         self.update_view_glider()
 

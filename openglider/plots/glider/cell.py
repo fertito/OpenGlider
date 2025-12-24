@@ -24,10 +24,15 @@ class PanelPlot(object):
 
         self._flattened_cell = flattended_cell
 
+        # Use full lists for flattening
         self.inner = flattended_cell["inner"]
         self.ballooned = flattended_cell["ballooned"]
         self.outer = flattended_cell["outer"]
         self.outer_orig = flattended_cell["outer_orig"]
+        
+        # Store y_start/y_end for post-generation trimming
+        self.y_start = getattr(panel, 'y_start', 0.0)
+        self.y_end = getattr(panel, 'y_end', 1.0)
 
         self.x_values = self.cell.rib1.profile_2d.x_values
 
@@ -244,13 +249,13 @@ class PanelPlot(object):
         if self.config.layout_seperate_panels and not self.panel.is_lower():
             left = get_x_value(self.x_values, self.panel.cut_back["left"])
             right = get_x_value(self.x_values, self.panel.cut_back["right"])
-            p2 = self.ballooned[1][right]
+            p2 = self.ballooned[-1][right]  # Use last element instead of [1]
             p1 = self.ballooned[0][left]
             align = "left"
         else:
             left = get_x_value(self.x_values, self.panel.cut_front["left"])
             right = get_x_value(self.x_values, self.panel.cut_front["right"])
-            p1 = self.ballooned[1][right]
+            p1 = self.ballooned[-1][right]  # Use last element instead of [1]
             p2 = self.ballooned[0][left]
             align = "right"
         text = self.panel.name
@@ -796,13 +801,33 @@ class CellPlotMaker:
 
     def get_panels(self, panels=None):
         cell_panels = []
-        flattened_cell = self._get_flatten_cell()
         self.cell.calculate_3d_shaping(numribs=self.config.midribs)
 
         if panels is None:
             panels = self.cell.panels
 
         for panel in panels:
+            # Check if this is a split panel with non-default y range
+            y_start = getattr(panel, 'y_start', 0.0)
+            y_end = getattr(panel, 'y_end', 1.0)
+            
+            if y_start == 0.0 and y_end == 1.0:
+                # Full panel - use cached flattened cell
+                flattened_cell = self._get_flatten_cell()
+            else:
+                # Split panel - generate specific flattened cell for this y range
+                flattened_cell = self.cell.get_flattened_cell(
+                    self.config.midribs, y_start=y_start, y_end=y_end
+                )
+                # Add outer with allowances
+                left_bal, right_bal = flattened_cell["ballooned"]
+                outer_left = left_bal.copy().add_stuff(-self.config.allowance_general)
+                outer_right = right_bal.copy().add_stuff(self.config.allowance_general)
+                outer_orig = [outer_left, outer_right]
+                outer = [l.copy().check() for l in outer_orig]
+                flattened_cell["outer"] = outer
+                flattened_cell["outer_orig"] = outer_orig
+            
             plot = self.PanelPlot(panel, self.cell, flattened_cell, self.config)
             dwg = plot.flatten(self.attachment_points)
             cell_panels.append(dwg)
@@ -839,3 +864,33 @@ class CellPlotMaker:
             rigidfoils.append(rigidfoil.get_flattened(self.cell))
 
         return rigidfoils
+
+    def get_le_splits(self):
+        """
+        Get flattened patterns for LE panel spanwise splits.
+        
+        Checks if a panel touches the leading edge and if an LE split 
+        is defined for this cell. Returns split patterns for both
+        left and right half-panels.
+        """
+        from openglider.glider.cell.elements import LeadingEdgeClosure
+        
+        le_splits = []
+        
+        # Check if cell has le_closures defined
+        if not hasattr(self.cell, 'le_closures'):
+            return le_splits
+        
+        for closure in self.cell.le_closures:
+            # Generate left and right half-panel patterns
+            for side in ["left", "right"]:
+                plotpart = closure.get_flattened_plotpart(
+                    self.cell, 
+                    side, 
+                    numribs=self.config.midribs,
+                    seam_allowance=self.config.allowance_general
+                )
+                if plotpart is not None:
+                    le_splits.append(plotpart)
+        
+        return le_splits
