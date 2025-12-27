@@ -51,8 +51,7 @@ class GliderWorkbench(Gui.Workbench):
 
     productionBox = [
         "PatternCommand",
-        "PanelCommand",
-        "PolarsCommand",
+        "AerodynamicCommand",
         "ImportDXFCommand",
     ]
 
@@ -89,8 +88,7 @@ class GliderWorkbench(Gui.Workbench):
         Gui.addCommand("LEPanelSplitCommand", tools.LEPanelSplitCommand())
 
         Gui.addCommand("PatternCommand", tools.PatternCommand())
-        Gui.addCommand("PanelCommand", tools.PanelCommand())
-        Gui.addCommand("PolarsCommand", tools.PolarsCommand())
+        Gui.addCommand("AerodynamicCommand", tools.AerodynamicCommand())
 
         Gui.addCommand("GliderRibFeatureCommand", tools.GliderRibFeatureCommand())
         Gui.addCommand(

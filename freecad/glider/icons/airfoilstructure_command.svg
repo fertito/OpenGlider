@@ -6,7 +6,7 @@
    width="68.26667"
    viewBox="0 0 68.26667 68.26667"
    sodipodi:docname="airfoilstructure_command.svg"
-   inkscape:version="1.4.2 (1:1.4.2+202510271548+ebf0e940d0)"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
@@ -23,13 +23,13 @@
      inkscape:pageopacity="0.0"
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
-     inkscape:zoom="12.905273"
-     inkscape:cx="34.133334"
-     inkscape:cy="41.882105"
-     inkscape:window-width="3440"
-     inkscape:window-height="1366"
+     inkscape:zoom="9.1254061"
+     inkscape:cx="19.451189"
+     inkscape:cy="28.656259"
+     inkscape:window-width="1920"
+     inkscape:window-height="1011"
      inkscape:window-x="0"
-     inkscape:window-y="38"
+     inkscape:window-y="0"
      inkscape:window-maximized="1"
      inkscape:current-layer="svg_airfoilstructure" />
   <defs
@@ -48,20 +48,20 @@
   </metadata>
   <path
      id="profile"
-     d="M 65.750137,55.283308 C 44.010793,31.508278 30.28489,12.0309 15.663889,11.441028 8.8107925,11.164545 1.6686851,17.91432 3.3389849,21.81259 9.767886,36.816836 45.346127,50.244938 65.750137,55.283308 Z"
-     style="fill:none;stroke:#0079ff;stroke-width:3.52876;stroke-linecap:round;stroke-linejoin:round"
+     d="M 64.684786,63.614903 C 52.953424,29.505287 36.957018,7.0487817 21.404043,3.9499417 14.114117,2.4974646 2.6110629,10.22925 3.1144055,15.08731 5.049445,33.763538 26.898413,52.428994 64.684786,63.614903 Z"
+     style="fill:none;stroke:#0079ff;stroke-width:3.93917;stroke-linecap:round;stroke-linejoin:round"
      sodipodi:nodetypes="cssc" />
   <path
      id="extrados_sleeve"
-     d="M 7.0119951,19.388542 C 21.892401,8.7623834 29.594809,24.223252 53.084708,46.447368"
-     style="fill:none;stroke:#00aa00;stroke-width:3.05826;stroke-linecap:round;stroke-dasharray:none"
+     d="M 11.207512,10.631624 C 28.784259,0.98226685 44.328624,27.534729 56.604028,53.064214"
+     style="fill:none;stroke:#00aa00;stroke-width:3.41395;stroke-linecap:round;stroke-dasharray:none"
      sodipodi:nodetypes="cc" />
   <path
      id="reinforcement1"
-     d="m 31.988449,41.298597 a 5.7854265,5.7854265 0 0 1 10.853676,4.010278"
-     style="fill:none;stroke:#ff6600;stroke-width:2.3177;stroke-linecap:round;stroke-dasharray:none" />
+     d="m 31.393758,46.11853 a 6.2557248,6.6674225 0 0 1 10.989331,6.374491"
+     style="fill:none;stroke:#ff6600;stroke-width:2.58726;stroke-linecap:round;stroke-dasharray:none" />
   <path
      id="reinforcement2"
-     d="m 10.165602,26.267695 a 7.0575151,7.0575151 0 0 1 11.169033,8.630572"
-     style="fill:none;stroke:#ff6600;stroke-width:2.82732;stroke-linecap:round;stroke-dasharray:none" />
+     d="M 9.3966838,26.012991 A 7.631222,8.1334431 0 0 1 20.00413,37.708992"
+     style="fill:none;stroke:#ff6600;stroke-width:3.15615;stroke-linecap:round;stroke-dasharray:none" />
 </svg>

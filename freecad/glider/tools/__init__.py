@@ -376,24 +376,39 @@ def check_glider(obj):
         return True
 
 
-class PanelCommand(BaseCommand):
+class AerodynamicCommand(BaseCommand):
+    """Unified aerodynamic analysis tool."""
     def GetResources(self):
         return {
             "Pixmap": "panel_method.svg",
-            "MenuText": "panel-method",
-            "ToolTip": "compute aerodynamic properties with potential-flow",
+            "MenuText": "Aerodynamic Analysis",
+            "ToolTip": "Unified aerodynamic analysis: Cp visualization, polars, streamlines",
         }
 
     def tool(self, obj):
-        return pm.PanelTool(obj)
+        return pm.AerodynamicTool(obj)
+
+
+class PanelCommand(BaseCommand):
+    """Legacy panel method command - redirects to AerodynamicTool."""
+    def GetResources(self):
+        return {
+            "Pixmap": "panel_method.svg",
+            "MenuText": "panel-method (legacy)",
+            "ToolTip": "compute aerodynamic properties with potential-flow (use Aerodynamic Analysis instead)",
+        }
+
+    def tool(self, obj):
+        return pm.AerodynamicTool(obj)
 
 
 class PolarsCommand(BaseCommand):
+    """Legacy polars command - redirects to AerodynamicTool."""
     def GetResources(self):
-        return {"Pixmap": "polar.svg", "MenuText": "polars", "ToolTip": "polars"}
+        return {"Pixmap": "polar.svg", "MenuText": "polars (legacy)", "ToolTip": "polars (use Aerodynamic Analysis instead)"}
 
     def tool(self, obj):
-        return pm.Polars(obj)
+        return pm.AerodynamicTool(obj)
 
 
 class CutCommand(BaseCommand):
