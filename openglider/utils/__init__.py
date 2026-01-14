@@ -33,11 +33,37 @@ def sign(val):
 
 
 def consistent_value(elements, attribute) -> list:
+    import numpy as np
     vals = [recursive_getattr(element, attribute) for element in elements]
-    if vals[1:] == vals[:-1]:
+    
+    # Check if all values are equal (handles numpy arrays with tolerance for float precision)
+    def values_equal(v1, v2):
+        if isinstance(v1, np.ndarray) and isinstance(v2, np.ndarray):
+            # Use allclose with tolerance for floating point comparison
+            return np.allclose(v1, v2, rtol=1e-9, atol=1e-12)
+        if isinstance(v1, (list, tuple)) and isinstance(v2, (list, tuple)):
+            if len(v1) != len(v2):
+                return False
+            return np.allclose(v1, v2, rtol=1e-9, atol=1e-12)
+        return v1 == v2
+    
+    all_equal = all(values_equal(v1, v2) for v1, v2 in zip(vals[:-1], vals[1:]))
+    if all_equal:
         return vals[0]
 
-    raise Exception("values not consistent: {attribute}, {elements}")
+    # Provide better diagnostic info
+    element_names = [getattr(e, 'name', str(i)) for i, e in enumerate(elements)]
+    val_lengths = [len(v) if hasattr(v, '__len__') else 'N/A' for v in vals]
+    
+    # Show first differing values for arrays
+    diff_info = ""
+    if len(vals) >= 2 and hasattr(vals[0], '__iter__') and hasattr(vals[1], '__iter__'):
+        for i, (v1, v2) in enumerate(zip(vals[0], vals[1])):
+            if v1 != v2:
+                diff_info = f", first diff at index {i}: {v1:.6f} vs {v2:.6f}"
+                break
+    
+    raise Exception(f"values not consistent for '{attribute}' across elements {element_names}, lengths: {val_lengths}{diff_info}")
 
 
 def linspace(start, stop, count):

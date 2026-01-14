@@ -70,6 +70,9 @@ class Ballooning(object):
 
     def __getitem__(self, xval):
         """Get Ballooning Value (%) for a certain XValue"""
+        # Clamp to handle floating point precision issues at boundaries
+        xval = max(-1.0, min(1.0, xval))
+        
         if -1 <= xval < 0:
             # return self.upper.xpoint(-xval)[1]
             return self.upper(-xval)
@@ -271,6 +274,9 @@ class BallooningBezierNeu(Ballooning):
 
     def __getitem__(self, xval):
         """Get Ballooning Value (%) for a certain XValue"""
+        # Clamp to handle floating point precision issues at boundaries
+        xval = max(-1.0, min(1.0, xval))
+        
         if -1 <= xval <= 1:
             return self.interpolation(xval)
         else:
