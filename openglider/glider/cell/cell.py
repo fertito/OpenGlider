@@ -173,7 +173,7 @@ class Cell(CachedObject):
 
         p0 = self.panels[0]
         for p in self.panels[1:]:
-            if p.cut_front["type"] != skip and p.cut_front == p0.cut_back:
+            if p.cut_front.get("type") != skip and p.cut_front == p0.cut_back:
                 p0 = Panel(p0.cut_front, p.cut_back, material_code=p0.material_code)
             else:
                 panels.append(p0)
@@ -623,7 +623,7 @@ class Cell(CachedObject):
         cuts_3d = {}
 
         def cut_hash(cut):
-            return "{}-{}-{}".format(cut["left"], cut["right"], cut["type"])
+            return "{}-{}-{}".format(cut["left"], cut["right"], cut.get("type", "orthogonal"))
 
         def add_amount(cut, amount):
             cut_key = cut_hash(cut)
@@ -653,11 +653,11 @@ class Cell(CachedObject):
 
         cut_3d_types = ["cut_3d"]
         for panel in panels:
-            if panel.cut_front["type"] in cut_3d_types:
+            if panel.cut_front.get("type") in cut_3d_types:
                 panel.cut_front["amount_3d"] = get_amount(panel.cut_front)
             else:
                 panel.cut_front["amount_3d"] = [0] * (numribs + 2)
-            if panel.cut_back["type"] in cut_3d_types:
+            if panel.cut_back.get("type") in cut_3d_types:
                 panel.cut_back["amount_3d"] = get_amount(panel.cut_back)
             else:
                 panel.cut_back["amount_3d"] = [0] * (numribs + 2)

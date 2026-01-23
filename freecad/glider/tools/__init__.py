@@ -164,6 +164,9 @@ class CreateGlider(BaseCommand):
 
 
 class PatternCommand(BaseCommand):
+    # Store last used config to persist values between exports
+    _last_config = None
+    
     def GetResources(self):
         return {
             "Pixmap": "pattern_command.svg",
@@ -180,13 +183,26 @@ class PatternCommand(BaseCommand):
                 proceed = True
         if proceed:
             from openglider import plots
-
+            from freecad.glider.tools.pattern_config_dialog import show_pattern_config_dialog
+            
+            # Show configuration dialog with last used config
+            config_dict = show_pattern_config_dialog(current_config=PatternCommand._last_config)
+            if config_dict is None:
+                # User cancelled
+                return
+            
+            # Store config for next time
+            PatternCommand._last_config = config_dict
+            
+            # Ask for output directory
             file_name = QtGui.QFileDialog.getSaveFileName(
                 parent=None, caption="create panels"
             )
             if not file_name[0] == "":
                 file_name = file_name[0]
-                pat = plots.Patterns(obj.Proxy.getParametricGlider())
+                
+                # Pass the dict directly - Patterns will create its own config
+                pat = plots.Patterns(obj.Proxy.getParametricGlider(), config=config_dict)
                 pat.unwrap(file_name, obj.Proxy.getGliderInstance())
 
     @staticmethod

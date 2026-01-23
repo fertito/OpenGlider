@@ -570,13 +570,15 @@ class Layout(object):
             group = drawing.groups.new()
             with group.edit_data() as part_group:
                 for layer_name, layer in part.layers.items():
+                    # Skip invisible layers entirely (e.g., envelope)
+                    if not layer.visible:
+                        continue
+                        
                     if layer_name not in drawing.layers:
                         attributes = layer._get_dxf_attributes()
                         dwg_layer = drawing.layers.new(
                             name=layer_name, dxfattribs=attributes
                         )
-                        if not layer.visible:
-                            dwg_layer.off()
 
                     for elem in layer:
                         dxfattribs = {"layer": layer_name}

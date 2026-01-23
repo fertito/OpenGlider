@@ -35,7 +35,12 @@ class Layer(object):
         self.polylines.append(x)
 
     def copy(self):
-        return Layer([p.copy() for p in self])
+        return Layer(
+            [p.copy() for p in self],
+            stroke=self.stroke,
+            stroke_width=self.stroke_width,
+            visible=self.visible
+        )
 
     def _get_dxf_attributes(self):
         # color mapping: red->1, green->3, blue->5, black->7
@@ -98,11 +103,10 @@ class Layers(object):
         return list(self)
 
     def copy(self):
-        layer_copy = {
-            layer_name: [line.copy() for line in layer]
-            for layer_name, layer in self.layers.items()
-        }
-        return Layers(**layer_copy)
+        new_layers = Layers()
+        for layer_name, layer in self.layers.items():
+            new_layers.layers[layer_name] = layer.copy()
+        return new_layers
 
     def add(self, name, **kwargs):
         layer = Layer(**kwargs)

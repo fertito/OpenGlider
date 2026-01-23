@@ -279,11 +279,13 @@ class PanelPlot(object):
             p2 = self.ballooned[0][left]
             align = "right"
         text = self.panel.name
+        # Text size: 80% of allowance, but max 8mm to avoid huge text
+        text_size = min(self.config.allowance_design * 0.8, 0.008)
         part_text = Text(
             text,
             p1,
             p2,
-            size=self.config.allowance_design * 0.8,
+            size=text_size,
             align=align,
             valign=0.6,
             height=0.8,
@@ -607,11 +609,13 @@ class DribPlot(object):
     def _insert_text(self, plotpart):
         # text_p1 = left_out[0] + self.config.drib_text_position * (right_out[0] - left_out[0])
         text_p1 = self.left[0]
+        # Text size: 80% of allowance, but max 8mm to avoid huge text
+        text_size = min(self.config.drib_allowance_folds * 0.8, 0.008)
         plotpart.layers["text"] += Text(
             " {} ".format(self.drib.name),
             text_p1,
             self.right[0],
-            size=self.config.drib_allowance_folds * 0.8,
+            size=text_size,
             height=0.8,
             valign=0.6,
         ).get_vectors()
