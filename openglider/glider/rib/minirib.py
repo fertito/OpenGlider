@@ -518,8 +518,16 @@ class MiniRib:
             return PolyLine2D(closed_data)
         return shape
 
-    def get_flattened_with_allowance(self, cell, allowance=0.006):
-        """Get flattened 2D profile with seam allowance as outer cut line."""
+    def get_flattened_with_allowance(self, cell, allowance=0.006, miter_limit=2.0):
+        """
+        Get flattened 2D profile with seam allowance as outer cut line.
+        
+        Args:
+            cell: The cell containing this minirib
+            allowance: Seam allowance distance in meters
+            miter_limit: Maximum miter extension factor (default 2.0).
+                        Prevents excessive spikes at sharp corners.
+        """
         from openglider.vector import PolyLine2D
         import numpy as np
         
@@ -532,44 +540,73 @@ class MiniRib:
         # Close the inner curve
         inner_closed = PolyLine2D(list(inner.data) + [inner.data[0]])
         
-        # Create outer curve with proper parallel offset
-        # Calculate perpendicular offset at each point
+        # Create outer curve with proper miter-limited offset
         points = list(shape.data)
         n = len(points)
         outer_points = []
         
         for i in range(n):
-            # Get previous and next points (with wrapping for closed curve)
+            # Get previous, current, next points (with wrapping for closed curve)
             prev_pt = np.array(points[(i - 1) % n])
             curr_pt = np.array(points[i])
             next_pt = np.array(points[(i + 1) % n])
             
-            # Calculate tangent vectors
-            t1 = curr_pt - prev_pt
-            t2 = next_pt - curr_pt
+            # Calculate edge vectors
+            d1 = curr_pt - prev_pt  # Incoming edge
+            d2 = next_pt - curr_pt  # Outgoing edge
             
-            # Calculate perpendicular normals (rotate 90 degrees)
-            # For 2D: perpendicular of (x, y) is (-y, x) for left turn
-            n1 = np.array([-t1[1], t1[0]])
-            n2 = np.array([-t2[1], t2[0]])
+            d1_len = np.linalg.norm(d1)
+            d2_len = np.linalg.norm(d2)
             
-            # Normalize
-            len1 = np.linalg.norm(n1)
-            len2 = np.linalg.norm(n2)
-            if len1 > 1e-10:
-                n1 = n1 / len1
-            if len2 > 1e-10:
-                n2 = n2 / len2
+            # Handle degenerate cases
+            if d1_len < 1e-10 or d2_len < 1e-10:
+                # Use available edge for normal
+                if d1_len >= 1e-10:
+                    n1 = np.array([-d1[1], d1[0]]) / d1_len
+                    outer_points.append(curr_pt + n1 * allowance)
+                elif d2_len >= 1e-10:
+                    n2 = np.array([-d2[1], d2[0]]) / d2_len
+                    outer_points.append(curr_pt + n2 * allowance)
+                else:
+                    outer_points.append(curr_pt)
+                continue
             
-            # Average normal at this point
-            avg_normal = (n1 + n2) / 2.0
-            len_avg = np.linalg.norm(avg_normal)
-            if len_avg > 1e-10:
-                avg_normal = avg_normal / len_avg
+            # Calculate perpendicular normals (pointing outward for CCW winding)
+            n1 = np.array([-d1[1], d1[0]]) / d1_len
+            n2 = np.array([-d2[1], d2[0]]) / d2_len
             
-            # Offset point
-            outer_pt = curr_pt + avg_normal * allowance
-            outer_points.append(outer_pt)
+            # Calculate corner angle
+            cos_angle = np.clip(np.dot(n1, n2), -1.0, 1.0)
+            angle = np.arccos(cos_angle)
+            
+            # Check if angle is nearly 180 (direction reversal)
+            if angle < 0.01:  # Nearly collinear
+                outer_points.append(curr_pt + n1 * allowance)
+                continue
+            
+            # Calculate miter extension factor: 1/cos(angle/2)
+            cos_half_angle = np.cos(angle / 2)
+            if cos_half_angle > 1e-10:
+                extension_factor = 1.0 / cos_half_angle
+            else:
+                extension_factor = miter_limit + 1  # Force bevel
+            
+            # Determine if we need bevel (miter too long) or regular miter
+            if extension_factor > miter_limit:
+                # Use bevel: add two points
+                outer_points.append(curr_pt + n1 * allowance)
+                outer_points.append(curr_pt + n2 * allowance)
+            else:
+                # Calculate miter direction (bisector of the two normals)
+                miter_dir = n1 + n2
+                miter_len = np.linalg.norm(miter_dir)
+                if miter_len > 1e-10:
+                    miter_dir = miter_dir / miter_len
+                    # Scale by extension factor
+                    outer_pt = curr_pt + miter_dir * allowance * extension_factor
+                else:
+                    outer_pt = curr_pt + n1 * allowance
+                outer_points.append(outer_pt)
         
         outer_closed = PolyLine2D(outer_points + [outer_points[0]])
         

@@ -22,6 +22,7 @@ class PlotMaker(object):
         self.le_splits = collections.OrderedDict()
         self.reinforcements = []  # Halfmoons and attachment rod sleeves
         self.rod_sleeves = []  # Profile rod sleeves (extrados/intrados)
+        self.miniribs = []  # Mini ribs patterns
         self.ribs = []
         self._cellplotmakers = dict()
 
@@ -222,6 +223,73 @@ class PlotMaker(object):
         
         return self.reinforcements
 
+    def get_miniribs(self):
+        """Get miniribs patterns for 2D export."""
+        from openglider.vector.drawing import PlotPart
+        from openglider.vector.text import Text
+        from openglider.vector.functions import rotation_2d, norm
+        import numpy as np
+        
+        self.miniribs = []
+        
+        for cell_idx, cell in enumerate(self.glider_3d.cells):
+            if hasattr(cell, "miniribs"):
+                for mr_idx, mr in enumerate(cell.miniribs):
+                    try:
+                        # Get flattened shape with seam allowance
+                        inner, outer = mr.get_flattened_with_allowance(
+                            cell, 
+                            allowance=self.config.allowance_general
+                        )
+                        if outer is None:
+                            continue
+                        
+                        # Create unique name: MR_cell_index
+                        unique_name = f"MR_{cell_idx+1}_{mr_idx+1}"
+                        
+                        # Create PlotPart with proper layers
+                        part = PlotPart(
+                            name=unique_name,
+                            material_code="miniribs"
+                        )
+                        
+                        # Outer = cut line, Inner = stitch line
+                        part.layers["cuts"].append(outer)
+                        part.layers["stitches"].append(inner)
+                        
+                        # Add hole contours to cuts layer
+                        hole_contours = mr.get_hole_contours_2d(cell)
+                        for hole_contour in hole_contours:
+                            part.layers["cuts"].append(hole_contour)
+                        
+                        # Add text label in the seam allowance area
+                        inner_pts = list(inner.data)
+                        outer_pts = list(outer.data)
+                        if len(inner_pts) > 4 and len(outer_pts) > 4:
+                            # Take points from the leading edge area
+                            idx = len(inner_pts) // 8
+                            p_inner = np.array(inner_pts[idx])
+                            p_outer = np.array(outer_pts[idx])
+                            
+                            # Text position between inner and outer
+                            text_center = (p_inner + p_outer) / 2
+                            diff = p_outer - p_inner
+                            
+                            # Create perpendicular direction for text
+                            p1 = text_center
+                            p2 = text_center + rotation_2d(np.pi / 2).dot(diff)
+                            
+                            # Text size: 80% of allowance, max 8mm
+                            text_size = min(norm(diff) * 0.8, 0.008)
+                            text_obj = Text(unique_name, p1, p2, size=text_size, valign=0)
+                            part.layers["text"] += text_obj.get_vectors()
+                        
+                        self.miniribs.append(part)
+                    except Exception as e:
+                        print(f"Failed to plot minirib: {e}")
+        
+        return self.miniribs
+
     def get_rod_sleeves(self):
         """Get profile rod sleeves (extrados/intrados) for 2D export in separate frame."""
         from openglider.vector.drawing import PlotPart
@@ -313,6 +381,15 @@ class PlotMaker(object):
             rod_sleeves_layout.draw_border(border=0.02)
             rod_sleeves_layout.add_text("rod_sleeves")
 
+        # Add miniribs layout (between ribs and dribs)
+        miniribs_layout = Layout()
+        if self.miniribs:
+            miniribs_layout = Layout.stack_row(
+                self.miniribs, self.config.patterns_align_dist_x
+            )
+            miniribs_layout.draw_border(border=0.02)
+            miniribs_layout.add_text("miniribs")
+
         all_layouts = [panels]
         all_layouts += panels_grouped
         if self.reinforcements:
@@ -320,6 +397,8 @@ class PlotMaker(object):
         if self.rod_sleeves:
             all_layouts += [rod_sleeves_layout]
         all_layouts += ribs_grouped
+        if self.miniribs:
+            all_layouts += [miniribs_layout]
         all_layouts += dribs_grouped
         all_layouts += straps_grouped
         all_layouts += [rigidfoils]
@@ -329,6 +408,7 @@ class PlotMaker(object):
     def unwrap(self):
         self.get_panels()
         self.get_ribs()
+        self.get_miniribs()
         self.get_dribs()
         self.get_straps()
         self.get_rigidfoils()

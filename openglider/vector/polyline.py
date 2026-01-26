@@ -430,9 +430,15 @@ class PolyLine2D(PolyLine):
 
         return self
 
-    def add_stuff(self, amount):
+    def add_stuff(self, amount, miter_limit=2.0):
         """
         Shift the whole line for a given amount (->Sewing allowance)
+        
+        Args:
+            amount: Offset amount (positive = outward, negative = inward)
+            miter_limit: Maximum allowed extension factor at corners (default 2.0).
+                         If the miter would extend more than miter_limit * |amount|,
+                         the corner is beveled instead.
         """
         # cos(vectorangle(a,b)) = (a1 b1+a2 b2)/Sqrt[(a1^2+a2^2) (b1^2+b2^2)]
         newlist = []
@@ -445,25 +451,50 @@ class PolyLine2D(PolyLine):
             third = self.data[i + 1]
             d1 = second - first
             d2 = third - second
-            cosphi = d1.dot(d2) / np.sqrt(d1.dot(d1) * d2.dot(d2))
+            d1_norm = norm(d1)
+            d2_norm = norm(d2)
             coresize = 1e-8
-            if cosphi > 0.9999 or norm(d1) < coresize or norm(d2) < coresize:
-                newlist.append(second + self.normvectors[i] * amount / cosphi)
-            elif cosphi < -0.9999:  # this is true if the direction changes 180 degree
-                n1 = self.norm_segment_vectors[i - 1]
-                n2 = self.norm_segment_vectors[i]
+            
+            if d1_norm < coresize or d2_norm < coresize:
+                # Very short segment, just use average normal
+                newlist.append(second + self.normvectors[i] * amount)
+                continue
+                
+            cosphi = d1.dot(d2) / np.sqrt(d1.dot(d1) * d2.dot(d2))
+            
+            if cosphi > 0.9999:
+                # Nearly collinear, simple offset
+                newlist.append(second + self.normvectors[i] * amount)
+            elif cosphi < -0.9999:
+                # 180 degree turn - add two points for bevel
                 newlist.append(second + self.norm_segment_vectors[i - 1] * amount)
                 newlist.append(second + self.norm_segment_vectors[i] * amount)
             else:
                 n1 = self.norm_segment_vectors[i - 1]
                 n2 = self.norm_segment_vectors[i]
-                sign = -1.0 + 2.0 * (d2.dot(n1) > 0)
-                phi = np.arccos(n1.dot(n2))
-                d1 = normalize(d1)
-                ext_vec = n1 - sign * d1 * np.tan(phi / 2)
-                newlist.append(second + ext_vec * amount)
+                sign_val = -1.0 + 2.0 * (d2.dot(n1) > 0)
+                phi = np.arccos(np.clip(n1.dot(n2), -1.0, 1.0))
+                d1_unit = normalize(d1)
+                
+                # Calculate miter extension factor
+                # At angle phi, the miter extension is 1/cos(phi/2)
+                half_phi = phi / 2
+                cos_half = np.cos(half_phi)
+                if cos_half > 1e-10:
+                    extension_factor = 1.0 / cos_half
+                else:
+                    extension_factor = miter_limit + 1  # Force bevel
+                
+                # Check if miter exceeds limit
+                if extension_factor > miter_limit:
+                    # Use bevel (two points) instead of miter
+                    newlist.append(second + n1 * amount)
+                    newlist.append(second + n2 * amount)
+                else:
+                    # Normal miter
+                    ext_vec = n1 - sign_val * d1_unit * np.tan(half_phi)
+                    newlist.append(second + ext_vec * amount)
 
-                # newlist.append(cut(a, b, c, d)[0])
         newlist.append(third + self.norm_segment_vectors[-1] * amount)
         self.data = newlist
 
