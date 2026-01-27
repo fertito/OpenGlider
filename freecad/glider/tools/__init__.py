@@ -24,6 +24,7 @@ from . import (
 )
 from . import panel_method as pm
 from . import shape_tool, span_mapping
+from . import profile_control_tool
 
 try:
     from importlib import reload
@@ -325,6 +326,19 @@ class AirfoilMergeCommand(BaseCommand):
 
     def tool(self, obj):
         return span_mapping.AirfoilMergeTool(obj)
+
+
+class AirfoilControlCommand(BaseCommand):
+    """Unified Airfoil Control - combines distribution, overrides, shark nose, thickness, wingtip"""
+    def GetResources(self):
+        return {
+            "Pixmap": "airfoil_control_command.svg",
+            "MenuText": "Airfoil Control",
+            "ToolTip": "Unified airfoil management: distribution, overrides, shark nose, thickness, wingtip",
+        }
+
+    def tool(self, obj):
+        return profile_control_tool.AirfoilControlTool(obj)
 
 
 class BallooningCommand(BaseCommand):

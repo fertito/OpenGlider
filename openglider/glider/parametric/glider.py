@@ -196,6 +196,35 @@ class ParametricGlider(object):
             }
         })
 
+        # =====================================================================
+        # Profile Control - Unified airfoil management
+        # =====================================================================
+        
+        # Thickness curve: controls relative thickness scaling along span
+        # Values: 1.0 = original thickness, 0.8 = 80%, 1.2 = 120%
+        self.thickness_curve = kwargs.get('thickness_curve', None)  # SymmetricBSpline or None
+        self.thickness_curve_enabled = kwargs.get('thickness_curve_enabled', False)
+        
+        # Shark nose: procedural intrados modification
+        self.sharknose_enabled = kwargs.get('sharknose_enabled', False)
+        self.sharknose_x1 = kwargs.get('sharknose_x1', 0.06)  # Start position (% chord)
+        self.sharknose_x2 = kwargs.get('sharknose_x2', 0.09)  # Max shift position (% chord)
+        self.sharknose_x3 = kwargs.get('sharknose_x3', 0.90)  # End position (% chord)
+        self.sharknose_y_max = kwargs.get('sharknose_y_max', 0.03)  # Max shift amount (% chord)
+        self.sharknose_curve = kwargs.get('sharknose_curve', None)  # SymmetricBSpline for amount variation
+        self.sharknose_cells = kwargs.get('sharknose_cells', None)  # List of cell indices to apply sharknose (None = all)
+        
+        # Profile overrides: rib-specific profile assignment
+        # Format: {rib_index: profile_index} - overrides the distribution curve for specific ribs
+        self.profile_overrides = kwargs.get('profile_overrides', {})
+        self.profile_overrides_enabled = kwargs.get('profile_overrides_enabled', False)
+        
+        # Last rib profile (stabilo/wingtip) - applied to the very last rib
+        self.last_profile_enabled = kwargs.get('last_profile_enabled', False)
+        self.last_profile_type = kwargs.get('last_profile_type', 'line')  # 'line', 'thin', 'custom'
+        self.last_profile_thickness = kwargs.get('last_profile_thickness', 0.3)  # Relative thickness (0.3 = 30% of original)
+        self.last_profile_custom = kwargs.get('last_profile_custom', None)  # Custom Profile2D
+
     def get_sleeve_exclusion_zones(self, rib, rib_idx, is_suspended):
         """
         Get chord ranges that should be excluded from hole placement due to rod sleeves.
@@ -304,7 +333,12 @@ class ParametricGlider(object):
         # Minimum chord for hole generation - skip tiny ribs (stabilos) that cause mesh issues
         MIN_CHORD_FOR_HOLES = 0.15  # 15cm minimum chord (reduced from 30cm)
 
-        for rib in glider.ribs:
+        for rib_idx, rib in enumerate(glider.ribs):
+            # Skip the last rib if last_profile_enabled (should be solid, no holes)
+            if getattr(self, 'last_profile_enabled', False) and rib_idx == len(glider.ribs) - 1:
+                print(f"[apply_holes] Skipping last rib {rib.name}: last_profile_enabled")
+                continue
+            
             # Skip ribs with chord too small for reliable hole generation
             if rib.chord < MIN_CHORD_FOR_HOLES:
                 print(f"[apply_holes] Skipping rib {rib.name}: chord {rib.chord:.3f}m < {MIN_CHORD_FOR_HOLES}m")
@@ -806,6 +840,24 @@ class ParametricGlider(object):
                     "F": {"enabled": True, "position": 100.0, "interval": 1, "start_cell": 0, "patterns": "1:1"},
                 }
             }),
+            # =====================================================================
+            # Profile Control - Unified airfoil management
+            # =====================================================================
+            "thickness_curve": getattr(self, "thickness_curve", None),
+            "thickness_curve_enabled": getattr(self, "thickness_curve_enabled", False),
+            "sharknose_enabled": getattr(self, "sharknose_enabled", False),
+            "sharknose_x1": getattr(self, "sharknose_x1", 0.06),
+            "sharknose_x2": getattr(self, "sharknose_x2", 0.09),
+            "sharknose_x3": getattr(self, "sharknose_x3", 0.90),
+            "sharknose_y_max": getattr(self, "sharknose_y_max", 0.03),
+            "sharknose_curve": getattr(self, "sharknose_curve", None),
+            "sharknose_cells": getattr(self, "sharknose_cells", None),
+            "profile_overrides": getattr(self, "profile_overrides", {}),
+            "profile_overrides_enabled": getattr(self, "profile_overrides_enabled", False),
+            "last_profile_enabled": getattr(self, "last_profile_enabled", False),
+            "last_profile_type": getattr(self, "last_profile_type", "line"),
+            "last_profile_thickness": getattr(self, "last_profile_thickness", 0.3),
+            "last_profile_custom": getattr(self, "last_profile_custom", None),
         }
 
 
@@ -909,17 +961,188 @@ class ParametricGlider(object):
         else:
             return first.copy()
 
-    def get_merge_profile(self, factor):
+    def get_merge_profile(self, factor, pos_x=None, rib_index=None):
+        """
+        Get merged profile with optional profile control modifications.
+        
+        Args:
+            factor: Interpolation factor from profile_merge_curve
+            pos_x: Position along span (for thickness/sharknose curves)
+            rib_index: Rib index (for profile overrides)
+        
+        Returns:
+            Profile2D with all modifications applied
+        """
+        # 1. Check for rib-specific override
+        if (getattr(self, 'profile_overrides_enabled', False) and 
+            rib_index is not None and 
+            str(rib_index) in getattr(self, 'profile_overrides', {})):
+            override_idx = self.profile_overrides[str(rib_index)]
+            if 0 <= override_idx < len(self.profiles):
+                profile = self.profiles[override_idx].copy()
+            else:
+                profile = self._interpolate_profiles(factor)
+        else:
+            # 2. Standard interpolation
+            profile = self._interpolate_profiles(factor)
+        
+        # 3. Apply thickness scaling
+        if getattr(self, 'thickness_curve_enabled', False) and pos_x is not None:
+            thickness_factor = self._get_thickness_factor(pos_x)
+            if thickness_factor != 1.0:
+                profile = self._apply_thickness_scaling(profile, thickness_factor)
+        
+        # 4. Apply shark nose if enabled AND rib belongs to a selected cell
+        if getattr(self, 'sharknose_enabled', False):
+            sharknose_cells = getattr(self, 'sharknose_cells', None)
+            # Check if rib_index corresponds to a cell in sharknose_cells
+            # A rib at index i borders cells i-1 and i (for i > 0)
+            # We apply sharknose if either adjacent cell is selected
+            apply_sharknose = True
+            if sharknose_cells is not None and rib_index is not None:
+                # Check if either adjacent cell is in the selected list
+                cell_indices = []
+                if rib_index > 0:
+                    cell_indices.append(rib_index - 1)
+                if rib_index < len(self.shape.rib_x_values) - 1:
+                    cell_indices.append(rib_index)
+                apply_sharknose = any(c in sharknose_cells for c in cell_indices)
+            
+            if apply_sharknose:
+                sharknose_amount = self._get_sharknose_amount(pos_x)
+                if sharknose_amount > 0:
+                    profile = self._apply_sharknose(profile, sharknose_amount)
+        
+        # 5. Override last rib profile if enabled (stabilo/wingtip)
+        last_enabled = getattr(self, 'last_profile_enabled', False)
+        if rib_index is not None:
+            last_rib_index = len(self.shape.rib_x_values) - 1
+            is_last = rib_index == last_rib_index
+            if is_last:
+                print(f"[DEBUG] Last rib check: enabled={last_enabled}, rib_index={rib_index}, last_rib_index={last_rib_index}")
+            if last_enabled and is_last:
+                profile = self._get_last_profile(profile)
+        
+        return Profile2D(profile.data)
+    
+    def _interpolate_profiles(self, factor):
+        """Standard profile interpolation between adjacent profiles."""
         factor = max(0, min(len(self.profiles) - 1, factor))
         k = factor % 1
         i = int(factor // 1)
         first = self.profiles[i].copy()
         if k > 0:
             second = self.profiles[i + 1]
-            airfoil = first * (1 - k) + second * k
-        else:
-            airfoil = first
-        return Profile2D(airfoil.data)
+            return first * (1 - k) + second * k
+        return first
+    
+    def _get_thickness_factor(self, pos_x):
+        """Get thickness scaling factor at given span position."""
+        if not hasattr(self, 'thickness_curve') or self.thickness_curve is None:
+            return 1.0
+        try:
+            interp = self.thickness_curve.interpolation(num=self.num_interpolate)
+            return interp(abs(pos_x))
+        except Exception:
+            return 1.0
+    
+    def _apply_thickness_scaling(self, profile, factor):
+        """Scale profile thickness by given factor."""
+        if factor == 1.0:
+            return profile
+        new_profile = profile.copy()
+        # Scale Y values relative to camber line
+        data = np.array(new_profile.data)
+        camber_line = dict(profile.camber_line)
+        for i, (x, y) in enumerate(data):
+            camber_y = camber_line.get(abs(x), 0)
+            delta = y - camber_y
+            data[i, 1] = camber_y + delta * factor
+        new_profile.data = data
+        return new_profile
+    
+    def _get_sharknose_amount(self, pos_x):
+        """Get shark nose amount at given span position."""
+        if not getattr(self, 'sharknose_enabled', False):
+            return 0.0
+        y_max = getattr(self, 'sharknose_y_max', 0.03)
+        if hasattr(self, 'sharknose_curve') and self.sharknose_curve is not None:
+            try:
+                interp = self.sharknose_curve.interpolation(num=self.num_interpolate)
+                return y_max * interp(abs(pos_x))
+            except Exception:
+                return y_max
+        return y_max
+    
+    def _apply_sharknose(self, profile, y_add):
+        """Apply shark nose deformation to profile intrados."""
+        if y_add <= 0:
+            return profile
+        x1 = getattr(self, 'sharknose_x1', 0.06)
+        x2 = getattr(self, 'sharknose_x2', 0.09)
+        x3 = getattr(self, 'sharknose_x3', 0.90)
+        
+        new_data = []
+        for x, y in profile.data:
+            if y < 0:  # Only intrados (negative Y)
+                if x > x1 and x < x2:
+                    # Rising transition zone
+                    y -= y_add * (x - x1) / (x2 - x1)
+                elif x > x2 and x < x3:
+                    # Falling transition zone
+                    y -= y_add * (x3 - x) / (x3 - x2)
+            new_data.append([x, y])
+        
+        new_profile = profile.copy()
+        new_profile.data = np.array(new_data)
+        return new_profile
+    
+    def _get_last_profile(self, base_profile):
+        """Get the profile to use for the last rib (stabilo/wingtip).
+        
+        Options:
+        - 'line': Zero thickness (flat line)
+        - 'thin': Scaled down version of base profile
+        - 'custom': User-imported profile
+        """
+        last_profile_type = getattr(self, 'last_profile_type', 'line')
+        print(f"[DEBUG] _get_last_profile called with type='{last_profile_type}'")
+        print(f"[DEBUG] base_profile.thickness = {base_profile.thickness}")
+        
+        if last_profile_type == 'line':
+            return self._create_line_profile(base_profile)
+        elif last_profile_type == 'thin':
+            relative_thickness = getattr(self, 'last_profile_thickness', 0.3)  # 30% of original
+            target = base_profile.thickness * relative_thickness
+            print(f"[DEBUG] Creating thin profile: relative={relative_thickness}, target_thickness={target}")
+            result = self._create_thin_profile(base_profile, target)
+            print(f"[DEBUG] Result thin profile thickness = {result.thickness}")
+            return result
+        elif last_profile_type == 'custom':
+            custom = getattr(self, 'last_profile_custom', None)
+            if custom is not None:
+                custom_copy = custom.copy()
+                custom_copy.x_values = base_profile.x_values
+                return custom_copy
+        
+        # Fallback to line
+        print(f"[DEBUG] Fallback to line profile")
+        return self._create_line_profile(base_profile)
+    
+    def _create_line_profile(self, base_profile):
+        """Create a flat (zero thickness) profile based on given profile's x values."""
+        data = [[x, 0.0] for x, _ in base_profile.data]
+        return Profile2D(data, name="line_profile")
+    
+    def _create_thin_profile(self, base_profile, target_thickness):
+        """Create a thin version of the profile with given thickness."""
+        current_thickness = base_profile.thickness
+        if current_thickness <= 0:
+            return base_profile.copy()
+        # Scale Y values to achieve target thickness
+        factor = target_thickness / current_thickness
+        new_data = [[x, y * factor] for x, y in base_profile.data]
+        return Profile2D(new_data, name="thin_profile")
 
     def get_panels(self, glider_3d=None):
         """
@@ -1187,16 +1410,49 @@ class ParametricGlider(object):
         if "rib_material" in self.elements:
             rib_material = self.elements["rib_material"]
 
+        # Track previous chord for stabilo handling
+        prev_chord = None
+        last_rib_index = len(x_values) - 1
+        
+        print(f"[DEBUG] ===== get_glider_3d: {len(x_values)} ribs, last_rib_index={last_rib_index} =====")
+        print(f"[DEBUG] last_profile_enabled={getattr(self, 'last_profile_enabled', False)}")
+        print(f"[DEBUG] last_profile_type={getattr(self, 'last_profile_type', 'line')}")
+        print(f"[DEBUG] last_profile_thickness={getattr(self, 'last_profile_thickness', 0.3)}")
+        
         for rib_no, pos in enumerate(x_values):
             front, back = shape_ribs[rib_no]
             arc = arc_pos[rib_no]
             startpoint = np.array([-front[1] + offset_x, arc[0], arc[1]])
 
             chord = abs(front[1] - back[1])
+            original_chord = chord
+            
+            # Debug for last few ribs
+            if rib_no >= last_rib_index - 2:
+                print(f"[DEBUG] Rib {rib_no}: front[1]={front[1]:.4f}, back[1]={back[1]:.4f}, chord={chord:.4f}, prev_chord={prev_chord}")
+            
+            # For last rib with last_profile_enabled: use previous rib's chord if current is 0
+            # This ensures the thin/custom profile is visible instead of collapsed to a line
+            if rib_no == last_rib_index and getattr(self, 'last_profile_enabled', False):
+                print(f"[DEBUG] Processing LAST RIB: chord={chord}, prev_chord={prev_chord}")
+                if chord < 0.01 and prev_chord is not None:  # Chord is essentially zero
+                    chord = prev_chord * getattr(self, 'last_profile_thickness', 0.3)
+                    print(f"[DEBUG] OVERRIDE: Using scaled chord for last rib: {chord}")
+                elif chord >= 0.01:
+                    print(f"[DEBUG] NOT OVERRIDING: chord ({chord}) >= 0.01")
+                else:
+                    print(f"[DEBUG] NOT OVERRIDING: prev_chord is None")
+            
             factor = profile_merge_curve(abs(pos))
-            profile = self.get_merge_profile(factor)
+            profile = self.get_merge_profile(factor, pos_x=pos, rib_index=rib_no)
             profile.name = "Profile{}".format(rib_no)
             profile.x_values = profile_x_values
+            
+            # Debug profile thickness for last rib
+            if rib_no == last_rib_index:
+                print(f"[DEBUG] Last rib profile.thickness={profile.thickness}, final chord={chord}")
+            
+            prev_chord = chord if chord > 0.01 else prev_chord
 
             this_rib_holes = []
             this_rigid_foils = [
@@ -1239,7 +1495,11 @@ class ParametricGlider(object):
 
             glider.cells.append(cell)
 
-        glider.close_rib()
+        # Only close the last rib (collapse to line) if NOT using custom last profile
+        if not getattr(self, 'last_profile_enabled', False):
+            glider.close_rib()
+        else:
+            print(f"[DEBUG] Skipping close_rib() because last_profile_enabled=True")
 
         # CELL-ELEMENTS
         self.get_panels(glider)
