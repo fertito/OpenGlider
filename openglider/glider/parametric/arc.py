@@ -114,6 +114,21 @@ class ArcCurve(object):
         span_projected = arc_curve.last()[0]
         return span_projected / arc_curve.get_length()
 
+    def get_arc_length(self, x_values):
+        """Return total arc length in meters (for half span)"""
+        arc_positions = self.get_arc_positions(x_values)
+        return arc_positions.get_length()
+
+    def get_projected_span(self, x_values):
+        """Return projected span (Y component only, half span)"""
+        arc_positions = self.get_arc_positions(x_values)
+        return arc_positions.last()[0]
+
+    def get_height(self, x_values):
+        """Return arc height (Z drop from center to tip)"""
+        arc_positions = self.get_arc_positions(x_values)
+        return abs(arc_positions[0][1] - arc_positions.last()[1])
+
     def get_circle(self):
         p1, p2 = self.curve.get_sequence(2)
 
