@@ -117,6 +117,20 @@ class AirfoilControlTool(BaseTool):
         info.setWordWrap(True)
         layout.addWidget(info)
         
+        # Control points table
+        self.dist_points_table = QtGui.QTableWidget()
+        self.dist_points_table.setColumnCount(3)
+        self.dist_points_table.setHorizontalHeaderLabels(["#", "Span (%)", "Value"])
+        self.dist_points_table.horizontalHeader().setStretchLastSection(True)
+        self.dist_points_table.setColumnWidth(0, 30)
+        self.dist_points_table.setMaximumHeight(180)
+        self.dist_points_table.setEditTriggers(QtGui.QAbstractItemView.DoubleClicked)
+        layout.addWidget(self.dist_points_table)
+        
+        self.dist_apply_btn = QtGui.QPushButton("Apply Points")
+        self.dist_apply_btn.clicked.connect(self._apply_distribution_points)
+        layout.addWidget(self.dist_apply_btn)
+        
         # Profile list
         layout.addWidget(QtGui.QLabel("Available profiles:"))
         self.profile_list = QtGui.QListWidget()
@@ -307,6 +321,20 @@ class AirfoilControlTool(BaseTool):
         info.setWordWrap(True)
         layout.addWidget(info)
         
+        # Control points table
+        self.thickness_points_table = QtGui.QTableWidget()
+        self.thickness_points_table.setColumnCount(3)
+        self.thickness_points_table.setHorizontalHeaderLabels(["#", "Span (%)", "Scale"])
+        self.thickness_points_table.horizontalHeader().setStretchLastSection(True)
+        self.thickness_points_table.setColumnWidth(0, 30)
+        self.thickness_points_table.setMaximumHeight(180)
+        self.thickness_points_table.setEditTriggers(QtGui.QAbstractItemView.DoubleClicked)
+        layout.addWidget(self.thickness_points_table)
+        
+        self.thickness_apply_btn = QtGui.QPushButton("Apply Points")
+        self.thickness_apply_btn.clicked.connect(self._apply_thickness_points)
+        layout.addWidget(self.thickness_apply_btn)
+        
         layout.addStretch()
         self.tab_widget.addTab(tab, "Thickness")
         
@@ -432,6 +460,20 @@ class AirfoilControlTool(BaseTool):
         info.setWordWrap(True)
         layout.addWidget(info)
         
+        # Control points table
+        self.aoa_points_table = QtGui.QTableWidget()
+        self.aoa_points_table.setColumnCount(3)
+        self.aoa_points_table.setHorizontalHeaderLabels(["#", "Span (%)", "AoA (°)"])
+        self.aoa_points_table.horizontalHeader().setStretchLastSection(True)
+        self.aoa_points_table.setColumnWidth(0, 30)
+        self.aoa_points_table.setMaximumHeight(180)
+        self.aoa_points_table.setEditTriggers(QtGui.QAbstractItemView.DoubleClicked)
+        layout.addWidget(self.aoa_points_table)
+        
+        self.aoa_apply_btn = QtGui.QPushButton("Apply Points")
+        self.aoa_apply_btn.clicked.connect(self._apply_aoa_points)
+        layout.addWidget(self.aoa_apply_btn)
+        
         layout.addStretch()
         self.tab_widget.addTab(tab, "AoA")
         
@@ -457,6 +499,20 @@ class AirfoilControlTool(BaseTool):
         )
         info.setWordWrap(True)
         layout.addWidget(info)
+        
+        # Control points table
+        self.zrot_points_table = QtGui.QTableWidget()
+        self.zrot_points_table.setColumnCount(3)
+        self.zrot_points_table.setHorizontalHeaderLabels(["#", "Span (%)", "Zrot"])
+        self.zrot_points_table.horizontalHeader().setStretchLastSection(True)
+        self.zrot_points_table.setColumnWidth(0, 30)
+        self.zrot_points_table.setMaximumHeight(180)
+        self.zrot_points_table.setEditTriggers(QtGui.QAbstractItemView.DoubleClicked)
+        layout.addWidget(self.zrot_points_table)
+        
+        self.zrot_apply_btn = QtGui.QPushButton("Apply Points")
+        self.zrot_apply_btn.clicked.connect(self._apply_zrot_points)
+        layout.addWidget(self.zrot_apply_btn)
         
         layout.addStretch()
         self.tab_widget.addTab(tab, "Z Rotation")
@@ -544,6 +600,7 @@ class AirfoilControlTool(BaseTool):
         
         self._update_distribution_curve()
         self._update_distribution_grid()
+        self._update_distribution_table()
         
     def _setup_thickness_spline(self):
         """Setup spline control points for thickness with grid"""
@@ -570,6 +627,7 @@ class AirfoilControlTool(BaseTool):
         
         self._update_thickness_curve()
         self._update_thickness_grid()
+        self._update_thickness_table()
         
     def _setup_aoa_spline(self):
         """Setup spline control points for AoA with grid"""
@@ -601,6 +659,7 @@ class AirfoilControlTool(BaseTool):
         self._update_aoa_diff()
         self._update_aoa_curve()
         self._update_aoa_grid()
+        self._update_aoa_table()
         
     def _setup_zrot_spline(self):
         """Setup spline control points for Z rotation with grid"""
@@ -627,6 +686,7 @@ class AirfoilControlTool(BaseTool):
         
         self._update_zrot_curve()
         self._update_zrot_grid()
+        self._update_zrot_table()
         
     def _draw_shape(self):
         """Draw glider shape outline"""
@@ -900,6 +960,7 @@ class AirfoilControlTool(BaseTool):
     def _on_distribution_release(self):
         """Called when distribution control point is released"""
         self._update_distribution_curve()
+        self._update_distribution_table()
         self.update_view_glider()
         
     def _on_thickness_drag(self):
@@ -909,6 +970,7 @@ class AirfoilControlTool(BaseTool):
     def _on_thickness_release(self):
         """Called when thickness control point is released"""
         self._update_thickness_curve()
+        self._update_thickness_table()
         self.update_view_glider()
     
     def _on_aoa_drag(self):
@@ -919,6 +981,7 @@ class AirfoilControlTool(BaseTool):
         """Called when AoA control point is released"""
         self._update_aoa_curve()
         self._update_aoa_grid()
+        self._update_aoa_table()
         self.update_view_glider()
         
     def _on_zrot_drag(self):
@@ -929,6 +992,7 @@ class AirfoilControlTool(BaseTool):
         """Called when Zrot control point is released"""
         self._update_zrot_curve()
         self._update_zrot_grid()
+        self._update_zrot_table()
         self.update_view_glider()
         
     def _update_distribution_curve(self):
@@ -1017,6 +1081,7 @@ class AirfoilControlTool(BaseTool):
         )
         self.dist_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
         self._update_distribution_curve()
+        self._update_distribution_table()
     
     def _update_aoa_points(self, num):
         """Update number of AoA control points"""
@@ -1027,6 +1092,7 @@ class AirfoilControlTool(BaseTool):
         self.aoa_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
         self._update_aoa_curve()
         self._update_aoa_grid()
+        self._update_aoa_table()
     
     def _update_zrot_points(self, num):
         """Update number of Zrot control points"""
@@ -1037,6 +1103,230 @@ class AirfoilControlTool(BaseTool):
         self.zrot_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
         self._update_zrot_curve()
         self._update_zrot_grid()
+        self._update_zrot_table()
+        
+    def _get_half_span(self):
+        """Get half span for normalizing X coordinates to %"""
+        controlpoints = self.parametric_glider.profile_merge_curve.controlpoints
+        if len(controlpoints) > 0:
+            return abs(controlpoints[-1][0])
+        return 1.0
+    
+    # ---- Distribution table ----
+    def _update_distribution_table(self):
+        """Update distribution control points table with normalized values"""
+        controlpoints = self.parametric_glider.profile_merge_curve.controlpoints
+        half_span = self._get_half_span()
+        
+        self.dist_points_table.blockSignals(True)
+        self.dist_points_table.setRowCount(len(controlpoints))
+        
+        for i, pt in enumerate(controlpoints):
+            num_item = QtGui.QTableWidgetItem(str(i + 1))
+            num_item.setFlags(num_item.flags() & ~QtCore.Qt.ItemIsEditable)
+            num_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.dist_points_table.setItem(i, 0, num_item)
+            
+            x_pct = (pt[0] / half_span) * 100 if half_span != 0 else 0
+            x_item = QtGui.QTableWidgetItem(f"{x_pct:.2f}")
+            if i == 0 or i == len(controlpoints) - 1:
+                x_item.setFlags(x_item.flags() & ~QtCore.Qt.ItemIsEditable)
+                x_item.setBackground(QtGui.QColor(240, 240, 240))
+            self.dist_points_table.setItem(i, 1, x_item)
+            
+            y_item = QtGui.QTableWidgetItem(f"{pt[1]:.4f}")
+            self.dist_points_table.setItem(i, 2, y_item)
+        
+        self.dist_points_table.blockSignals(False)
+    
+    def _apply_distribution_points(self):
+        """Apply edited distribution control points from table"""
+        half_span = self._get_half_span()
+        new_pts = []
+        controlpoints = self.parametric_glider.profile_merge_curve.controlpoints
+        
+        for i in range(self.dist_points_table.rowCount()):
+            x_item = self.dist_points_table.item(i, 1)
+            y_item = self.dist_points_table.item(i, 2)
+            if x_item and y_item:
+                try:
+                    x_abs = (float(x_item.text()) / 100) * half_span
+                    y_val = float(y_item.text())
+                    new_pts.append([x_abs, y_val])
+                except ValueError:
+                    new_pts.append(list(controlpoints[i]))
+        
+        self.parametric_glider.profile_merge_curve.controlpoints = new_pts
+        self.dist_controlpoints.control_pos = np.array(new_pts)
+        self.dist_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
+        self._update_distribution_curve()
+        self._update_distribution_grid()
+        self._update_distribution_table()
+        self.update_view_glider()
+    
+    # ---- Thickness table ----
+    def _update_thickness_table(self):
+        """Update thickness control points table with normalized values"""
+        controlpoints = self.parametric_glider.thickness_curve.controlpoints
+        half_span = self._get_half_span()
+        
+        self.thickness_points_table.blockSignals(True)
+        self.thickness_points_table.setRowCount(len(controlpoints))
+        
+        for i, pt in enumerate(controlpoints):
+            num_item = QtGui.QTableWidgetItem(str(i + 1))
+            num_item.setFlags(num_item.flags() & ~QtCore.Qt.ItemIsEditable)
+            num_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.thickness_points_table.setItem(i, 0, num_item)
+            
+            x_pct = (pt[0] / half_span) * 100 if half_span != 0 else 0
+            x_item = QtGui.QTableWidgetItem(f"{x_pct:.2f}")
+            if i == 0 or i == len(controlpoints) - 1:
+                x_item.setFlags(x_item.flags() & ~QtCore.Qt.ItemIsEditable)
+                x_item.setBackground(QtGui.QColor(240, 240, 240))
+            self.thickness_points_table.setItem(i, 1, x_item)
+            
+            y_item = QtGui.QTableWidgetItem(f"{pt[1]:.4f}")
+            self.thickness_points_table.setItem(i, 2, y_item)
+        
+        self.thickness_points_table.blockSignals(False)
+    
+    def _apply_thickness_points(self):
+        """Apply edited thickness control points from table"""
+        half_span = self._get_half_span()
+        new_pts = []
+        controlpoints = self.parametric_glider.thickness_curve.controlpoints
+        
+        for i in range(self.thickness_points_table.rowCount()):
+            x_item = self.thickness_points_table.item(i, 1)
+            y_item = self.thickness_points_table.item(i, 2)
+            if x_item and y_item:
+                try:
+                    x_abs = (float(x_item.text()) / 100) * half_span
+                    y_val = float(y_item.text())
+                    new_pts.append([x_abs, y_val])
+                except ValueError:
+                    new_pts.append(list(controlpoints[i]))
+        
+        self.parametric_glider.thickness_curve.controlpoints = new_pts
+        pts_offset = [[p[0], p[1] + self.thickness_y_offset] for p in new_pts]
+        self.thickness_controlpoints.control_pos = pts_offset
+        self.thickness_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
+        self._update_thickness_curve()
+        self._update_thickness_grid()
+        self._update_thickness_table()
+        self.update_view_glider()
+    
+    # ---- AoA table ----
+    def _update_aoa_table(self):
+        """Update AoA control points table with values in degrees"""
+        controlpoints = self.parametric_glider.aoa.controlpoints
+        half_span = self._get_half_span()
+        
+        self.aoa_points_table.blockSignals(True)
+        self.aoa_points_table.setRowCount(len(controlpoints))
+        
+        for i, pt in enumerate(controlpoints):
+            num_item = QtGui.QTableWidgetItem(str(i + 1))
+            num_item.setFlags(num_item.flags() & ~QtCore.Qt.ItemIsEditable)
+            num_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.aoa_points_table.setItem(i, 0, num_item)
+            
+            x_pct = (pt[0] / half_span) * 100 if half_span != 0 else 0
+            x_item = QtGui.QTableWidgetItem(f"{x_pct:.2f}")
+            if i == 0 or i == len(controlpoints) - 1:
+                x_item.setFlags(x_item.flags() & ~QtCore.Qt.ItemIsEditable)
+                x_item.setBackground(QtGui.QColor(240, 240, 240))
+            self.aoa_points_table.setItem(i, 1, x_item)
+            
+            # Y value in degrees (stored in radians internally)
+            y_deg = pt[1] * 180.0 / np.pi
+            y_item = QtGui.QTableWidgetItem(f"{y_deg:.2f}")
+            self.aoa_points_table.setItem(i, 2, y_item)
+        
+        self.aoa_points_table.blockSignals(False)
+    
+    def _apply_aoa_points(self):
+        """Apply edited AoA control points from table (degrees → radians)"""
+        half_span = self._get_half_span()
+        new_pts = []
+        controlpoints = self.parametric_glider.aoa.controlpoints
+        
+        for i in range(self.aoa_points_table.rowCount()):
+            x_item = self.aoa_points_table.item(i, 1)
+            y_item = self.aoa_points_table.item(i, 2)
+            if x_item and y_item:
+                try:
+                    x_abs = (float(x_item.text()) / 100) * half_span
+                    y_rad = float(y_item.text()) * np.pi / 180.0
+                    new_pts.append([x_abs, y_rad])
+                except ValueError:
+                    new_pts.append(list(controlpoints[i]))
+        
+        self.parametric_glider.aoa.controlpoints = new_pts
+        pts_scaled = np.array(new_pts) * self.aoa_scale
+        pts_offset = [[p[0], p[1] + self.aoa_y_offset] for p in pts_scaled]
+        self.aoa_controlpoints.control_pos = pts_offset
+        self.aoa_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
+        self._update_aoa_diff()
+        self._update_aoa_curve()
+        self._update_aoa_grid()
+        self._update_aoa_table()
+        self.update_view_glider()
+    
+    # ---- Zrot table ----
+    def _update_zrot_table(self):
+        """Update Z rotation control points table"""
+        controlpoints = self.parametric_glider.zrot.controlpoints
+        half_span = self._get_half_span()
+        
+        self.zrot_points_table.blockSignals(True)
+        self.zrot_points_table.setRowCount(len(controlpoints))
+        
+        for i, pt in enumerate(controlpoints):
+            num_item = QtGui.QTableWidgetItem(str(i + 1))
+            num_item.setFlags(num_item.flags() & ~QtCore.Qt.ItemIsEditable)
+            num_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.zrot_points_table.setItem(i, 0, num_item)
+            
+            x_pct = (pt[0] / half_span) * 100 if half_span != 0 else 0
+            x_item = QtGui.QTableWidgetItem(f"{x_pct:.2f}")
+            if i == 0 or i == len(controlpoints) - 1:
+                x_item.setFlags(x_item.flags() & ~QtCore.Qt.ItemIsEditable)
+                x_item.setBackground(QtGui.QColor(240, 240, 240))
+            self.zrot_points_table.setItem(i, 1, x_item)
+            
+            y_item = QtGui.QTableWidgetItem(f"{pt[1]:.4f}")
+            self.zrot_points_table.setItem(i, 2, y_item)
+        
+        self.zrot_points_table.blockSignals(False)
+    
+    def _apply_zrot_points(self):
+        """Apply edited Z rotation control points from table"""
+        half_span = self._get_half_span()
+        new_pts = []
+        controlpoints = self.parametric_glider.zrot.controlpoints
+        
+        for i in range(self.zrot_points_table.rowCount()):
+            x_item = self.zrot_points_table.item(i, 1)
+            y_item = self.zrot_points_table.item(i, 2)
+            if x_item and y_item:
+                try:
+                    x_abs = (float(x_item.text()) / 100) * half_span
+                    y_val = float(y_item.text())
+                    new_pts.append([x_abs, y_val])
+                except ValueError:
+                    new_pts.append(list(controlpoints[i]))
+        
+        self.parametric_glider.zrot.controlpoints = new_pts
+        pts_scaled = np.array(new_pts) * self.zrot_scale
+        pts_offset = [[p[0], p[1] + self.zrot_y_offset] for p in pts_scaled]
+        self.zrot_controlpoints.control_pos = pts_offset
+        self.zrot_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
+        self._update_zrot_curve()
+        self._update_zrot_grid()
+        self._update_zrot_table()
+        self.update_view_glider()
         
     def _update_overrides(self, *args):
         """Update profile overrides from table"""
@@ -1092,6 +1382,7 @@ class AirfoilControlTool(BaseTool):
             self.thickness_controlpoints.control_pos = pts_offset
             self.thickness_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
             self._update_thickness_curve()
+            self._update_thickness_table()
             
     def _update_last_airfoil(self, *args):
         """Update last airfoil parameters"""

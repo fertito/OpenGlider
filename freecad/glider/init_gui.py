@@ -22,7 +22,6 @@ class GliderWorkbench(Gui.Workbench):
         "ImportGlider",
         "ShapeCommand",
         "ArcCommand",
-        "ZrotCommand",
         "AirfoilCommand",
         "AirfoilMergeCommand",
         "AirfoilControlCommand",
@@ -84,7 +83,6 @@ class GliderWorkbench(Gui.Workbench):
         Gui.addCommand("AirfoilControlCommand", tools.AirfoilControlCommand())
         Gui.addCommand("BallooningMergeCommand", tools.BallooningMergCommand())
         Gui.addCommand("CellCommand", tools.CellCommand())
-        Gui.addCommand("ZrotCommand", tools.ZrotCommand())
         Gui.addCommand("CutCommand", tools.CutCommand())
         Gui.addCommand("ColorCommand", tools.ColorCommand())
         Gui.addCommand("LEPanelSplitCommand", tools.LEPanelSplitCommand())
