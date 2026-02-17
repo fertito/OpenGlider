@@ -718,6 +718,95 @@ class ParametricGlider(object):
             
             rib.rod_sleeves = rod_sleeves
 
+    def remap_cell_indices(self, old_cell_num):
+        """
+        Remap all cell/rib indices proportionally after cell count change.
+        Call this after changing shape.cell_num.
+        """
+        new_cell_num = self.shape.cell_num
+        if old_cell_num == new_cell_num:
+            return
+
+        old_half = old_cell_num // 2 + (old_cell_num % 2)
+        new_half = new_cell_num // 2 + (new_cell_num % 2)
+
+        # number of ribs in the half-wing
+        old_half_ribs = old_half + 1 - (old_cell_num % 2)
+        new_half_ribs = new_half + 1 - (new_cell_num % 2)
+
+        def remap_cell(idx, old_n, new_n):
+            """Proportionally remap a cell index."""
+            if old_n <= 0 or new_n <= 0:
+                return 0
+            return min(int(round(idx * new_n / old_n)), new_n - 1)
+
+        def remap_cells_list(cells, old_n, new_n):
+            """Remap a list of cell indices, removing duplicates."""
+            remapped = []
+            seen = set()
+            for c in cells:
+                new_c = remap_cell(c, old_n, new_n)
+                if new_c not in seen:
+                    remapped.append(new_c)
+                    seen.add(new_c)
+            return remapped
+
+        count_lineset = 0
+        count_elements = 0
+
+        # 1. Remap lineset nodes (UpperNode2D.cell_no)
+        from openglider.glider.parametric.lines import UpperNode2D
+        for node in self.lineset.nodes:
+            if isinstance(node, UpperNode2D):
+                old_no = node.cell_no
+                node.cell_no = remap_cell(old_no, old_half, new_half)
+                if node.cell_no != old_no:
+                    count_lineset += 1
+
+        # 2. Remap elements with "cells" key
+        cell_keys = [
+            "cuts", "diagonals", "straps", "miniribs",
+            "cell_rigidfoils", "le_panel_splits"
+        ]
+        for key in cell_keys:
+            for item in self.elements.get(key, []):
+                if "cells" in item:
+                    old_cells = item["cells"]
+                    item["cells"] = remap_cells_list(
+                        old_cells, old_half, new_half
+                    )
+                    count_elements += 1
+
+        # 3. Remap elements with "ribs" key (rib index = half_rib count)
+        rib_keys = ["holes", "rigidfoils"]
+        for key in rib_keys:
+            for item in self.elements.get(key, []):
+                if "ribs" in item:
+                    old_ribs = item["ribs"]
+                    item["ribs"] = remap_cells_list(
+                        old_ribs, old_half_ribs, new_half_ribs
+                    )
+                    count_elements += 1
+
+        # 4. Remap materials (list indexed by cell_no)
+        if "materials" in self.elements:
+            old_mats = self.elements["materials"]
+            if isinstance(old_mats, list) and old_mats:
+                new_mats = []
+                for new_c in range(new_half):
+                    old_c = remap_cell(new_c, new_half, old_half)
+                    if old_c < len(old_mats):
+                        new_mats.append(old_mats[old_c])
+                    else:
+                        new_mats.append(old_mats[-1] if old_mats else {})
+                self.elements["materials"] = new_mats
+                count_elements += 1
+
+        logging.info(
+            f"Remapped cell indices: {old_cell_num} -> {new_cell_num} cells "
+            f"({count_lineset} lineset nodes, {count_elements} element entries)"
+        )
+
     def __json__(self):
         return {
             "shape": self.shape,
