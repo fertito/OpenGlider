@@ -506,6 +506,24 @@ class AirfoilControlTool(BaseTool):
         self.zrot_auto_btn.clicked.connect(self._auto_zrot_airflow)
         auto_layout.addWidget(self.zrot_auto_btn)
         
+        # CFD panel method section
+        cfd_params = QtGui.QFormLayout()
+        
+        self.zrot_cfd_speed = QtGui.QDoubleSpinBox()
+        self.zrot_cfd_speed.setRange(1, 30)
+        self.zrot_cfd_speed.setValue(self.parametric_glider.speed)
+        self.zrot_cfd_speed.setSingleStep(0.5)
+        self.zrot_cfd_speed.setSuffix(" m/s")
+        cfd_params.addRow("Vitesse:", self.zrot_cfd_speed)
+        
+        self.zrot_cfd_glide = QtGui.QDoubleSpinBox()
+        self.zrot_cfd_glide.setRange(1, 20)
+        self.zrot_cfd_glide.setValue(self.parametric_glider.glide)
+        self.zrot_cfd_glide.setSingleStep(0.5)
+        cfd_params.addRow("Finesse:", self.zrot_cfd_glide)
+        
+        auto_layout.addLayout(cfd_params)
+        
         # CFD panel method button
         self.zrot_cfd_btn = QtGui.QPushButton("CFD: Panel Method (parabem)")
         self.zrot_cfd_btn.setToolTip(
@@ -1191,9 +1209,14 @@ class AirfoilControlTool(BaseTool):
         try:
             # Step 1: Build 3D glider and panel mesh
             glider_3d = self.parametric_glider.get_glider_3d()
-            glide = self.parametric_glider.glide
-            v_inf = self.parametric_glider.v_inf
-            speed = self.parametric_glider.speed
+            
+            # Use user-specified speed and glide from spinboxes
+            speed = self.zrot_cfd_speed.value()
+            glide = self.zrot_cfd_glide.value()
+            
+            # Compute v_inf from user parameters
+            angle = np.arctan(1.0 / glide)
+            v_inf = np.array([np.cos(angle), 0, np.sin(angle)]) * speed
             
             # Mesh parameters
             midribs = 0
