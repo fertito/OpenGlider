@@ -523,6 +523,8 @@ class Glider(object):
 
     @property
     def has_center_cell(self):
+        if not self.ribs:
+            return False
         return abs(self.ribs[0].pos[1]) > 1.0e-5
 
     @property

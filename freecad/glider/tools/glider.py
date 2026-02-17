@@ -311,16 +311,11 @@ class OGGlider(OGBaseObject):
         except Exception as e:
             App.Console.PrintWarning(
                 f"Warning: Could not fully generate 3D glider: {e}\n"
-                "The parametric glider was loaded. Some line nodes may be "
-                "out of range — please update the line plan.\n"
+                "The parametric glider was loaded but the 3D model could not "
+                "be generated. Please fix the line plan or cell count, then "
+                "use a tool to regenerate.\n"
             )
-            # Generate without lineset as fallback
-            try:
-                glider_3d = obj.ParametricGlider.get_glider_3d.__wrapped__(obj.ParametricGlider)
-            except:
-                from openglider.glider import Glider
-                glider_3d = Glider()
-            obj.GliderInstance = glider_3d
+            obj.GliderInstance = None
         return None
 
     #########################################  gui!!! ################################
