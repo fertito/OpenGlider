@@ -73,7 +73,15 @@ class UpperNode2D(object):
 
     def get_node(self, glider):
         if 1 > self.cell_pos > 0:  # attachment point between two ribs
-            cell = glider.cells[self.cell_no + glider.has_center_cell]
+            cell_idx = self.cell_no + glider.has_center_cell
+            if cell_idx < 0 or cell_idx >= len(glider.cells):
+                logging.warning(
+                    f"UpperNode2D '{self.name}': cell_no {self.cell_no} "
+                    f"(index {cell_idx}) out of range "
+                    f"(0..{len(glider.cells)-1}). Skipping node."
+                )
+                return None
+            cell = glider.cells[cell_idx]
             if isinstance(self.force, (list, tuple, np.ndarray)):
                 force = list(self.force)
             else:
@@ -86,7 +94,15 @@ class UpperNode2D(object):
                 cell, self.name, self.cell_pos, self.rib_pos, force
             )
         else:  # attachment point on the rib
-            rib = glider.ribs[self.cell_no + self.cell_pos + glider.has_center_cell]
+            rib_idx = self.cell_no + self.cell_pos + glider.has_center_cell
+            if rib_idx < 0 or rib_idx >= len(glider.ribs):
+                logging.warning(
+                    f"UpperNode2D '{self.name}': rib index {rib_idx} "
+                    f"(cell_no={self.cell_no}, cell_pos={self.cell_pos}) "
+                    f"out of range (0..{len(glider.ribs)-1}). Skipping node."
+                )
+                return None
+            rib = glider.ribs[rib_idx]
             if isinstance(self.force, (list, tuple, np.ndarray)):
                 force = list(self.force)
             else:
@@ -180,11 +196,23 @@ class LineSet2D(object):
             self.sort_lines(node)
         self.delete_not_connected(glider)
 
-        nodes_3d = {node: node.get_node(glider) for node in self.nodes}
+        nodes_3d = {}
+        skipped_nodes = []
+        for node in self.nodes:
+            node_3d = node.get_node(glider)
+            if node_3d is not None:
+                nodes_3d[node] = node_3d
+            else:
+                skipped_nodes.append(node)
+                logging.warning(
+                    f"Lineset: skipping invalid node '{getattr(node, 'name', '?')}' "
+                    f"(out of range after cell count change)"
+                )
+
         # set up the lines!
         for line_no, line in enumerate(self.lines):
-            lower = nodes_3d[line.lower_node]
-            upper = nodes_3d[line.upper_node]
+            lower = nodes_3d.get(line.lower_node)
+            upper = nodes_3d.get(line.upper_node)
             if lower and upper:
                 line = Line(
                     number=line_no,
@@ -196,6 +224,12 @@ class LineSet2D(object):
                     name=line.name,
                 )
                 lines.append(line)
+
+        if skipped_nodes:
+            logging.warning(
+                f"Lineset: {len(skipped_nodes)} node(s) were out of range and skipped. "
+                f"Please update the line plan to match the current cell count."
+            )
 
         return LineSet(lines, v_inf)
 

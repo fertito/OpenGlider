@@ -306,7 +306,21 @@ class OGGlider(OGBaseObject):
         # seld.obj is not yet available!
         obj = App.ActiveDocument.getObject(state["name"])
         obj.ParametricGlider = jsonify.loads(state["ParametricGlider"])["data"]
-        obj.GliderInstance = obj.ParametricGlider.get_glider_3d()
+        try:
+            obj.GliderInstance = obj.ParametricGlider.get_glider_3d()
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"Warning: Could not fully generate 3D glider: {e}\n"
+                "The parametric glider was loaded. Some line nodes may be "
+                "out of range — please update the line plan.\n"
+            )
+            # Generate without lineset as fallback
+            try:
+                glider_3d = obj.ParametricGlider.get_glider_3d.__wrapped__(obj.ParametricGlider)
+            except:
+                from openglider.glider import Glider
+                glider_3d = Glider()
+            obj.GliderInstance = glider_3d
         return None
 
     #########################################  gui!!! ################################
