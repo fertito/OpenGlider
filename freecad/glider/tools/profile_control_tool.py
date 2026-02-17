@@ -492,10 +492,49 @@ class AirfoilControlTool(BaseTool):
         num_layout.addWidget(self.zrot_num_points)
         layout.addLayout(num_layout)
         
+        # Auto-calculate buttons
+        auto_group = QtGui.QGroupBox("Auto-calculate Zrot")
+        auto_layout = QtGui.QVBoxLayout(auto_group)
+        
+        # Geometric estimation button
+        self.zrot_auto_btn = QtGui.QPushButton("Estimation géométrique (zrot=1)")
+        self.zrot_auto_btn.setToolTip(
+            "Set zrot = 1.0 for all points.\n"
+            "Uses the simplified formula: arctan(arc_angle) / glide\n"
+            "Fast but ignores induced velocities from the wing."
+        )
+        self.zrot_auto_btn.clicked.connect(self._auto_zrot_airflow)
+        auto_layout.addWidget(self.zrot_auto_btn)
+        
+        # CFD panel method button
+        self.zrot_cfd_btn = QtGui.QPushButton("CFD: Panel Method (parabem)")
+        self.zrot_cfd_btn.setToolTip(
+            "Run a 3D panel method to compute the actual\n"
+            "local flow direction at each rib position.\n"
+            "More accurate but takes a few seconds."
+        )
+        self.zrot_cfd_btn.clicked.connect(self._auto_zrot_cfd)
+        auto_layout.addWidget(self.zrot_cfd_btn)
+        
+        # Check parabem availability
+        try:
+            __import__("parabem")
+        except ImportError:
+            self.zrot_cfd_btn.setEnabled(False)
+            self.zrot_cfd_btn.setToolTip(
+                "parabem is not installed.\n"
+                "Install it via pixi or pip to enable CFD computation."
+            )
+        
+        layout.addWidget(auto_group)
+        
         # Info
         info = QtGui.QLabel(
-            "Drag control points in 3D view to define Z rotation.\n"
-            "Controls the incidence (twist) of profiles along the span."
+            "Z Rotation controls rib rotation around the Z-axis\n"
+            "to compensate for arc curvature in the airflow.\n\n"
+            "• Estimation géométrique: zrot=1 → arctan(arc)/glide\n"
+            "• CFD Panel Method: computes actual flow angles\n"
+            "  using parabem 3D potential flow solver"
         )
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -1104,6 +1143,204 @@ class AirfoilControlTool(BaseTool):
         self._update_zrot_curve()
         self._update_zrot_grid()
         self._update_zrot_table()
+        
+    def _auto_zrot_airflow(self):
+        """Set zrot = 1.0 for all control points (align profiles with airflow)"""
+        controlpoints = self.parametric_glider.zrot.controlpoints
+        new_pts = [[pt[0], 1.0] for pt in controlpoints]
+        self.parametric_glider.zrot.controlpoints = new_pts
+        
+        # Update 3D control points
+        pts_scaled = np.array(new_pts) * self.zrot_scale
+        pts_offset = [[p[0], p[1] + self.zrot_y_offset] for p in pts_scaled]
+        self.zrot_controlpoints.control_pos = pts_offset
+        self.zrot_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
+        
+        self._update_zrot_curve()
+        self._update_zrot_grid()
+        self._update_zrot_table()
+        self.update_view_glider()
+        
+    def _auto_zrot_cfd(self):
+        """Compute optimal zrot values using parabem CFD panel method.
+        
+        Runs a 3D potential flow solver around the glider geometry,
+        probes local flow velocity upstream of each rib's leading edge,
+        and computes the zrot factor that aligns each rib with the
+        actual computed airflow direction.
+        """
+        try:
+            import parabem
+            import parabem.pan3d as pan3d
+        except ImportError:
+            QtGui.QMessageBox.warning(
+                None, "parabem not available",
+                "parabem is not installed.\n"
+                "Install it via pixi or pip to use CFD computation."
+            )
+            return
+        
+        from openglider.glider.in_out.export_3d import parabem_Panels
+        
+        # Show progress
+        self.zrot_cfd_btn.setEnabled(False)
+        self.zrot_cfd_btn.setText("Computing...")
+        QtGui.QApplication.processEvents()
+        
+        try:
+            # Step 1: Build 3D glider and panel mesh
+            glider_3d = self.parametric_glider.get_glider_3d()
+            glide = self.parametric_glider.glide
+            
+            vertices, panels, trailing_edges, _ = parabem_Panels(
+                glider_3d,
+                midribs=0,
+                profile_numpoints=20,
+                num_average=5,
+                symmetric=True,
+            )
+            
+            # Step 2: Create and run the panel method case
+            case = pan3d.DirichletDoublet0Source0Case3(panels, trailing_edges)
+            case.v_inf = parabem.Vector(self.parametric_glider.v_inf)
+            case.farfield = 10
+            
+            mean_chord = self.parametric_glider.shape.area / self.parametric_glider.shape.span
+            wake_length = int(100 * mean_chord)
+            case.create_wake(max(wake_length, 100), 10)
+            case.run()
+            
+            # Step 3: Get rib data from the 3D glider
+            ribs = glider_3d.ribs
+            half_span = self._get_half_span()
+            
+            # Step 4: For each rib, compute the local flow and optimal zrot
+            zrot_values = []
+            
+            for rib in ribs:
+                if rib.pos[1] < 0.001:  # skip mirrored ribs (y < 0)
+                    continue
+                    
+                # Probe point: slightly upstream of the rib's leading edge
+                # The rib's position gives the center, we offset upstream in X
+                probe_offset = mean_chord * 0.5  # half chord upstream
+                probe_pos = [
+                    rib.pos[0] - probe_offset,  # upstream in X
+                    rib.pos[1],                  # same Y (spanwise)
+                    rib.pos[2] + probe_offset * 0.1  # slightly above
+                ]
+                
+                # Create probe point and compute velocity
+                probe = parabem.PanelVector3(*probe_pos)
+                case.off_body_velocity(probe)
+                
+                # Local flow velocity vector
+                v = probe.velocity
+                vx, vy, vz = v.x, v.y, v.z
+                
+                # The Z-rotation compensates for the flow's Z-component 
+                # relative to the rib's local frame.
+                # In the rib's frame (after arc rotation), the relevant angle
+                # is the angle of the velocity projected into the XZ plane 
+                # of the rib, rotated by arc_angle.
+                
+                arcang = rib.arcang
+                
+                # Project velocity into rib's local frame
+                # After arc_angle rotation, the rib's "forward" is still ~X,
+                # but its "up" axis is rotated by arcang around X.
+                # The component of wind in the rib's Z direction (after arc rotation):
+                cos_arc = np.cos(arcang)
+                sin_arc = np.sin(arcang)
+                
+                # Velocity in rib's local frame (simplified for Z-rotation):
+                # The arc rotation is around X, so X is unchanged,
+                # but Y and Z are mixed:
+                #   v_local_y = vy * cos_arc + vz * sin_arc
+                #   v_local_z = -vy * sin_arc + vz * cos_arc
+                v_local_z = -vy * sin_arc + vz * cos_arc
+                v_forward = np.sqrt(vx**2 + (vy * cos_arc + vz * sin_arc)**2)
+                
+                if abs(v_forward) > 1e-10:
+                    # Angle of flow in the rib's Z-plane
+                    flow_zrot_angle = np.arctan2(v_local_z, v_forward)
+                    
+                    # The geometric formula gives: arctan(arcang) / glide
+                    # zrot_factor = desired_angle / (arctan(arcang) / glide)
+                    geom_angle = np.arctan(arcang) / glide if glide > 0 else 0
+                    
+                    if abs(geom_angle) > 1e-10:
+                        zrot_factor = -flow_zrot_angle / geom_angle
+                    else:
+                        # At wing center, arcang ≈ 0, no correction needed
+                        zrot_factor = 0.0
+                else:
+                    zrot_factor = 0.0
+                
+                x_pos = rib.pos[1]  # Y position = spanwise position
+                zrot_values.append([x_pos, zrot_factor])
+            
+            if not zrot_values:
+                raise RuntimeError("No rib positions found for zrot computation")
+            
+            # Step 5: Build new zrot spline from computed values
+            # The zrot spline uses the same X positions as the current spline
+            # Interpolate our CFD values at those positions
+            from scipy.interpolate import interp1d
+            
+            cfd_x = np.array([v[0] for v in zrot_values])
+            cfd_y = np.array([v[1] for v in zrot_values])
+            
+            # Sort by x position
+            sort_idx = np.argsort(cfd_x)
+            cfd_x = cfd_x[sort_idx]
+            cfd_y = cfd_y[sort_idx]
+            
+            # Interpolate at current control point X positions
+            current_pts = self.parametric_glider.zrot.controlpoints
+            interp_func = interp1d(
+                cfd_x, cfd_y,
+                kind='linear',
+                fill_value='extrapolate',
+                bounds_error=False
+            )
+            
+            new_pts = []
+            for pt in current_pts:
+                new_y = float(interp_func(pt[0]))
+                new_pts.append([pt[0], new_y])
+            
+            # Step 6: Apply the computed zrot values
+            self.parametric_glider.zrot.controlpoints = new_pts
+            
+            pts_scaled = np.array(new_pts) * self.zrot_scale
+            pts_offset = [[p[0], p[1] + self.zrot_y_offset] for p in pts_scaled]
+            self.zrot_controlpoints.control_pos = pts_offset
+            self.zrot_controlpoints.control_points[-1].constrained = [0.0, 1.0, 0.0]
+            
+            self._update_zrot_curve()
+            self._update_zrot_grid()
+            self._update_zrot_table()
+            self.update_view_glider()
+            
+            import FreeCAD
+            FreeCAD.Console.PrintMessage(
+                f"CFD Zrot computed: {len(zrot_values)} ribs analyzed, "
+                f"zrot range [{min(v[1] for v in zrot_values):.3f}, "
+                f"{max(v[1] for v in zrot_values):.3f}]\n"
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QtGui.QMessageBox.warning(
+                None, "CFD Computation Error",
+                f"Panel method computation failed:\n{str(e)}\n\n"
+                "Try the geometric estimation instead."
+            )
+        finally:
+            self.zrot_cfd_btn.setEnabled(True)
+            self.zrot_cfd_btn.setText("CFD: Panel Method (parabem)")
         
     def _get_half_span(self):
         """Get half span for normalizing X coordinates to %"""
