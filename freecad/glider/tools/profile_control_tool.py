@@ -1181,6 +1181,7 @@ class AirfoilControlTool(BaseTool):
             return
         
         from openglider.glider.in_out.export_3d import parabem_Panels
+        from openglider.glider.rib.rib import rib_rotation
         
         # Show progress
         self.zrot_cfd_btn.setEnabled(False)
@@ -1191,19 +1192,27 @@ class AirfoilControlTool(BaseTool):
             # Step 1: Build 3D glider and panel mesh
             glider_3d = self.parametric_glider.get_glider_3d()
             glide = self.parametric_glider.glide
+            v_inf = self.parametric_glider.v_inf
+            speed = self.parametric_glider.speed
+            
+            # Mesh parameters
+            midribs = 0
+            profile_numpoints = 20
+            num_average = 5
+            farfield = 10
             
             vertices, panels, trailing_edges, _ = parabem_Panels(
                 glider_3d,
-                midribs=0,
-                profile_numpoints=20,
-                num_average=5,
+                midribs=midribs,
+                profile_numpoints=profile_numpoints,
+                num_average=num_average,
                 symmetric=True,
             )
             
             # Step 2: Create and run the panel method case
             case = pan3d.DirichletDoublet0Source0Case3(panels, trailing_edges)
-            case.v_inf = parabem.Vector(self.parametric_glider.v_inf)
-            case.farfield = 10
+            case.v_inf = parabem.Vector(v_inf)
+            case.farfield = farfield
             
             mean_chord = self.parametric_glider.shape.area / self.parametric_glider.shape.span
             wake_length = int(100 * mean_chord)
@@ -1212,91 +1221,130 @@ class AirfoilControlTool(BaseTool):
             
             # Step 3: Get rib data from the 3D glider
             ribs = glider_3d.ribs
-            half_span = self._get_half_span()
             
             # Step 4: For each rib, compute the local flow and optimal zrot
             zrot_values = []
+            debug_lines = []
+            
+            import FreeCAD
+            FreeCAD.Console.PrintMessage(
+                f"\n{'='*60}\n"
+                f"CFD Zrot Computation\n"
+                f"{'='*60}\n"
+                f"Glide ratio: {glide:.2f}\n"
+                f"Speed: {speed:.2f} m/s\n"
+                f"v_inf: [{v_inf[0]:.3f}, {v_inf[1]:.3f}, {v_inf[2]:.3f}]\n"
+                f"Panels: {len(panels)}, Vertices: {len(vertices)}\n"
+                f"Profile points: {profile_numpoints}, Midribs: {midribs}\n"
+                f"Farfield: {farfield}\n"
+                f"Mean chord: {mean_chord:.3f} m\n"
+                f"{'='*60}\n"
+            )
             
             for rib in ribs:
-                if rib.pos[1] < 0.001:  # skip mirrored ribs (y < 0)
+                if rib.pos[1] < 0.001:
                     continue
-                    
-                # Probe point: slightly upstream of the rib's leading edge
-                # The rib's position gives the center, we offset upstream in X
-                probe_offset = mean_chord * 0.5  # half chord upstream
-                probe_pos = [
-                    rib.pos[0] - probe_offset,  # upstream in X
-                    rib.pos[1],                  # same Y (spanwise)
-                    rib.pos[2] + probe_offset * 0.1  # slightly above
-                ]
+                
+                # Probe point: upstream of the leading edge
+                # The leading edge is at rib.align([0, 0, 0])
+                le_3d = rib.align([0, 0, 0])
+                
+                # Offset upstream (against v_inf direction) by one chord length
+                v_inf_dir = v_inf / np.linalg.norm(v_inf)
+                probe_pos = le_3d - v_inf_dir * mean_chord * 1.0
                 
                 # Create probe point and compute velocity
-                probe = parabem.PanelVector3(*probe_pos)
+                probe = parabem.PanelVector3(
+                    float(probe_pos[0]),
+                    float(probe_pos[1]),
+                    float(probe_pos[2])
+                )
                 case.off_body_velocity(probe)
                 
-                # Local flow velocity vector
-                v = probe.velocity
-                vx, vy, vz = v.x, v.y, v.z
+                # Local flow velocity vector (in global frame)
+                v_flow = np.array([probe.velocity.x, probe.velocity.y, probe.velocity.z])
                 
-                # The Z-rotation compensates for the flow's Z-component 
-                # relative to the rib's local frame.
-                # In the rib's frame (after arc rotation), the relevant angle
-                # is the angle of the velocity projected into the XZ plane 
-                # of the rib, rotated by arc_angle.
+                # Get the rib's rotation matrix with zrot=0
+                # This gives the frame the rib would have without any Z-correction
+                rot_no_zrot = rib_rotation(rib.aoa_absolute, rib.arcang, 0, rib.xrot)
                 
-                arcang = rib.arcang
+                # The rib's local axes in global frame (with zrot=0):
+                # "forward" = rib's X axis = chord direction
+                rib_x = np.array(rot_no_zrot([1, 0, 0]))
+                # "spanwise" = rib's Y axis = span direction  
+                rib_y = np.array(rot_no_zrot([0, 1, 0]))
+                # "normal" = rib's Z axis = the axis we rotate around
+                rib_z = np.array(rot_no_zrot([0, 0, 1]))
                 
-                # Project velocity into rib's local frame
-                # After arc_angle rotation, the rib's "forward" is still ~X,
-                # but its "up" axis is rotated by arcang around X.
-                # The component of wind in the rib's Z direction (after arc rotation):
-                cos_arc = np.cos(arcang)
-                sin_arc = np.sin(arcang)
+                # Project velocity into rib's XZ plane (chord-normal plane)
+                # The zrot rotation is around the Z-axis of the rib,
+                # so we need the angle of the flow in the XY plane of the rib
+                v_in_x = np.dot(v_flow, rib_x)
+                v_in_y = np.dot(v_flow, rib_y)
+                v_in_z = np.dot(v_flow, rib_z)
                 
-                # Velocity in rib's local frame (simplified for Z-rotation):
-                # The arc rotation is around X, so X is unchanged,
-                # but Y and Z are mixed:
-                #   v_local_y = vy * cos_arc + vz * sin_arc
-                #   v_local_z = -vy * sin_arc + vz * cos_arc
-                v_local_z = -vy * sin_arc + vz * cos_arc
-                v_forward = np.sqrt(vx**2 + (vy * cos_arc + vz * sin_arc)**2)
+                # The zrot axis is rib_z (from rib_rotation: axis = (rot1*rot2)([0,0,1]))
+                # Rotation(-zrot, axis) rotates the rib in the XY plane of the rib's frame
+                # So the flow angle that zrot should correct is the angle
+                # of the velocity projected into the rib's XY plane,
+                # specifically the Y-component relative to X
+                # (the "sideslip" angle in the rib's frame)
                 
-                if abs(v_forward) > 1e-10:
-                    # Angle of flow in the rib's Z-plane
-                    flow_zrot_angle = np.arctan2(v_local_z, v_forward)
+                if abs(v_in_x) > 1e-10:
+                    # Flow angle in rib's XY plane
+                    # Positive angle = flow has +Y component in rib frame
+                    flow_angle = np.arctan2(v_in_y, abs(v_in_x))
                     
-                    # The geometric formula gives: arctan(arcang) / glide
-                    # zrot_factor = desired_angle / (arctan(arcang) / glide)
-                    geom_angle = np.arctan(arcang) / glide if glide > 0 else 0
+                    # The geometric formula: zrot_effective = arctan(arcang) / glide * zrot_factor
+                    # The rib_rotation applies Rotation(-zrot_effective, axis)
+                    # We want the rib to rotate so its X axis aligns with the flow
+                    # in the XY plane. The rotation is -zrot_effective,
+                    # so to cancel flow_angle we need: -zrot_effective = -flow_angle
+                    # => zrot_effective = flow_angle
+                    
+                    geom_angle = np.arctan(rib.arcang) / glide if glide > 0 else 0
                     
                     if abs(geom_angle) > 1e-10:
-                        zrot_factor = -flow_zrot_angle / geom_angle
+                        zrot_factor = flow_angle / geom_angle
                     else:
-                        # At wing center, arcang ≈ 0, no correction needed
                         zrot_factor = 0.0
                 else:
+                    flow_angle = 0.0
+                    geom_angle = 0.0
                     zrot_factor = 0.0
                 
-                x_pos = rib.pos[1]  # Y position = spanwise position
+                x_pos = rib.pos[1]
                 zrot_values.append([x_pos, zrot_factor])
+                
+                # Debug output
+                debug_line = (
+                    f"  Rib {rib.name:>12s} | "
+                    f"y={x_pos:6.3f} | "
+                    f"arc={np.degrees(rib.arcang):+6.2f}° | "
+                    f"v_flow=[{v_flow[0]:+.3f},{v_flow[1]:+.3f},{v_flow[2]:+.3f}] | "
+                    f"v_rib_xy=[{v_in_x:+.3f},{v_in_y:+.3f}] | "
+                    f"flow∠={np.degrees(flow_angle):+6.2f}° | "
+                    f"geom∠={np.degrees(geom_angle):+6.2f}° | "
+                    f"zrot={zrot_factor:+.4f}"
+                )
+                debug_lines.append(debug_line)
+                FreeCAD.Console.PrintMessage(debug_line + "\n")
             
             if not zrot_values:
                 raise RuntimeError("No rib positions found for zrot computation")
             
-            # Step 5: Build new zrot spline from computed values
-            # The zrot spline uses the same X positions as the current spline
-            # Interpolate our CFD values at those positions
+            FreeCAD.Console.PrintMessage(f"{'='*60}\n")
+            
+            # Step 5: Interpolate CFD values at control point positions
             from scipy.interpolate import interp1d
             
             cfd_x = np.array([v[0] for v in zrot_values])
             cfd_y = np.array([v[1] for v in zrot_values])
             
-            # Sort by x position
             sort_idx = np.argsort(cfd_x)
             cfd_x = cfd_x[sort_idx]
             cfd_y = cfd_y[sort_idx]
             
-            # Interpolate at current control point X positions
             current_pts = self.parametric_glider.zrot.controlpoints
             interp_func = interp1d(
                 cfd_x, cfd_y,
@@ -1323,11 +1371,24 @@ class AirfoilControlTool(BaseTool):
             self._update_zrot_table()
             self.update_view_glider()
             
-            import FreeCAD
-            FreeCAD.Console.PrintMessage(
-                f"CFD Zrot computed: {len(zrot_values)} ribs analyzed, "
-                f"zrot range [{min(v[1] for v in zrot_values):.3f}, "
-                f"{max(v[1] for v in zrot_values):.3f}]\n"
+            # Show results dialog
+            result_text = (
+                f"<b>CFD Zrot Computation Complete</b><br><br>"
+                f"<b>Parameters:</b><br>"
+                f"• Glide: {glide:.2f}<br>"
+                f"• Speed: {speed:.2f} m/s<br>"
+                f"• v_inf: [{v_inf[0]:.3f}, {v_inf[1]:.3f}, {v_inf[2]:.3f}]<br>"
+                f"• Panels: {len(panels)}<br>"
+                f"• Profile points: {profile_numpoints}<br>"
+                f"• Farfield: {farfield}<br><br>"
+                f"<b>Results:</b><br>"
+                f"• Ribs analyzed: {len(zrot_values)}<br>"
+                f"• Zrot range: [{min(v[1] for v in zrot_values):.4f}, "
+                f"{max(v[1] for v in zrot_values):.4f}]<br><br>"
+                f"<i>See FreeCAD console for per-rib details.</i>"
+            )
+            QtGui.QMessageBox.information(
+                None, "CFD Zrot Results", result_text
             )
             
         except Exception as e:
