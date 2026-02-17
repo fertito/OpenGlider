@@ -1269,72 +1269,72 @@ class AirfoilControlTool(BaseTool):
                     continue
                 
                 # Probe point: upstream of the leading edge
-                # The leading edge is at rib.align([0, 0, 0])
                 le_3d = rib.align([0, 0, 0])
-                
-                # Offset upstream (against v_inf direction) by one chord length
                 v_inf_dir = v_inf / np.linalg.norm(v_inf)
                 probe_pos = le_3d - v_inf_dir * mean_chord * 1.0
                 
-                # Create probe point and compute velocity
+                # Compute velocity at probe point
                 probe = parabem.PanelVector3(
                     float(probe_pos[0]),
                     float(probe_pos[1]),
                     float(probe_pos[2])
                 )
                 case.off_body_velocity(probe)
-                
-                # Local flow velocity vector (in global frame)
                 v_flow = np.array([probe.velocity.x, probe.velocity.y, probe.velocity.z])
                 
-                # Get the rib's rotation matrix with zrot=0
-                # This gives the frame the rib would have without any Z-correction
-                rot_no_zrot = rib_rotation(rib.aoa_absolute, rib.arcang, 0, rib.xrot)
+                arcang = rib.arcang
+                aoa = rib.aoa_absolute
+                xrot = rib.xrot
+                geom_angle = np.arctan(arcang) / glide if glide > 0 else 0
                 
-                # The rib's local axes in global frame (with zrot=0):
-                # "forward" = rib's X axis = chord direction
-                rib_x = np.array(rot_no_zrot([1, 0, 0]))
-                # "spanwise" = rib's Y axis = span direction  
-                rib_y = np.array(rot_no_zrot([0, 1, 0]))
-                # "normal" = rib's Z axis = the axis we rotate around
-                rib_z = np.array(rot_no_zrot([0, 0, 1]))
-                
-                # Project velocity into rib's XZ plane (chord-normal plane)
-                # The zrot rotation is around the Z-axis of the rib,
-                # so we need the angle of the flow in the XY plane of the rib
-                v_in_x = np.dot(v_flow, rib_x)
-                v_in_y = np.dot(v_flow, rib_y)
-                v_in_z = np.dot(v_flow, rib_z)
-                
-                # The zrot axis is rib_z (from rib_rotation: axis = (rot1*rot2)([0,0,1]))
-                # Rotation(-zrot, axis) rotates the rib in the XY plane of the rib's frame
-                # So the flow angle that zrot should correct is the angle
-                # of the velocity projected into the rib's XY plane,
-                # specifically the Y-component relative to X
-                # (the "sideslip" angle in the rib's frame)
-                
-                if abs(v_in_x) > 1e-10:
-                    # Flow angle in rib's XY plane
-                    # Positive angle = flow has +Y component in rib frame
-                    flow_angle = np.arctan2(v_in_y, abs(v_in_x))
-                    
-                    # The geometric formula: zrot_effective = arctan(arcang) / glide * zrot_factor
-                    # The rib_rotation applies Rotation(-zrot_effective, axis)
-                    # We want the rib to rotate so its X axis aligns with the flow
-                    # in the XY plane. The rotation is -zrot_effective,
-                    # so to cancel flow_angle we need: -zrot_effective = -flow_angle
-                    # => zrot_effective = flow_angle
-                    
-                    geom_angle = np.arctan(rib.arcang) / glide if glide > 0 else 0
-                    
-                    if abs(geom_angle) > 1e-10:
-                        zrot_factor = flow_angle / geom_angle
-                    else:
-                        zrot_factor = 0.0
-                else:
-                    flow_angle = 0.0
-                    geom_angle = 0.0
+                if abs(geom_angle) < 1e-10:
+                    # At wing center (arcang ≈ 0), no zrot correction needed
                     zrot_factor = 0.0
+                    misalign_0 = 0.0
+                    misalign_1 = 0.0
+                else:
+                    # NUMERICAL APPROACH: find zrot_factor by measuring 
+                    # chord-flow alignment at zrot_factor = 0 and 1
+                    
+                    # Span axis (approximately constant with zrot)
+                    rot_base = rib_rotation(aoa, arcang, 0, xrot)
+                    span_dir = np.array(rot_base([0, 1, 0]))
+                    
+                    # Project flow into plane perpendicular to span
+                    v_proj = v_flow - span_dir * np.dot(v_flow, span_dir)
+                    v_proj_norm = np.linalg.norm(v_proj)
+                    
+                    if v_proj_norm < 1e-10:
+                        zrot_factor = 0.0
+                        misalign_0 = 0.0
+                        misalign_1 = 0.0
+                    else:
+                        v_proj_dir = v_proj / v_proj_norm
+                        
+                        # Signed misalignment angle at zrot_factor = 0
+                        chord_0 = np.array(rot_base([1, 0, 0]))
+                        cross_0 = np.cross(chord_0, v_proj_dir)
+                        misalign_0 = np.arctan2(
+                            np.dot(cross_0, span_dir),
+                            np.dot(chord_0, v_proj_dir)
+                        )
+                        
+                        # Signed misalignment angle at zrot_factor = 1
+                        rot_1 = rib_rotation(aoa, arcang, geom_angle, xrot)
+                        chord_1 = np.array(rot_1([1, 0, 0]))
+                        cross_1 = np.cross(chord_1, v_proj_dir)
+                        misalign_1 = np.arctan2(
+                            np.dot(cross_1, span_dir),
+                            np.dot(chord_1, v_proj_dir)
+                        )
+                        
+                        # Linear interpolation: misalign(zf) = misalign_0 + zf * (misalign_1 - misalign_0) = 0
+                        # => zf = -misalign_0 / (misalign_1 - misalign_0)
+                        d_misalign = misalign_1 - misalign_0
+                        if abs(d_misalign) > 1e-10:
+                            zrot_factor = -misalign_0 / d_misalign
+                        else:
+                            zrot_factor = 1.0  # geom and CFD agree
                 
                 x_pos = rib.pos[1]
                 zrot_values.append([x_pos, zrot_factor])
@@ -1343,11 +1343,10 @@ class AirfoilControlTool(BaseTool):
                 debug_line = (
                     f"  Rib {rib.name:>12s} | "
                     f"y={x_pos:6.3f} | "
-                    f"arc={np.degrees(rib.arcang):+6.2f}° | "
+                    f"arc={np.degrees(arcang):+6.2f}° | "
                     f"v_flow=[{v_flow[0]:+.3f},{v_flow[1]:+.3f},{v_flow[2]:+.3f}] | "
-                    f"v_rib_xy=[{v_in_x:+.3f},{v_in_y:+.3f}] | "
-                    f"flow∠={np.degrees(flow_angle):+6.2f}° | "
-                    f"geom∠={np.degrees(geom_angle):+6.2f}° | "
+                    f"misalign@0={np.degrees(misalign_0):+5.2f}° | "
+                    f"misalign@1={np.degrees(misalign_1):+5.2f}° | "
                     f"zrot={zrot_factor:+.4f}"
                 )
                 debug_lines.append(debug_line)
