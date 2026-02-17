@@ -210,12 +210,12 @@ class LineSet2D(object):
                 )
 
         # set up the lines!
-        for line_no, line in enumerate(self.lines):
+        for line in self.lines:
             lower = nodes_3d.get(line.lower_node)
             upper = nodes_3d.get(line.upper_node)
             if lower and upper:
                 line = Line(
-                    number=line_no,
+                    number=len(lines),
                     lower_node=lower,
                     upper_node=upper,
                     v_inf=None,
