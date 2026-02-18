@@ -107,24 +107,20 @@ class CellTool(BaseTool):
         Get set of rib indices that have suspension attachment points.
         Returns dict mapping rib_no -> list of attachment point positions.
         """
-        import re
         lineset = self.parametric_glider.lineset
         upper_nodes = lineset.get_upper_nodes()
         
         # Map rib_no to attachment positions
-        # For UpperNode2D: cell_no is the cell, cell_pos determines if on left (0) or right (1) rib
-        # rib_no = cell_no when cell_pos=0 (left rib of cell)
         rib_attachments = {}
         for node in upper_nodes:
-            # Extract layer from node name (e.g. "A11" -> "A", "brake1" -> "BRAKE")
             if exclude_brake:
-                layer = self._get_node_layer(node)
-                if layer in ("BRAKE", "STABILO", "S", "FREIN", "F"):
+                name = (node.name or "").upper()
+                layer_attr = (node.layer or "").upper()
+                if any(kw in name for kw in ("BRAKE", "STABILO", "FREIN")):
+                    continue
+                if layer_attr in ("BRAKE", "STABILO", "S", "FREIN", "F"):
                     continue
             
-            # Calculate actual rib number
-            # cell_no is 0-indexed, cell_pos is usually 0
-            # Attachment on left rib of cell N means rib N
             rib_no = node.cell_no + int(node.cell_pos) + self.parametric_glider.shape.has_center_cell
             
             if rib_no not in rib_attachments:
@@ -137,39 +133,81 @@ class CellTool(BaseTool):
         """Get total number of cells (half-span)."""
         return self.parametric_glider.shape.half_cell_num
 
-    @staticmethod
-    def _get_node_layer(node):
-        """
-        Extract line layer letter from node name (e.g. 'A11' -> 'A', 'B3' -> 'B').
-        Falls back to node.layer attribute if name doesn't match.
-        """
-        import re
-        match = re.match(r"([a-zA-Z]+)", node.name or "")
-        if match:
-            return match.group(1).upper()
-        # Fallback to layer attribute
-        return (node.layer or "").upper()
-
     def _get_suspended_ribs_with_layer(self):
         """
         Get attachment points with their line layer (A, B, C, D, etc.).
         Returns dict mapping rib_no -> list of (rib_pos, layer) tuples.
+        
+        Layer is determined by position on chord: all unique rib_pos values
+        across all ribs are grouped (with tolerance), sorted front-to-back,
+        and assigned A, B, C, D labels by rank.
         """
         lineset = self.parametric_glider.lineset
         upper_nodes = lineset.get_upper_nodes()
         
-        rib_attachments = {}
+        # First pass: collect all attachment points with their rib_no
+        # Skip brake/stabilo by name pattern or layer attribute
+        import re
+        layer_letters = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        
+        raw_attachments = {}  # rib_no -> list of rib_pos
         for node in upper_nodes:
-            layer = self._get_node_layer(node)
-            # Skip brake/stabilo lines
-            if layer in ("BRAKE", "STABILO", "S", "FREIN", "F"):
+            # Try to identify brake/stabilo from name or layer
+            name = (node.name or "").upper()
+            layer_attr = (node.layer or "").upper()
+            if any(kw in name for kw in ("BRAKE", "STABILO", "FREIN")):
+                continue
+            if layer_attr in ("BRAKE", "STABILO", "S", "FREIN", "F"):
                 continue
             
             rib_no = node.cell_no + int(node.cell_pos) + self.parametric_glider.shape.has_center_cell
             
-            if rib_no not in rib_attachments:
-                rib_attachments[rib_no] = []
-            rib_attachments[rib_no].append((node.rib_pos, layer))
+            if rib_no not in raw_attachments:
+                raw_attachments[rib_no] = []
+            raw_attachments[rib_no].append(node.rib_pos)
+        
+        # Second pass: find all unique position groups across all ribs
+        all_positions = []
+        for rib_no, positions in raw_attachments.items():
+            all_positions.extend(positions)
+        
+        if not all_positions:
+            return {}
+        
+        # Group similar positions (tolerance = 3% of chord)
+        tolerance = 0.03
+        all_positions.sort()
+        position_groups = []  # list of (center_pos, layer_letter)
+        
+        for pos in all_positions:
+            merged = False
+            for i, (center, _) in enumerate(position_groups):
+                if abs(pos - center) < tolerance:
+                    # Update center as running average
+                    position_groups[i] = (center, _)  # keep existing center
+                    merged = True
+                    break
+            if not merged:
+                idx = len(position_groups)
+                label = layer_letters[idx] if idx < len(layer_letters) else f"L{idx}"
+                position_groups.append((pos, label))
+        
+        print(f"[DIAG DEBUG] Position groups: {[(f'{c:.3f}', l) for c, l in position_groups]}")
+        
+        # Third pass: assign layer to each attachment point based on closest group
+        rib_attachments = {}
+        for rib_no, positions in raw_attachments.items():
+            rib_attachments[rib_no] = []
+            for rib_pos in positions:
+                # Find closest position group
+                best_layer = layer_letters[0]
+                best_dist = float('inf')
+                for center, label in position_groups:
+                    dist = abs(rib_pos - center)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_layer = label
+                rib_attachments[rib_no].append((rib_pos, best_layer))
         
         return rib_attachments
 
@@ -390,6 +428,25 @@ class CellTool(BaseTool):
         
         rib_attachments = self._get_suspended_ribs_with_layer()
         cell_count = self._get_cell_count()
+        
+        # DEBUG: Show all detected layers
+        all_layers = set()
+        for rib_no, attachments in rib_attachments.items():
+            for rib_pos, layer in attachments:
+                all_layers.add(layer)
+        print(f"[DIAG DEBUG] Detected layers: {sorted(all_layers)}")
+        print(f"[DIAG DEBUG] line_params keys: {sorted(line_params.keys())}")
+        
+        # Show detailed per-node info (first 10)
+        count = 0
+        for rib_no, attachments in sorted(rib_attachments.items()):
+            for rib_pos, layer in attachments:
+                if count < 15:
+                    matched = layer in line_params
+                    params_used = line_params.get(layer, default_params)
+                    print(f"[DIAG DEBUG] rib={rib_no} pos={rib_pos:.3f} layer='{layer}' "
+                          f"matched={matched} ext_range={params_used['extrados_start']:.2f}-{params_used['extrados_end']:.2f}")
+                count += 1
         
         # Track which cells have diagonals from which direction
         # cell_diagonals[cell_no] = {"from_left": [...], "from_right": [...]}
