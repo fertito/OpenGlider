@@ -107,6 +107,7 @@ class CellTool(BaseTool):
         Get set of rib indices that have suspension attachment points.
         Returns dict mapping rib_no -> list of attachment point positions.
         """
+        import re
         lineset = self.parametric_glider.lineset
         upper_nodes = lineset.get_upper_nodes()
         
@@ -115,10 +116,10 @@ class CellTool(BaseTool):
         # rib_no = cell_no when cell_pos=0 (left rib of cell)
         rib_attachments = {}
         for node in upper_nodes:
-            # Skip brake/stabilo lines
+            # Extract layer from node name (e.g. "A11" -> "A", "brake1" -> "BRAKE")
             if exclude_brake:
-                layer = (node.layer or "").lower()
-                if layer in ("brake", "stabilo", "s", "frein", "f"):
+                layer = self._get_node_layer(node)
+                if layer in ("BRAKE", "STABILO", "S", "FREIN", "F"):
                     continue
             
             # Calculate actual rib number
@@ -136,6 +137,19 @@ class CellTool(BaseTool):
         """Get total number of cells (half-span)."""
         return self.parametric_glider.shape.half_cell_num
 
+    @staticmethod
+    def _get_node_layer(node):
+        """
+        Extract line layer letter from node name (e.g. 'A11' -> 'A', 'B3' -> 'B').
+        Falls back to node.layer attribute if name doesn't match.
+        """
+        import re
+        match = re.match(r"([a-zA-Z]+)", node.name or "")
+        if match:
+            return match.group(1).upper()
+        # Fallback to layer attribute
+        return (node.layer or "").upper()
+
     def _get_suspended_ribs_with_layer(self):
         """
         Get attachment points with their line layer (A, B, C, D, etc.).
@@ -146,7 +160,7 @@ class CellTool(BaseTool):
         
         rib_attachments = {}
         for node in upper_nodes:
-            layer = (node.layer or "").upper()
+            layer = self._get_node_layer(node)
             # Skip brake/stabilo lines
             if layer in ("BRAKE", "STABILO", "S", "FREIN", "F"):
                 continue
