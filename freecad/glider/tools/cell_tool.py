@@ -138,21 +138,20 @@ class CellTool(BaseTool):
         Get attachment points with their line layer (A, B, C, D, etc.).
         Returns dict mapping rib_no -> list of (rib_pos, layer) tuples.
         
-        Layer is determined by position on chord: all unique rib_pos values
-        across all ribs are grouped (with tolerance), sorted front-to-back,
-        and assigned A, B, C, D labels by rank.
+        Layer is determined by position on chord:
+        1. All unique rib_pos values are grouped with tolerance
+        2. Only position groups appearing on ≥40% of ribs are kept (filters stabilo/brake)
+        3. Remaining groups are sorted front-to-back and assigned A, B, C, D labels
         """
         lineset = self.parametric_glider.lineset
         upper_nodes = lineset.get_upper_nodes()
         
-        # First pass: collect all attachment points with their rib_no
-        # Skip brake/stabilo by name pattern or layer attribute
-        import re
         layer_letters = ["A", "B", "C", "D", "E", "F", "G", "H"]
         
+        # First pass: collect all attachment points with their rib_no
         raw_attachments = {}  # rib_no -> list of rib_pos
         for node in upper_nodes:
-            # Try to identify brake/stabilo from name or layer
+            # Skip obvious brake/stabilo from name or layer attributes
             name = (node.name or "").upper()
             layer_attr = (node.layer or "").upper()
             if any(kw in name for kw in ("BRAKE", "STABILO", "FREIN")):
@@ -166,48 +165,66 @@ class CellTool(BaseTool):
                 raw_attachments[rib_no] = []
             raw_attachments[rib_no].append(node.rib_pos)
         
-        # Second pass: find all unique position groups across all ribs
-        all_positions = []
-        for rib_no, positions in raw_attachments.items():
-            all_positions.extend(positions)
-        
-        if not all_positions:
+        if not raw_attachments:
             return {}
         
-        # Group similar positions (tolerance = 3% of chord)
-        tolerance = 0.03
-        all_positions.sort()
-        position_groups = []  # list of (center_pos, layer_letter)
+        total_ribs = len(raw_attachments)
         
-        for pos in all_positions:
+        # Second pass: group positions with tolerance, tracking which ribs each group appears on
+        tolerance = 0.03
+        all_positions_with_rib = []  # (pos, rib_no) pairs
+        for rib_no, positions in raw_attachments.items():
+            for pos in positions:
+                all_positions_with_rib.append((pos, rib_no))
+        
+        all_positions_with_rib.sort(key=lambda x: x[0])
+        
+        # Group: (center_pos, set of rib_nos)
+        position_groups_raw = []
+        for pos, rib_no in all_positions_with_rib:
             merged = False
-            for i, (center, _) in enumerate(position_groups):
+            for i, (center, ribs_set) in enumerate(position_groups_raw):
                 if abs(pos - center) < tolerance:
-                    # Update center as running average
-                    position_groups[i] = (center, _)  # keep existing center
+                    ribs_set.add(rib_no)
                     merged = True
                     break
             if not merged:
-                idx = len(position_groups)
-                label = layer_letters[idx] if idx < len(layer_letters) else f"L{idx}"
-                position_groups.append((pos, label))
+                position_groups_raw.append((pos, {rib_no}))
         
-        print(f"[DIAG DEBUG] Position groups: {[(f'{c:.3f}', l) for c, l in position_groups]}")
+        print(f"[DIAG DEBUG] All position groups (before filtering):")
+        for center, ribs_set in position_groups_raw:
+            print(f"  pos={center:.3f} on {len(ribs_set)}/{total_ribs} ribs")
         
-        # Third pass: assign layer to each attachment point based on closest group
+        # Filter: keep only groups appearing on >= 40% of ribs (main line families)
+        min_ribs = max(2, int(total_ribs * 0.4))
+        main_groups = [(c, r) for c, r in position_groups_raw if len(r) >= min_ribs]
+        main_groups.sort(key=lambda x: x[0])  # Sort front-to-back
+        
+        # Assign A, B, C, D labels to main groups
+        position_groups = []  # (center, label)
+        for i, (center, ribs_set) in enumerate(main_groups):
+            label = layer_letters[i] if i < len(layer_letters) else f"L{i}"
+            position_groups.append((center, label))
+        
+        print(f"[DIAG DEBUG] Main position groups (≥{min_ribs} ribs): {[(f'{c:.3f}', l) for c, l in position_groups]}")
+        
+        # Third pass: assign layer to each point based on closest MAIN group
+        # Skip points that don't match any main group (tolerance * 3)
+        max_dist = tolerance * 5
         rib_attachments = {}
         for rib_no, positions in raw_attachments.items():
             rib_attachments[rib_no] = []
             for rib_pos in positions:
-                # Find closest position group
-                best_layer = layer_letters[0]
+                best_layer = None
                 best_dist = float('inf')
                 for center, label in position_groups:
                     dist = abs(rib_pos - center)
                     if dist < best_dist:
                         best_dist = dist
                         best_layer = label
-                rib_attachments[rib_no].append((rib_pos, best_layer))
+                # Only include if close enough to a main group
+                if best_layer and best_dist < max_dist:
+                    rib_attachments[rib_no].append((rib_pos, best_layer))
         
         return rib_attachments
 
@@ -487,6 +504,9 @@ class CellTool(BaseTool):
                 ext_end = params["extrados_end"]
                 ext_height = params["extrados_height"]
                 num_bands = params.get("num_bands", 1)
+                
+                if cell_no == 0:
+                    print(f"[DIAG CREATE] cell={cell_no} FROM_LEFT: intrados={rib_pos:.3f} layer={layer} -> extrados={ext_start:.2f}-{ext_end:.2f}")
                 
                 # Split extrados range into bands if num_bands > 1
                 bands = split_range_into_bands(ext_start, ext_end, num_bands)
