@@ -190,10 +190,7 @@ class CellTool(BaseTool):
                     break
             if not merged:
                 position_groups_raw.append((pos, {rib_no}))
-        
-        print(f"[DIAG DEBUG] All position groups (before filtering):")
-        for center, ribs_set in position_groups_raw:
-            print(f"  pos={center:.3f} on {len(ribs_set)}/{total_ribs} ribs")
+
         
         # Filter: keep only groups appearing on >= 40% of ribs (main line families)
         min_ribs = max(2, int(total_ribs * 0.4))
@@ -206,7 +203,7 @@ class CellTool(BaseTool):
             label = layer_letters[i] if i < len(layer_letters) else f"L{i}"
             position_groups.append((center, label))
         
-        print(f"[DIAG DEBUG] Main position groups (≥{min_ribs} ribs): {[(f'{c:.3f}', l) for c, l in position_groups]}")
+
         
         # Third pass: assign layer to each point based on closest MAIN group
         # Skip points that don't match any main group (tolerance * 3)
@@ -346,7 +343,7 @@ class CellTool(BaseTool):
         ref_rib = glider_3d.ribs[ref_rib_index]
         ref_chord = ref_rib.chord
         
-        print(f"DEBUG: Reference rib {ref_rib_index}, chord = {ref_chord*100:.1f} cm")
+
         
         # Function to calculate height value for a given x position with offset
         def get_extrados_height_with_offset(x_pos, offset_mm):
@@ -385,7 +382,7 @@ class CellTool(BaseTool):
         
         # Calculate extrados_height at a reference position (middle of chord)
         ref_extrados_height = get_extrados_height_with_offset(0.3, offset_mm)
-        print(f"DEBUG: offset_mm={offset_mm}, ref_extrados_height at x=0.3 = {ref_extrados_height:.4f}")
+
         
         # Function to split extrados range into multiple bands with gaps
         def split_range_into_bands(start, end, num_bands):
@@ -432,7 +429,7 @@ class CellTool(BaseTool):
                 "num_bands": num_bands,
             }
         
-        print(f"DEBUG: line_params = {line_params}")
+
         
         # Default params for unknown line types
         default_params = line_params.get("A", {
@@ -446,24 +443,6 @@ class CellTool(BaseTool):
         rib_attachments = self._get_suspended_ribs_with_layer()
         cell_count = self._get_cell_count()
         
-        # DEBUG: Show all detected layers
-        all_layers = set()
-        for rib_no, attachments in rib_attachments.items():
-            for rib_pos, layer in attachments:
-                all_layers.add(layer)
-        print(f"[DIAG DEBUG] Detected layers: {sorted(all_layers)}")
-        print(f"[DIAG DEBUG] line_params keys: {sorted(line_params.keys())}")
-        
-        # Show detailed per-node info (first 10)
-        count = 0
-        for rib_no, attachments in sorted(rib_attachments.items()):
-            for rib_pos, layer in attachments:
-                if count < 15:
-                    matched = layer in line_params
-                    params_used = line_params.get(layer, default_params)
-                    print(f"[DIAG DEBUG] rib={rib_no} pos={rib_pos:.3f} layer='{layer}' "
-                          f"matched={matched} ext_range={params_used['extrados_start']:.2f}-{params_used['extrados_end']:.2f}")
-                count += 1
         
         # Track which cells have diagonals from which direction
         # cell_diagonals[cell_no] = {"from_left": [...], "from_right": [...]}
@@ -505,8 +484,6 @@ class CellTool(BaseTool):
                 ext_height = params["extrados_height"]
                 num_bands = params.get("num_bands", 1)
                 
-                if cell_no == 0:
-                    print(f"[DIAG CREATE] cell={cell_no} FROM_LEFT: intrados={rib_pos:.3f} layer={layer} -> extrados={ext_start:.2f}-{ext_end:.2f}")
                 
                 # Split extrados range into bands if num_bands > 1
                 bands = split_range_into_bands(ext_start, ext_end, num_bands)
@@ -552,7 +529,7 @@ class CellTool(BaseTool):
         # Each line type (A, B, C, D) gets its own bands on cells that don't have diagonals of that type
         # Bands connect extrados to extrados (never to intrados)
         
-        print(f"DEBUG: Creating bands per line type")
+
         
         # Track which cells have diagonals of each line type
         # cells_by_layer[layer] = set of cell numbers with diagonals of that layer
@@ -568,9 +545,7 @@ class CellTool(BaseTool):
                         layer_params[layer] = params  # Store params for this layer
                     cells_by_layer[layer].add(cell_no)
         
-        print(f"DEBUG: Line types found: {list(cells_by_layer.keys())}")
-        for layer, cells in cells_by_layer.items():
-            print(f"DEBUG: Layer {layer}: cells with diagonals = {sorted(cells)}")
+
         
         # For each line type, find gaps and create bands
         for layer, cells_with_diag in cells_by_layer.items():
@@ -596,7 +571,7 @@ class CellTool(BaseTool):
                 # Only create band if there are diagonals on both sides (gap to fill)
                 # OR if there's at least one neighbor with this layer
                 if has_left_neighbor or has_right_neighbor:
-                    print(f"DEBUG: Band on cell {cell_no} for layer {layer}: height={ext_height:.3f}, num_bands={num_bands}")
+
                     
                     # Create a mini-band for each segment
                     for band_start, band_end in bands:
@@ -612,7 +587,7 @@ class CellTool(BaseTool):
                         if cell_no not in bands_grouped[band_key]:
                             bands_grouped[band_key].append(cell_no)
         
-        print(f"DEBUG: Total diagonals: {len(diagonals_grouped)}, bands: {len(bands_grouped)}")
+
         
         # Convert grouped diagonals to list format
         diagonals = []
@@ -637,7 +612,7 @@ class CellTool(BaseTool):
             }
             diagonals.append(band)
         
-        print(f"DEBUG: Total entries in table: {len(diagonals)}")
+
         
         # Sort by position
         diagonals.sort(key=lambda d: (d["cells"][0] if d["cells"] else 0, d["right_front"][0]))

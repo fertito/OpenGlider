@@ -805,7 +805,8 @@ class ParametricGlider(object):
 
         logging.info(
             f"Remapped cell indices: {old_cell_num} -> {new_cell_num} cells "
-            f"({count_lineset} lineset nodes, {count_elements} element entries)"
+            f"(half: {old_half} -> {new_half}, "
+            f"{count_lineset} lineset nodes, {count_elements} element entries)"
         )
 
     def __json__(self):
