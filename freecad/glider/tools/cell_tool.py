@@ -7,6 +7,7 @@ from PySide import QtGui
 from .glider import draw_glider, draw_lines
 from .tools import BaseTool, input_field
 from .table import base_table_widget
+from .pull_axis_utils import compute_pull_axis_projection
 
 
 def refresh():
@@ -247,24 +248,24 @@ class CellTool(BaseTool):
         param_table = QtGui.QTableWidget(len(line_types), 4)
         param_table.setHorizontalHeaderLabels([
             "Largeur intrados (cm)",
-            "Extrados début (%)",
-            "Extrados fin (%)",
+            "% avant axe",
+            "% arrière axe",
             "Nb bandes"
         ])
         param_table.setVerticalHeaderLabels(line_types)
         param_table.horizontalHeader().setStretchLastSection(True)
         
         # Default values for each line type - read from ParametricGlider for persistence
-        # (intrados_cm, extrados_start_%, extrados_end_%, num_bands)
+        # (intrados_cm, before_axis_%, after_axis_%, num_bands)
         saved_params = getattr(self.parametric_glider, 'diagonal_autofill_params', None)
         if saved_params:
             defaults = dict(saved_params)  # Copy to avoid modifying the original
         else:
             defaults = {
-                "A": (4.0, 5.0, 15.0, 1),
-                "B": (4.0, 15.0, 30.0, 1),
-                "C": (4.0, 30.0, 50.0, 1),
-                "D": (4.0, 50.0, 75.0, 1),
+                "A": (4.0, 5.0, 5.0, 1),
+                "B": (4.0, 7.0, 8.0, 1),
+                "C": (4.0, 8.0, 12.0, 1),
+                "D": (4.0, 10.0, 15.0, 1),
             }
         
         line_spinboxes = {}
@@ -274,26 +275,26 @@ class CellTool(BaseTool):
             intrados_spin.setValue(defaults[line_type][0])
             intrados_spin.setSuffix(" cm")
             
-            extrados_start_spin = QtGui.QDoubleSpinBox()
-            extrados_start_spin.setRange(0, 100)
-            extrados_start_spin.setValue(defaults[line_type][1])
-            extrados_start_spin.setSuffix(" %")
+            before_axis_spin = QtGui.QDoubleSpinBox()
+            before_axis_spin.setRange(0, 50)
+            before_axis_spin.setValue(defaults[line_type][1])
+            before_axis_spin.setSuffix(" %")
             
-            extrados_end_spin = QtGui.QDoubleSpinBox()
-            extrados_end_spin.setRange(0, 100)
-            extrados_end_spin.setValue(defaults[line_type][2])
-            extrados_end_spin.setSuffix(" %")
+            after_axis_spin = QtGui.QDoubleSpinBox()
+            after_axis_spin.setRange(0, 50)
+            after_axis_spin.setValue(defaults[line_type][2])
+            after_axis_spin.setSuffix(" %")
             
             num_bands_spin = QtGui.QSpinBox()
             num_bands_spin.setRange(1, 10)
             num_bands_spin.setValue(defaults[line_type][3])
             
             param_table.setCellWidget(row, 0, intrados_spin)
-            param_table.setCellWidget(row, 1, extrados_start_spin)
-            param_table.setCellWidget(row, 2, extrados_end_spin)
+            param_table.setCellWidget(row, 1, before_axis_spin)
+            param_table.setCellWidget(row, 2, after_axis_spin)
             param_table.setCellWidget(row, 3, num_bands_spin)
             
-            line_spinboxes[line_type] = (intrados_spin, extrados_start_spin, extrados_end_spin, num_bands_spin)
+            line_spinboxes[line_type] = (intrados_spin, before_axis_spin, after_axis_spin, num_bands_spin)
         
         layout.addWidget(param_table)
         
@@ -322,11 +323,11 @@ class CellTool(BaseTool):
         
         # Save entered values to ParametricGlider for persistence
         self.parametric_glider.diagonal_autofill_params = {}
-        for line_type, (intrados_spin, ext_start_spin, ext_end_spin, num_bands_spin) in line_spinboxes.items():
+        for line_type, (intrados_spin, before_spin, after_spin, num_bands_spin) in line_spinboxes.items():
             self.parametric_glider.diagonal_autofill_params[line_type] = (
                 intrados_spin.value(),
-                ext_start_spin.value(),
-                ext_end_spin.value(),
+                before_spin.value(),
+                after_spin.value(),
                 num_bands_spin.value()
             )
         self.parametric_glider.diagonal_autofill_offset = offset_spin.value()
@@ -410,22 +411,17 @@ class CellTool(BaseTool):
         # Get per-line-type parameters
         chord_cm = ref_chord * 100  # Convert to cm
         line_params = {}
-        for line_type, (intrados_spin, ext_start_spin, ext_end_spin, num_bands_spin) in line_spinboxes.items():
+        for line_type, (intrados_spin, before_spin, after_spin, num_bands_spin) in line_spinboxes.items():
             # Convert cm to fraction of chord, % to fraction
             half_width_intrados = (intrados_spin.value() / 2) / chord_cm
-            extrados_start = ext_start_spin.value() / 100.0
-            extrados_end = ext_end_spin.value() / 100.0
+            before_axis = before_spin.value() / 100.0  # % chord before projected axis
+            after_axis = after_spin.value() / 100.0    # % chord after projected axis
             num_bands = num_bands_spin.value()
-            
-            # Calculate extrados height at the middle of the extrados range
-            mid_x = (extrados_start + extrados_end) / 2
-            ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
             
             line_params[line_type] = {
                 "half_intrados": half_width_intrados,
-                "extrados_start": extrados_start,
-                "extrados_end": extrados_end,
-                "extrados_height": ext_height,
+                "before_axis": before_axis,
+                "after_axis": after_axis,
                 "num_bands": num_bands,
             }
         
@@ -434,11 +430,33 @@ class CellTool(BaseTool):
         # Default params for unknown line types
         default_params = line_params.get("A", {
             "half_intrados": 0.02,
-            "extrados_start": 0.05,
-            "extrados_end": 0.15,
-            "extrados_height": 1.0,
+            "before_axis": 0.05,
+            "after_axis": 0.05,
             "num_bands": 1,
         })
+        
+        # Pre-compute pull axis projections for all ribs (keyed by rib index)
+        # This maps each rib to its AP projections for axis-relative positioning
+        rib_projections = {}  # rib_index -> {ap_rib_pos -> extrados_intersection_x}
+        for rib_idx, rib in enumerate(glider_3d.ribs):
+            projections = compute_pull_axis_projection(rib, glider_3d)
+            if projections:
+                proj_map = {}
+                for proj in projections:
+                    proj_map[round(proj['ap'].rib_pos, 4)] = proj['extrados_intersection_x']
+                rib_projections[rib_idx] = proj_map
+        
+        def _get_axis_x(projections, rib_idx, rib_pos, before, after):
+            """Look up pull axis extrados intersection for a given rib+AP.
+            Falls back to rib_pos + before (midpoint of before/after range) if unavailable."""
+            if rib_idx in projections:
+                proj_map = projections[rib_idx]
+                # Find closest matching AP position
+                best_key = min(proj_map.keys(), key=lambda k: abs(k - round(rib_pos, 4)), default=None)
+                if best_key is not None and abs(best_key - round(rib_pos, 4)) < 0.05:
+                    return proj_map[best_key]
+            # Fallback: use rib_pos as axis (no projection data)
+            return rib_pos
         
         rib_attachments = self._get_suspended_ribs_with_layer()
         cell_count = self._get_cell_count()
@@ -479,18 +497,26 @@ class CellTool(BaseTool):
             # Diagonals from left side of cell (attachment on left rib -> goes to right rib extrados)
             for rib_pos, layer, params in cell_data["from_left"]:
                 half_bottom = params["half_intrados"]
-                ext_start = params["extrados_start"]
-                ext_end = params["extrados_end"]
-                ext_height = params["extrados_height"]
+                before_axis = params["before_axis"]
+                after_axis = params["after_axis"]
                 num_bands = params.get("num_bands", 1)
                 
+                # Get the axis x for this AP on its rib (left rib of this cell = rib cell_no)
+                left_rib_idx = cell_no
+                axis_x = _get_axis_x(rib_projections, left_rib_idx, rib_pos, before_axis, after_axis)
+                ext_start = max(0, axis_x - before_axis)
+                ext_end = min(1, axis_x + after_axis)
+                
+                # Calculate extrados height at the middle of the range
+                mid_x = (ext_start + ext_end) / 2
+                ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
                 
                 # Split extrados range into bands if num_bands > 1
                 bands = split_range_into_bands(ext_start, ext_end, num_bands)
                 
                 for band_start, band_end in bands:
                     # Intrados: centered on rib_pos
-                    # Extrados: from band_start to band_end (absolute positions on chord)
+                    # Extrados: from band_start to band_end (axis-relative positions)
                     key = (
                         round(band_start, 4), ext_height,          # right_front (extrados start)
                         round(band_end, 4), ext_height,            # right_back (extrados end)
@@ -504,17 +530,26 @@ class CellTool(BaseTool):
             # Diagonals from right side of cell (attachment on right rib -> goes to left rib extrados)
             for rib_pos, layer, params in cell_data["from_right"]:
                 half_bottom = params["half_intrados"]
-                ext_start = params["extrados_start"]
-                ext_end = params["extrados_end"]
-                ext_height = params["extrados_height"]
+                before_axis = params["before_axis"]
+                after_axis = params["after_axis"]
                 num_bands = params.get("num_bands", 1)
+                
+                # Get the axis x for this AP on its rib (right rib of this cell = rib cell_no + 1)
+                right_rib_idx = cell_no + 1
+                axis_x = _get_axis_x(rib_projections, right_rib_idx, rib_pos, before_axis, after_axis)
+                ext_start = max(0, axis_x - before_axis)
+                ext_end = min(1, axis_x + after_axis)
+                
+                # Calculate extrados height at the middle of the range
+                mid_x = (ext_start + ext_end) / 2
+                ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
                 
                 # Split extrados range into bands if num_bands > 1
                 bands = split_range_into_bands(ext_start, ext_end, num_bands)
                 
                 for band_start, band_end in bands:
                     # Intrados: centered on rib_pos
-                    # Extrados: from band_start to band_end (absolute positions on chord)
+                    # Extrados: from band_start to band_end (axis-relative positions)
                     key = (
                         round(rib_pos - half_bottom, 4), -1.0,     # right_front (intrados)
                         round(rib_pos + half_bottom, 4), -1.0,     # right_back (intrados)
@@ -550,13 +585,9 @@ class CellTool(BaseTool):
         # For each line type, find gaps and create bands
         for layer, cells_with_diag in cells_by_layer.items():
             params = layer_params[layer]
-            ext_start = params["extrados_start"]
-            ext_end = params["extrados_end"]
-            ext_height = params["extrados_height"]
+            before_axis = params["before_axis"]
+            after_axis = params["after_axis"]
             num_bands = params.get("num_bands", 1)
-            
-            # Split the horizontal bands using the same logic as diagonals
-            bands = split_range_into_bands(ext_start, ext_end, num_bands)
             
             # Find cells that DON'T have diagonals of this layer
             for cell_no in range(cell_count):
@@ -571,7 +602,26 @@ class CellTool(BaseTool):
                 # Only create band if there are diagonals on both sides (gap to fill)
                 # OR if there's at least one neighbor with this layer
                 if has_left_neighbor or has_right_neighbor:
-
+                    # Use an average axis_x from neighboring cells for band positioning
+                    # Try left rib, then right rib
+                    avg_axis_x = None
+                    for neighbor_rib_idx in [cell_no, cell_no + 1]:
+                        if neighbor_rib_idx in rib_projections:
+                            proj_map = rib_projections[neighbor_rib_idx]
+                            if proj_map:
+                                avg_axis_x = sum(proj_map.values()) / len(proj_map)
+                                break
+                    
+                    if avg_axis_x is None:
+                        # Fallback: center of chord
+                        avg_axis_x = 0.3
+                    
+                    ext_start = max(0, avg_axis_x - before_axis)
+                    ext_end = min(1, avg_axis_x + after_axis)
+                    ext_height = get_extrados_height_with_offset((ext_start + ext_end) / 2, offset_mm)
+                    
+                    # Split the horizontal bands using the same logic as diagonals
+                    bands = split_range_into_bands(ext_start, ext_end, num_bands)
                     
                     # Create a mini-band for each segment
                     for band_start, band_end in bands:

@@ -11,6 +11,21 @@ from openglider.glider.rib.elements import FoilCurve
 from numpy.linalg import norm
 
 
+def _point_in_polygon(point, polygon):
+    """Ray-casting point-in-polygon test."""
+    x, y = float(point[0]), float(point[1])
+    n = len(polygon)
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = float(polygon[i][0]), float(polygon[i][1])
+        xj, yj = float(polygon[j][0]), float(polygon[j][1])
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
 class Rib(CachedObject):
     """
     Openglider Rib Class: contains a airfoil, needs a startpoint, angle (arcwide), angle of attack,
@@ -219,6 +234,9 @@ class Rib(CachedObject):
                 vertices += hole_vertices
                 boundary.append([start_index + i for i in hole_indices])
                 hole_centers.append(hole.get_center(self, scale=False).tolist())
+
+        # Note: cone_holes are NOT included in the 3D mesh to avoid
+        # triangulation issues. They only appear in 2D export (ribs.py).
 
         if not filled:
             segments = []

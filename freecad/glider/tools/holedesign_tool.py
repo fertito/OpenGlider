@@ -6,6 +6,7 @@ from openglider.utils.geometry import is_inside_triangle
 import numpy as np
 from pivy import coin
 import os
+from .pull_axis_utils import compute_pull_axis_projection
 
 class HoleDesignTool(BaseTool):
     widget_name = "Hole Design"
@@ -31,6 +32,15 @@ class HoleDesignTool(BaseTool):
         self.noHoleZoneLabel = QtGui.QLabel("<b>No-Hole Zone Geometry</b>", self.base_widget)
         self.noHoleArcAngleSpinBox = QtGui.QDoubleSpinBox(self.base_widget)  # Arc span angle
         self.noHoleAngleSpinBox = QtGui.QDoubleSpinBox(self.base_widget)  # Direction to extrados
+
+        # Cone hole controls
+        self.coneHoleLabel = QtGui.QLabel("<b>Trous dans cônes d'exclusion</b>", self.base_widget)
+        self.coneHolesEnabledCheckBox = QtGui.QCheckBox("Activer", self.base_widget)
+        self.coneHoleNumZonesSpinBox = QtGui.QSpinBox(self.base_widget)
+        self.coneHoleMarginTopSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.coneHoleMarginSideSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.coneHoleMarginBottomSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.coneHoleCornerRadiusSpinBox_cone = QtGui.QDoubleSpinBox(self.base_widget)
 
         # Preview rib selector - ComboBox to show only relevant ribs with real names
         self.previewRibComboBox = QtGui.QComboBox(self.base_widget)
@@ -62,6 +72,15 @@ class HoleDesignTool(BaseTool):
         self.layout.addRow(self.noHoleZoneLabel)
         self.layout.addRow("Arc Span (deg)", self.noHoleArcAngleSpinBox)
         self.layout.addRow("Exclusion Angle (deg)", self.noHoleAngleSpinBox)
+
+        # Cone hole controls
+        self.layout.addRow(self.coneHoleLabel)
+        self.layout.addRow("", self.coneHolesEnabledCheckBox)
+        self.layout.addRow("Nb zones par côté", self.coneHoleNumZonesSpinBox)
+        self.layout.addRow("Marge haut (mm)", self.coneHoleMarginTopSpinBox)
+        self.layout.addRow("Marge côté (mm)", self.coneHoleMarginSideSpinBox)
+        self.layout.addRow("Marge bas (mm)", self.coneHoleMarginBottomSpinBox)
+        self.layout.addRow("Rayon coins cône (%)", self.coneHoleCornerRadiusSpinBox_cone)
         self.layout.addRow("Preview Rib", self.previewRibComboBox)
 
         # Right-align the apply button
@@ -104,6 +123,23 @@ class HoleDesignTool(BaseTool):
         self.noHoleAngleSpinBox.setMinimum(0)
         self.noHoleAngleSpinBox.setMaximum(90)
 
+        # Cone hole spinbox configuration
+        self.coneHoleNumZonesSpinBox.setRange(1, 3)
+        self.coneHoleNumZonesSpinBox.setValue(1)
+
+        for spinbox in [self.coneHoleMarginTopSpinBox, self.coneHoleMarginSideSpinBox, self.coneHoleMarginBottomSpinBox]:
+            spinbox.setSingleStep(0.5)
+            spinbox.setDecimals(1)
+            spinbox.setSuffix(" mm")
+            spinbox.setRange(0.0, 50.0)
+            spinbox.setValue(3.0)
+
+        self.coneHoleCornerRadiusSpinBox_cone.setSingleStep(5.0)
+        self.coneHoleCornerRadiusSpinBox_cone.setDecimals(0)
+        self.coneHoleCornerRadiusSpinBox_cone.setSuffix(" %")
+        self.coneHoleCornerRadiusSpinBox_cone.setRange(0.0, 50.0)
+        self.coneHoleCornerRadiusSpinBox_cone.setValue(25.0)
+
         # Load initial values
         self.update_form_from_glider_data()
 
@@ -121,16 +157,31 @@ class HoleDesignTool(BaseTool):
         self.holeCornerRadiusSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.noHoleArcAngleSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.noHoleAngleSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.coneHolesEnabledCheckBox.stateChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.coneHoleNumZonesSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.coneHoleMarginTopSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.coneHoleMarginSideSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.coneHoleMarginBottomSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.coneHoleCornerRadiusSpinBox_cone.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.previewRibComboBox.currentIndexChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.applyButton.clicked.connect(self.accept)
 
-        # Set initial visibility of no-hole zone controls
+        # Set initial visibility of no-hole zone controls (and cone holes)
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
         self.noHoleZoneLabel.setVisible(is_suspended)
         self.noHoleArcAngleSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.noHoleArcAngleSpinBox).setVisible(is_suspended)
         self.noHoleAngleSpinBox.setVisible(is_suspended)
         self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
+        # Cone hole controls
+        for w in [self.coneHoleLabel, self.coneHolesEnabledCheckBox,
+                   self.coneHoleNumZonesSpinBox, self.coneHoleMarginTopSpinBox,
+                   self.coneHoleMarginSideSpinBox, self.coneHoleMarginBottomSpinBox,
+                   self.coneHoleCornerRadiusSpinBox_cone]:
+            w.setVisible(is_suspended)
+            label = self.layout.labelForField(w)
+            if label:
+                label.setVisible(is_suspended)
 
     def setup_pivy(self):
         self.task_separator.addChild(self.preview_root)
@@ -228,7 +279,15 @@ class HoleDesignTool(BaseTool):
         self.noHoleAngleSpinBox.setVisible(is_suspended)
         # Also hide the labels associated with the spinboxes
         self.layout.labelForField(self.noHoleAngleSpinBox).setVisible(is_suspended)
-        
+        # Cone hole controls
+        for w in [self.coneHoleLabel, self.coneHolesEnabledCheckBox,
+                   self.coneHoleNumZonesSpinBox, self.coneHoleMarginTopSpinBox,
+                   self.coneHoleMarginSideSpinBox, self.coneHoleMarginBottomSpinBox,
+                   self.coneHoleCornerRadiusSpinBox_cone]:
+            w.setVisible(is_suspended)
+            label = self.layout.labelForField(w)
+            if label:
+                label.setVisible(is_suspended)
 
         # Then, load the values for the newly selected rib type
         self.update_form_from_glider_data()
@@ -238,6 +297,7 @@ class HoleDesignTool(BaseTool):
 
     def update_preview(self, *args):
         self.preview_root.removeAllChildren()
+        self._cached_projections = {}  # Clear projection cache
 
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
         rib = self.get_representative_rib(suspended=is_suspended)
@@ -280,128 +340,47 @@ class HoleDesignTool(BaseTool):
                 
                 angle_rad = np.deg2rad(angle)
 
-                # Get the actual pilot point from the lineset
-                # This is the main/pilot point where all lines converge
-                pilot_point_3d = None
-                if hasattr(glider_instance, 'lineset') and glider_instance.lineset:
-                    try:
-                        # Use the lineset's method to get the main attachment point
-                        main_ap = glider_instance.lineset.get_main_attachment_point()
-                        if main_ap is not None and hasattr(main_ap, 'vec') and main_ap.vec is not None:
-                            pilot_point_3d = np.array(main_ap.vec)
-                    except Exception:
-                        pass  # Will fall back to vertical
+                # Use shared projection utility for this rib
+                if not hasattr(self, '_cached_projections'):
+                    self._cached_projections = {}
+                cache_key = id(rib)
+                if cache_key not in self._cached_projections:
+                    self._cached_projections[cache_key] = compute_pull_axis_projection(rib, glider_instance)
+                projections = self._cached_projections[cache_key]
                 
-                # Calculate line direction in 2D profile coordinates
-                if pilot_point_3d is not None:
-                    # Get attachment point 3D position
-                    ap_pos_3d = np.array(ap.get_position())
+                # Find this AP's projection result
+                proj_data = None
+                for proj in projections:
+                    if proj['ap'] is ap or (hasattr(proj['ap'], 'rib_pos') and abs(proj['ap'].rib_pos - ap.rib_pos) < 0.001):
+                        proj_data = proj
+                        break
+                
+                if proj_data is not None:
+                    line_direction = proj_data['line_direction_2d']
+                    angle_offset = proj_data['angle_offset']
+                    pilot_2d_norm = proj_data['pilot_2d_norm']
+                    pilot_2d = pilot_2d_norm * scale
                     
-                    # Use actual LE and TE 3D positions to establish coordinate frame
-                    # This is the correct way to project onto the rib's plane
+                    # Draw pilot point marker (blue) — only for first AP to avoid clutter
+                    if ap is attachment_points[0]:
+                        pilot_marker = coin.SoSeparator()
+                        pilot_trans = coin.SoTransform()
+                        pilot_trans.translation.setValue(pilot_2d[0], pilot_2d[1], 0)
+                        pilot_mat = coin.SoMaterial()
+                        pilot_mat.diffuseColor.setValue(0, 0, 1)  # Blue
+                        pilot_sphere = coin.SoSphere()
+                        pilot_sphere.radius = 0.05 * scale
+                        pilot_marker.addChild(pilot_trans)
+                        pilot_marker.addChild(pilot_mat)
+                        pilot_marker.addChild(pilot_sphere)
+                        self.preview_root.addChild(pilot_marker)
                     
-                    # Leading edge 3D position (nose of profile)
-                    le_3d = np.array(rib.profile_3d.data[rib.profile_2d.noseindex])
-                    
-                    # Trailing edge 3D position (average of first and last points)
-                    te_3d = (np.array(rib.profile_3d.data[0]) + np.array(rib.profile_3d.data[-1])) / 2
-                    
-                    # DEBUG: Print all 3D coordinates
-                    print(f"[DEBUG] Pilot 3D: ({pilot_point_3d[0]:.3f}, {pilot_point_3d[1]:.3f}, {pilot_point_3d[2]:.3f})")
-                    print(f"[DEBUG] LE 3D: ({le_3d[0]:.3f}, {le_3d[1]:.3f}, {le_3d[2]:.3f})")
-                    print(f"[DEBUG] TE 3D: ({te_3d[0]:.3f}, {te_3d[1]:.3f}, {te_3d[2]:.3f})")
-                    print(f"[DEBUG] AP 3D: ({ap_pos_3d[0]:.3f}, {ap_pos_3d[1]:.3f}, {ap_pos_3d[2]:.3f})")
-                    
-                    # Chord vector: from TE to LE (so that LE is at x=0 in 2D, TE at x~=1)
-                    chord_3d = le_3d - te_3d
-                    chord_length = np.linalg.norm(chord_3d)
-                    chord_dir = chord_3d / chord_length if chord_length > 0 else np.array([0, 1, 0])
-                    
-                    print(f"[DEBUG] Chord length: {chord_length:.3f}")
-                    print(f"[DEBUG] Chord dir: ({chord_dir[0]:.3f}, {chord_dir[1]:.3f}, {chord_dir[2]:.3f})")
-                    
-                    # Span direction (perpendicular to chord, in the rib plane)
-                    # Use a point on the upper surface to define the plane
-                    upper_idx = len(rib.profile_3d.data) // 4  # A point on upper surface
-                    upper_3d = np.array(rib.profile_3d.data[upper_idx])
-                    
-                    # Normal to rib plane
-                    v1_3d = upper_3d - te_3d
-                    normal = np.cross(chord_3d, v1_3d)
-                    normal = normal / np.linalg.norm(normal) if np.linalg.norm(normal) > 0 else np.array([1, 0, 0])
-                    
-                    # Up direction (perpendicular to chord, in rib plane)
-                    up_dir = np.cross(normal, chord_dir)
-                    up_dir = up_dir / np.linalg.norm(up_dir) if np.linalg.norm(up_dir) > 0 else np.array([0, 0, 1])
-                    
-                    print(f"[DEBUG] Up dir: ({up_dir[0]:.3f}, {up_dir[1]:.3f}, {up_dir[2]:.3f})")
-                    
-                    # Project pilot point onto rib's coordinate frame
-                    # Reference is TE (so LE is at positive x)
-                    pilot_rel_3d = pilot_point_3d - te_3d
-                    pilot_chord_pos = np.dot(pilot_rel_3d, chord_dir) / chord_length  # 0=TE, 1=LE
-                    pilot_up_pos = np.dot(pilot_rel_3d, up_dir) / chord_length  # Positive = above chord
-                    
-                    print(f"[DEBUG] Pilot chord pos: {pilot_chord_pos:.3f} (0=TE, 1=LE)")
-                    print(f"[DEBUG] Pilot up pos: {pilot_up_pos:.3f}")
-                    
-                    # In profile_2d: LE (nose) is at x=0, TE is at x ≈ -0.5 (profile_2d.data[0] and [-1])
-                    # Get actual TE position in profile_2d coordinates
-                    te_2d_x = (rib.profile_2d.data[0][0] + rib.profile_2d.data[-1][0]) / 2  # Average of start/end
-                    le_2d_x = rib.profile_2d.data[rib.profile_2d.noseindex][0]  # LE is at noseindex
-                    
-                    # Interpolate: pilot_chord_pos 0=TE, 1=LE
-                    pilot_2d_x = te_2d_x + pilot_chord_pos * (le_2d_x - te_2d_x)
-                    pilot_2d_y = pilot_up_pos  # Y is already in chord-normalized units
-                    pilot_2d_norm = np.array([pilot_2d_x, pilot_2d_y])
-                    pilot_2d = pilot_2d_norm * scale  # Scale to real coordinates
-                    
-                    print(f"[DEBUG] TE 2D x: {te_2d_x:.3f}, LE 2D x: {le_2d_x:.3f}")
-                    print(f"[DEBUG] Pilot 2D (norm): ({pilot_2d_x:.3f}, {pilot_2d_y:.3f})")
-                    print(f"[DEBUG] Pilot 2D (scaled): ({pilot_2d[0]:.3f}, {pilot_2d[1]:.3f})")
-                    
-                    # VISUALIZATION: Draw the pilot point for verification (only once)
-                    # The nose is at profile_2d noseindex, which is typically x=0 in normalized coords
-                    nose_pos = rib.profile_2d.data[rib.profile_2d.noseindex]
-                    pilot_rel_to_nose = pilot_2d_norm - nose_pos
-                    print(f"[HoleDesign] Pilot point 2D coords: ({pilot_2d[0]:.3f}, {pilot_2d[1]:.3f})")
-                    print(f"[HoleDesign] Pilot relative to nose (LE): ({pilot_rel_to_nose[0]:.3f}, {pilot_rel_to_nose[1]:.3f})")
-                    
-                    # Draw pilot point marker (large blue sphere + cross)
-                    pilot_marker = coin.SoSeparator()
-                    pilot_trans = coin.SoTransform()
-                    pilot_trans.translation.setValue(pilot_2d[0], pilot_2d[1], 0)
-                    pilot_mat = coin.SoMaterial()
-                    pilot_mat.diffuseColor.setValue(0, 0, 1)  # Blue
-                    pilot_sphere = coin.SoSphere()
-                    pilot_sphere.radius = 0.05 * scale  # Scale marker size
-                    pilot_marker.addChild(pilot_trans)
-                    pilot_marker.addChild(pilot_mat)
-                    pilot_marker.addChild(pilot_sphere)
-                    self.preview_root.addChild(pilot_marker)
-                    
-                    # Draw cross lines at pilot point for visibility
-                    cross_size = 0.1 * scale
-                    cross_h = [np.array([pilot_2d[0] - cross_size, pilot_2d[1]]), 
-                               np.array([pilot_2d[0] + cross_size, pilot_2d[1]])]
-                    cross_v = [np.array([pilot_2d[0], pilot_2d[1] - cross_size]), 
-                               np.array([pilot_2d[0], pilot_2d[1] + cross_size])]
-                    self.preview_root.addChild(Line_old(cross_h, color='green', width=3).object)
-                    self.preview_root.addChild(Line_old(cross_v, color='green', width=3).object)
-                    
-                    # Draw line from pilot to this attachment point (both scaled)
+                    # Draw line from pilot to AP
                     self.preview_root.addChild(Line_old([pilot_2d, v1_scaled], color='green', width=1).object)
-                    
-                    # Direction from pilot 2D position to attachment point (use NORMALIZED coords for angle calculation)
-                    line_direction = v1 - pilot_2d_norm
-                    
-                    if np.linalg.norm(line_direction) > 1e-9:
-                        line_direction = line_direction / np.linalg.norm(line_direction)
-                    else:
-                        line_direction = np.array([0, 1])
                 else:
-                    # Fallback to vertical if no lineset data
+                    # Fallback to vertical if no projection data
                     line_direction = np.array([0, 1])
+                    angle_offset = np.arctan2(1, 0)
                 
                 # The angle_offset is now based on the suspension line direction
                 # This makes the exclusion angle centered on the line axis
@@ -537,6 +516,332 @@ class HoleDesignTool(BaseTool):
                         zone_points = [v1, v2, v3, v1]
                         zone_points_scaled = [p * scale for p in zone_points]
                         self.preview_root.addChild(Line_old(zone_points_scaled, color='red', width=1).object)
+                    
+                    # === CONE HOLE SUBDIVISION ===
+                    # If cone holes are enabled, inscribe holes within the exclusion zone
+                    # Using the actual zone boundary lines (with arc span offset)
+                    if self.coneHolesEnabledCheckBox.isChecked():
+                      try:
+                        num_zones = self.coneHoleNumZonesSpinBox.value()
+                        margin_top_m = self.coneHoleMarginTopSpinBox.value() / 1000.0
+                        margin_side_m = self.coneHoleMarginSideSpinBox.value() / 1000.0
+                        margin_bottom_m = self.coneHoleMarginBottomSpinBox.value() / 1000.0
+                        cone_corner_radius = self.coneHoleCornerRadiusSpinBox_cone.value() / 100.0
+                        
+                        # Convert margins to normalized coords
+                        margin_top = margin_top_m / rib.chord
+                        margin_side = margin_side_m / rib.chord
+                        margin_bottom = margin_bottom_m / rib.chord
+                        
+                        # Determine the actual zone boundary lines
+                        # Each side has a bottom point (on halfmoon/AP) and top point (on extrados)
+                        # The center axis goes from v1 toward angle_offset
+                        d_center = np.array([np.cos(angle_offset), np.sin(angle_offset)])
+                        
+                        if halfmoon_radius_norm > 1e-6:
+                            inner_radius = halfmoon_radius_norm
+                            # Center axis bottom point = point on halfmoon at angle_offset
+                            center_bottom = v1 + inner_radius * d_center
+                        else:
+                            inner_radius = 0.005
+                            center_bottom = v1 + inner_radius * d_center
+                        
+                        # Center axis top = intersection with extrados
+                        center_top = extrados_poly.line_intersection(
+                            v1, v1 + d_center * far_factor)
+                        if center_top is None:
+                            raise ValueError("No center-extrados intersection")
+                        
+                        # Build the two sides' boundary data:
+                        # Each side = [(bottom_left, top_left), (bottom_right, top_right)]
+                        # "left" side of the cone = between center axis and left edge
+                        # "right" side of the cone = between right edge and center axis
+                        
+                        if halfmoon_radius_norm > 1e-6:
+                            arc_span_deg = self.noHoleArcAngleSpinBox.value()
+                            arc_span_rad = np.deg2rad(arc_span_deg)
+                            half_arc = arc_span_rad / 2.0
+                            
+                            # Arc points (where the zone sides start on the halfmoon)
+                            arc_angle_left = angle_offset + half_arc
+                            arc_angle_right = angle_offset - half_arc
+                            
+                            left_edge_bottom = v1 + inner_radius * np.array(
+                                [np.cos(arc_angle_left), np.sin(arc_angle_left)])
+                            right_edge_bottom = v1 + inner_radius * np.array(
+                                [np.cos(arc_angle_right), np.sin(arc_angle_right)])
+                            
+                            # Edge top points: from arc points in dir3/dir2 direction to extrados
+                            left_edge_top = extrados_poly.line_intersection(
+                                left_edge_bottom, left_edge_bottom + dir3 * far_factor)
+                            right_edge_top = extrados_poly.line_intersection(
+                                right_edge_bottom, right_edge_bottom + dir2 * far_factor)
+                        else:
+                            # No reinforcement: sides from v1 to v2/v3
+                            left_edge_bottom = v1.copy()
+                            right_edge_bottom = v1.copy()
+                            left_edge_top = v3  # dir3 → left edge
+                            right_edge_top = v2  # dir2 → right edge
+                        
+                        if left_edge_top is None or right_edge_top is None:
+                            raise ValueError("No edge-extrados intersection")
+                        
+                        # Process each side (left side and right side of the cone)
+                        for side_data in [
+                            # Left side: from center axis to left edge
+                            (center_bottom, center_top, left_edge_bottom, left_edge_top),
+                            # Right side: from right edge to center axis
+                            (right_edge_bottom, right_edge_top, center_bottom, center_top),
+                        ]:
+                            s_bot_left, s_top_left, s_bot_right, s_top_right = side_data
+                            
+                            # For N zones, create N+1 boundary lines by interpolation
+                            for zone_i in range(num_zones):
+                                t0 = zone_i / num_zones
+                                t1 = (zone_i + 1) / num_zones
+                                
+                                # Interpolate boundary line endpoints
+                                bl_bot = s_bot_left * (1 - t0) + s_bot_right * t0
+                                bl_top = s_top_left * (1 - t0) + s_top_right * t0
+                                br_bot = s_bot_left * (1 - t1) + s_bot_right * t1
+                                br_top = s_top_left * (1 - t1) + s_top_right * t1
+                                
+                                # Direction vectors of each boundary line
+                                d_left_line = bl_top - bl_bot
+                                d_right_line = br_top - br_bot
+                                len_left = np.linalg.norm(d_left_line)
+                                len_right = np.linalg.norm(d_right_line)
+                                
+                                if len_left < 1e-9 or len_right < 1e-9:
+                                    continue
+                                
+                                d_left_unit = d_left_line / len_left
+                                d_right_unit = d_right_line / len_right
+                                
+                                # Perpendiculars pointing INWARD (toward zone center)
+                                # Left boundary: rotate +90° → points toward right
+                                perp_left = np.array([-d_left_unit[1], d_left_unit[0]])
+                                # Right boundary: rotate -90° → points toward left
+                                perp_right = np.array([d_right_unit[1], -d_right_unit[0]])
+                                
+                                # Offset side lines by margin_side
+                                off_bl_bot = bl_bot + perp_left * margin_side
+                                off_br_bot = br_bot + perp_right * margin_side
+                                
+                                # Bottom corners: intersect offset side lines with inner circle
+                                R_arc = inner_radius + margin_bottom
+                                single_bottom = False
+                                
+                                u_l = off_bl_bot - v1
+                                dot_l = np.dot(u_l, d_left_unit)
+                                disc_l = dot_l**2 - np.dot(u_l, u_l) + R_arc**2
+                                
+                                u_r = off_br_bot - v1
+                                dot_r = np.dot(u_r, d_right_unit)
+                                disc_r = dot_r**2 - np.dot(u_r, u_r) + R_arc**2
+                                
+                                if disc_l < 0 or disc_r < 0:
+                                    single_bottom = True
+                                else:
+                                    p_bl = off_bl_bot + (-dot_l + np.sqrt(disc_l)) * d_left_unit
+                                    p_br = off_br_bot + (-dot_r + np.sqrt(disc_r)) * d_right_unit
+                                    ref_vec = br_bot - bl_bot
+                                    if np.dot(p_br - p_bl, ref_vec) <= 0:
+                                        single_bottom = True
+                                
+                                if single_bottom:
+                                    # Sides cross: find intersection → V-shaped bottom
+                                    dx = off_br_bot - off_bl_bot
+                                    det_s = d_left_unit[0]*(-d_right_unit[1]) - d_left_unit[1]*(-d_right_unit[0])
+                                    if abs(det_s) < 1e-12:
+                                        continue
+                                    t_cross = (dx[0]*(-d_right_unit[1]) - dx[1]*(-d_right_unit[0])) / det_s
+                                    p_bottom = off_bl_bot + t_cross * d_left_unit
+                                    p_bl = p_bottom
+                                    p_br = p_bottom
+                                
+                                # Top corners
+                                p_tl_ext = extrados_poly.line_intersection(
+                                    off_bl_bot, off_bl_bot + d_left_unit * far_factor)
+                                p_tr_ext = extrados_poly.line_intersection(
+                                    off_br_bot, off_br_bot + d_right_unit * far_factor)
+                                if p_tl_ext is None or p_tr_ext is None:
+                                    continue
+                                d_tl_r = p_tl_ext - v1
+                                p_tl = p_tl_ext - (d_tl_r / np.linalg.norm(d_tl_r)) * margin_top
+                                d_tr_r = p_tr_ext - v1
+                                p_tr = p_tr_ext - (d_tr_r / np.linalg.norm(d_tr_r)) * margin_top
+                                
+                                # Validate top
+                                ref_vec_t = br_bot - bl_bot
+                                if np.dot(p_tr - p_tl, ref_vec_t) <= 0:
+                                    continue
+                                if np.dot(p_tl - p_bl, d_center) <= 0:
+                                    continue
+                                
+                                num_curve_pts = 10
+                                num_fillet_pts = 6
+                                cr = cone_corner_radius
+                                
+                                angle_tr = np.arctan2(p_tr[1] - v1[1], p_tr[0] - v1[0])
+                                angle_tl = np.arctan2(p_tl[1] - v1[1], p_tl[0] - v1[0])
+                                ad_top = angle_tl - angle_tr
+                                while ad_top > np.pi: ad_top -= 2 * np.pi
+                                while ad_top < -np.pi: ad_top += 2 * np.pi
+                                
+                                if single_bottom:
+                                    # === V-SHAPE POLYGON ===
+                                    side_r = np.linalg.norm(p_tr - p_bottom)
+                                    side_l = np.linalg.norm(p_tl - p_bottom)
+                                    if cr > 1e-6:
+                                        dir_r = (p_tr - p_bottom) / max(side_r, 1e-9)
+                                        dir_l = (p_tl - p_bottom) / max(side_l, 1e-9)
+                                        cut_r = side_r * cr * 0.5
+                                        cut_l = side_l * cr * 0.5
+                                        bot_r = p_bottom + dir_r * cut_r
+                                        bot_l = p_bottom + dir_l * cut_l
+                                        tr_s = p_tr - dir_r * cut_r
+                                        tl_s = p_tl - dir_l * cut_l
+                                        st = np.sign(ad_top) if abs(ad_top) > 1e-9 else 1.0
+                                        dist_tr = max(np.linalg.norm(p_tr - v1), 1e-9)
+                                        dist_tl = max(np.linalg.norm(p_tl - v1), 1e-9)
+                                        dtr = min(cut_r / dist_tr, abs(ad_top) * 0.45)
+                                        dtl = min(cut_l / dist_tl, abs(ad_top) * 0.45)
+                                        a_tr_f = angle_tr + st * dtr
+                                        a_tl_f = angle_tl - st * dtl
+                                        d_tr_f = np.array([np.cos(a_tr_f), np.sin(a_tr_f)])
+                                        e_tr = extrados_poly.line_intersection(v1, v1 + d_tr_f * far_factor)
+                                        tr_c = (e_tr - d_tr_f * margin_top) if e_tr is not None else p_tr
+                                        d_tl_f = np.array([np.cos(a_tl_f), np.sin(a_tl_f)])
+                                        e_tl = extrados_poly.line_intersection(v1, v1 + d_tl_f * far_factor)
+                                        tl_c = (e_tl - d_tl_f * margin_top) if e_tl is not None else p_tl
+                                        hole_pts = []
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * bot_l + 2*(1-t)*t * p_bottom + t**2 * bot_r)
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * tr_s + 2*(1-t)*t * p_tr + t**2 * tr_c)
+                                        ad_t_s = a_tl_f - a_tr_f
+                                        while ad_t_s > np.pi: ad_t_s -= 2*np.pi
+                                        while ad_t_s < -np.pi: ad_t_s += 2*np.pi
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = a_tr_f + t * ad_t_s
+                                            d = np.array([np.cos(a), np.sin(a)])
+                                            ext_pt = extrados_poly.line_intersection(v1, v1 + d * far_factor)
+                                            if ext_pt is not None:
+                                                hole_pts.append(ext_pt - d * margin_top)
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * tl_c + 2*(1-t)*t * p_tl + t**2 * tl_s)
+                                        hole_pts.append(hole_pts[0])
+                                    else:
+                                        hole_pts = [p_bottom, p_tr]
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = angle_tr + t * ad_top
+                                            d = np.array([np.cos(a), np.sin(a)])
+                                            ext_pt = extrados_poly.line_intersection(v1, v1 + d * far_factor)
+                                            if ext_pt is not None:
+                                                hole_pts.append(ext_pt - d * margin_top)
+                                        hole_pts.append(p_tl)
+                                        hole_pts.append(p_bottom)
+                                else:
+                                    # === NORMAL ARC POLYGON ===
+                                    side_right = np.linalg.norm(p_tr - p_br)
+                                    side_left = np.linalg.norm(p_tl - p_bl)
+                                    dir_left_up = (p_tl - p_bl) / max(side_left, 1e-9)
+                                    dir_right_up = (p_tr - p_br) / max(side_right, 1e-9)
+                                    cut_left = side_left * cr * 0.5
+                                    cut_right = side_right * cr * 0.5
+                                    angle_bl = np.arctan2(p_bl[1] - v1[1], p_bl[0] - v1[0])
+                                    angle_br = np.arctan2(p_br[1] - v1[1], p_br[0] - v1[0])
+                                    ad_bot = angle_br - angle_bl
+                                    while ad_bot > np.pi: ad_bot -= 2 * np.pi
+                                    while ad_bot < -np.pi: ad_bot += 2 * np.pi
+                                    if cr > 1e-6:
+                                        bl_s = p_bl + dir_left_up * cut_left
+                                        br_s = p_br + dir_right_up * cut_right
+                                        tr_s = p_tr - dir_right_up * cut_right
+                                        tl_s = p_tl - dir_left_up * cut_left
+                                        sb = np.sign(ad_bot) if abs(ad_bot) > 1e-9 else 1.0
+                                        dbl = min(cut_left / R_arc, abs(ad_bot) * 0.45)
+                                        dbr = min(cut_right / R_arc, abs(ad_bot) * 0.45)
+                                        a_bl_f = angle_bl + sb * dbl
+                                        a_br_f = angle_br - sb * dbr
+                                        bl_a = v1 + R_arc * np.array([np.cos(a_bl_f), np.sin(a_bl_f)])
+                                        br_a = v1 + R_arc * np.array([np.cos(a_br_f), np.sin(a_br_f)])
+                                        st = np.sign(ad_top) if abs(ad_top) > 1e-9 else 1.0
+                                        dist_tr = max(np.linalg.norm(p_tr - v1), 1e-9)
+                                        dist_tl = max(np.linalg.norm(p_tl - v1), 1e-9)
+                                        dtr = min(cut_right / dist_tr, abs(ad_top) * 0.45)
+                                        dtl = min(cut_left / dist_tl, abs(ad_top) * 0.45)
+                                        a_tr_f = angle_tr + st * dtr
+                                        a_tl_f = angle_tl - st * dtl
+                                        d_tr_f = np.array([np.cos(a_tr_f), np.sin(a_tr_f)])
+                                        e_tr = extrados_poly.line_intersection(v1, v1 + d_tr_f * far_factor)
+                                        tr_c = (e_tr - d_tr_f * margin_top) if e_tr is not None else p_tr
+                                        d_tl_f = np.array([np.cos(a_tl_f), np.sin(a_tl_f)])
+                                        e_tl = extrados_poly.line_intersection(v1, v1 + d_tl_f * far_factor)
+                                        tl_c = (e_tl - d_tl_f * margin_top) if e_tl is not None else p_tl
+                                        hole_pts = []
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * bl_s + 2*(1-t)*t * p_bl + t**2 * bl_a)
+                                        ad_b_s = a_br_f - a_bl_f
+                                        while ad_b_s > np.pi: ad_b_s -= 2*np.pi
+                                        while ad_b_s < -np.pi: ad_b_s += 2*np.pi
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = a_bl_f + t * ad_b_s
+                                            hole_pts.append(v1 + R_arc * np.array([np.cos(a), np.sin(a)]))
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * br_a + 2*(1-t)*t * p_br + t**2 * br_s)
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * tr_s + 2*(1-t)*t * p_tr + t**2 * tr_c)
+                                        ad_t_s = a_tl_f - a_tr_f
+                                        while ad_t_s > np.pi: ad_t_s -= 2*np.pi
+                                        while ad_t_s < -np.pi: ad_t_s += 2*np.pi
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = a_tr_f + t * ad_t_s
+                                            d = np.array([np.cos(a), np.sin(a)])
+                                            ext_pt = extrados_poly.line_intersection(v1, v1 + d * far_factor)
+                                            if ext_pt is not None:
+                                                hole_pts.append(ext_pt - d * margin_top)
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * tl_c + 2*(1-t)*t * p_tl + t**2 * tl_s)
+                                        hole_pts.append(hole_pts[0])
+                                    else:
+                                        hole_pts = [p_bl]
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = angle_bl + t * ad_bot
+                                            hole_pts.append(v1 + R_arc * np.array([np.cos(a), np.sin(a)]))
+                                        hole_pts.append(p_br)
+                                        hole_pts.append(p_tr)
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = angle_tr + t * ad_top
+                                            d = np.array([np.cos(a), np.sin(a)])
+                                            ext_pt = extrados_poly.line_intersection(v1, v1 + d * far_factor)
+                                            if ext_pt is not None:
+                                                hole_pts.append(ext_pt - d * margin_top)
+                                        hole_pts.append(p_tl)
+                                        hole_pts.append(p_bl)
+                                
+                                # Draw cone hole
+                                hole_pts_scaled = [p * scale for p in hole_pts]
+                                hole_line = Line_old(hole_pts_scaled, color='blue', width=2)
+                                self.preview_root.addChild(hole_line.object)
+                      except Exception as e:
+                        import traceback
+                        print(f"[ConeHole] Error in cone hole subdivision: {e}")
+                        traceback.print_exc()
                     
                     
 
@@ -758,6 +1063,56 @@ class HoleDesignTool(BaseTool):
 
         return points
 
+    @staticmethod
+    def _round_quad_corners(p0, p1, p2, p3, radius_fraction):
+        """Generate a polygon with rounded corners for a quadrilateral.
+        
+        Args:
+            p0, p1, p2, p3: Corner points (numpy arrays) in order.
+            radius_fraction: How much to round (0.0 = sharp, 0.5 = max)
+        
+        Returns:
+            List of points forming the rounded polygon (closed).
+        """
+        corners = [p0, p1, p2, p3]
+        n = len(corners)
+        pts = []
+        num_arc_segments = 4  # Points per rounded corner
+        
+        for i in range(n):
+            prev_corner = corners[(i - 1) % n]
+            curr_corner = corners[i]
+            next_corner = corners[(i + 1) % n]
+            
+            # Vectors to neighboring corners
+            to_prev = prev_corner - curr_corner
+            to_next = next_corner - curr_corner
+            
+            len_prev = np.linalg.norm(to_prev)
+            len_next = np.linalg.norm(to_next)
+            
+            if len_prev < 1e-9 or len_next < 1e-9:
+                pts.append(curr_corner)
+                continue
+            
+            # Clamp radius to half the shortest edge
+            max_r = min(len_prev, len_next) * 0.5
+            r = radius_fraction * max_r
+            
+            # Start and end of the rounded corner
+            start_pt = curr_corner + (to_prev / len_prev) * r
+            end_pt = curr_corner + (to_next / len_next) * r
+            
+            # Interpolate the arc
+            for j in range(num_arc_segments + 1):
+                t = j / num_arc_segments
+                # Quadratic Bezier through start, corner, end
+                pt = (1 - t)**2 * start_pt + 2 * (1 - t) * t * curr_corner + t**2 * end_pt
+                pts.append(pt)
+        
+        pts.append(pts[0])  # Close the polygon
+        return pts
+
     def update_form_from_glider_data(self):
         pg = self.parametric_glider
         is_suspended = self.ribTypeComboBox.currentIndex() == 1
@@ -770,7 +1125,13 @@ class HoleDesignTool(BaseTool):
                             self.minPosSpinBox, self.maxPosSpinBox,
                             self.holeMarginSpinBox, self.holeCornerRadiusSpinBox]
         if is_suspended:
-            widgets_to_block.extend([self.noHoleAngleSpinBox])
+            widgets_to_block.extend([self.noHoleAngleSpinBox,
+                                     self.coneHolesEnabledCheckBox,
+                                     self.coneHoleNumZonesSpinBox,
+                                     self.coneHoleMarginTopSpinBox,
+                                     self.coneHoleMarginSideSpinBox,
+                                     self.coneHoleMarginBottomSpinBox,
+                                     self.coneHoleCornerRadiusSpinBox_cone])
 
         # Block signals to prevent feedback loops
         for widget in widgets_to_block:
@@ -792,6 +1153,15 @@ class HoleDesignTool(BaseTool):
             print(f"DEBUG: update_form - Reading susp_hole_radius_top_s: {val} (Type: {type(val)})")
             
             self.noHoleAngleSpinBox.setValue(getattr(pg, 'hole_free_angle_s', 30.0))
+            self.noHoleArcAngleSpinBox.setValue(getattr(pg, 'hole_arc_span_s', 120.0))
+            
+            # Cone hole parameters
+            self.coneHolesEnabledCheckBox.setChecked(getattr(pg, 'cone_holes_enabled_s', False))
+            self.coneHoleNumZonesSpinBox.setValue(getattr(pg, 'cone_hole_num_zones_s', 1))
+            self.coneHoleMarginTopSpinBox.setValue(getattr(pg, 'cone_hole_margin_top_s', 3.0))
+            self.coneHoleMarginSideSpinBox.setValue(getattr(pg, 'cone_hole_margin_side_s', 3.0))
+            self.coneHoleMarginBottomSpinBox.setValue(getattr(pg, 'cone_hole_margin_bottom_s', 3.0))
+            self.coneHoleCornerRadiusSpinBox_cone.setValue(getattr(pg, 'cone_hole_corner_radius_s', 25.0))
 
         # Initial visibility update
         self.on_height_mode_change(0)  # Default mode
@@ -811,9 +1181,17 @@ class HoleDesignTool(BaseTool):
             pg.min_hole_pos_s = self.minPosSpinBox.value()
             pg.max_hole_pos_s = self.maxPosSpinBox.value()
             pg.hole_free_angle_s = self.noHoleAngleSpinBox.value()
+            pg.hole_arc_span_s = self.noHoleArcAngleSpinBox.value()
             pg.hole_height_mode_s = 1  # Margin mode (fixed mm margin instead of percent)
             pg.hole_margin_s = self.holeMarginSpinBox.value() / 1000.0 # Convert mm to m for storage
             pg.hole_corner_radius_s = self.holeCornerRadiusSpinBox.value() / 100.0 # Convert % to ratio
+            # Cone hole params
+            pg.cone_holes_enabled_s = self.coneHolesEnabledCheckBox.isChecked()
+            pg.cone_hole_num_zones_s = self.coneHoleNumZonesSpinBox.value()
+            pg.cone_hole_margin_top_s = self.coneHoleMarginTopSpinBox.value()
+            pg.cone_hole_margin_side_s = self.coneHoleMarginSideSpinBox.value()
+            pg.cone_hole_margin_bottom_s = self.coneHoleMarginBottomSpinBox.value()
+            pg.cone_hole_corner_radius_s = self.coneHoleCornerRadiusSpinBox_cone.value()
         else:
             pg.hole_shape_ns = self.holeShapeComboBox.currentIndex()
             pg.num_holes_ns = self.numHolesSpinBox.value()

@@ -94,6 +94,15 @@ class ParametricGlider(object):
 
         # No-hole zone parameters for suspended ribs
         self.hole_free_angle_s = kwargs.get('hole_free_angle_s', 30.0)  # degrees
+        self.hole_arc_span_s = kwargs.get('hole_arc_span_s', 120.0)  # degrees (arc span on halfmoon)
+        
+        # Cone hole parameters (holes inside exclusion cones)
+        self.cone_holes_enabled_s = kwargs.get('cone_holes_enabled_s', False)
+        self.cone_hole_num_zones_s = kwargs.get('cone_hole_num_zones_s', 1)
+        self.cone_hole_margin_top_s = kwargs.get('cone_hole_margin_top_s', 3.0)     # mm
+        self.cone_hole_margin_side_s = kwargs.get('cone_hole_margin_side_s', 3.0)   # mm
+        self.cone_hole_margin_bottom_s = kwargs.get('cone_hole_margin_bottom_s', 3.0)  # mm
+        self.cone_hole_corner_radius_s = kwargs.get('cone_hole_corner_radius_s', 25.0)  # %
 
         # Airfoil Structure - Extrados Sleeve (suspended)
         self.extrados_sleeve_enabled_s = kwargs.get('extrados_sleeve_enabled_s', False)
@@ -318,6 +327,51 @@ class ParametricGlider(object):
         
         return result
 
+    @staticmethod
+    def _round_quad_corners_static(p0, p1, p2, p3, radius_fraction):
+        """Generate a polygon with rounded corners for a quadrilateral.
+        
+        Args:
+            p0, p1, p2, p3: Corner points (numpy arrays) in order.
+            radius_fraction: How much to round (0.0 = sharp, 0.5 = max)
+        
+        Returns:
+            List of points forming the rounded polygon (closed).
+        """
+        corners = [p0, p1, p2, p3]
+        n = len(corners)
+        pts = []
+        num_arc_segments = 4
+
+        for i in range(n):
+            prev_corner = corners[(i - 1) % n]
+            curr_corner = corners[i]
+            next_corner = corners[(i + 1) % n]
+
+            to_prev = prev_corner - curr_corner
+            to_next = next_corner - curr_corner
+
+            len_prev = np.linalg.norm(to_prev)
+            len_next = np.linalg.norm(to_next)
+
+            if len_prev < 1e-9 or len_next < 1e-9:
+                pts.append(curr_corner)
+                continue
+
+            max_r = min(len_prev, len_next) * 0.5
+            r = radius_fraction * max_r
+
+            start_pt = curr_corner + (to_prev / len_prev) * r
+            end_pt = curr_corner + (to_next / len_next) * r
+
+            for j in range(num_arc_segments + 1):
+                t = j / num_arc_segments
+                pt = (1 - t)**2 * start_pt + 2 * (1 - t) * t * curr_corner + t**2 * end_pt
+                pts.append(pt)
+
+        pts.append(pts[0])  # Close the polygon
+        return pts
+
     def apply_holes(self, glider):
         if not self.holes:
             return
@@ -355,43 +409,55 @@ class ParametricGlider(object):
                 )
                 no_hole_zones = []
                 attachment_points = glider.get_rib_attachment_points(rib)
+                halfmoon_circles = []  # For halfmoon exclusion (same as preview)
                 
-                # Get pilot point 2D coordinates (same method as preview)
+                # Get reinforcement config (needed for expanded exclusion zones)
+                halfmoon_radius_norm_global = 0.0
+                if getattr(self, 'reinforcement_enabled_s', False):
+                    master_config = getattr(self, 'reinforcement_master_s', {})
+                    halfmoon_radius_norm_global = master_config.get('halfmoon_radius', 0.03) / rib.chord
+                
+                # Get pilot point 2D coordinates (same method as compute_pull_axis_projection)
                 pilot_2d = None
                 if hasattr(glider, 'lineset') and glider.lineset:
-                    for node in glider.lineset.nodes:
-                        if hasattr(node, 'name') and node.name is not None and 'pilot' in node.name.lower():
-                            pilot_point_3d = np.array(node.vec) if hasattr(node, 'vec') else None
-                            if pilot_point_3d is not None:
-                                # Project pilot to rib's 2D coordinate frame
-                                le_3d = np.array(rib.profile_3d.data[rib.profile_2d.noseindex])
-                                te_3d = (np.array(rib.profile_3d.data[0]) + np.array(rib.profile_3d.data[-1])) / 2
-                                chord_3d = le_3d - te_3d
-                                chord_length = np.linalg.norm(chord_3d)
-                                if chord_length > 1e-9:
-                                    chord_dir = chord_3d / chord_length
-                                    upper_idx = rib.profile_2d.noseindex + 1 if rib.profile_2d.noseindex + 1 < len(rib.profile_3d.data) else 0
-                                    upper_3d = np.array(rib.profile_3d.data[upper_idx])
-                                    normal = np.cross(chord_3d, upper_3d - te_3d)
-                                    normal = normal / np.linalg.norm(normal) if np.linalg.norm(normal) > 0 else np.array([1, 0, 0])
-                                    up_dir = np.cross(normal, chord_dir)
-                                    up_dir = up_dir / np.linalg.norm(up_dir) if np.linalg.norm(up_dir) > 0 else np.array([0, 0, 1])
-                                    pilot_rel_3d = pilot_point_3d - te_3d
-                                    pilot_chord_pos = np.dot(pilot_rel_3d, chord_dir) / chord_length
-                                    pilot_up_pos = np.dot(pilot_rel_3d, up_dir) / chord_length
-                                    te_2d_x = (rib.profile_2d.data[0][0] + rib.profile_2d.data[-1][0]) / 2
-                                    le_2d_x = rib.profile_2d.data[rib.profile_2d.noseindex][0]
-                                    pilot_2d_x = te_2d_x + pilot_chord_pos * (le_2d_x - te_2d_x)
-                                    pilot_2d_y = pilot_up_pos
-                                    pilot_2d = np.array([pilot_2d_x, pilot_2d_y])
-                            break
+                    try:
+                        main_ap = glider.lineset.get_main_attachment_point()
+                        if main_ap is not None and hasattr(main_ap, 'vec') and main_ap.vec is not None:
+                            pilot_point_3d = np.array(main_ap.vec)
+                            
+                            # Project pilot to rib's 2D coordinate frame
+                            le_3d = np.array(rib.profile_3d.data[rib.profile_2d.noseindex])
+                            te_3d = (np.array(rib.profile_3d.data[0]) + np.array(rib.profile_3d.data[-1])) / 2
+                            chord_3d = le_3d - te_3d
+                            chord_length = np.linalg.norm(chord_3d)
+                            if chord_length > 1e-9:
+                                chord_dir = chord_3d / chord_length
+                                upper_idx = len(rib.profile_3d.data) // 4
+                                upper_3d = np.array(rib.profile_3d.data[upper_idx])
+                                v1_3d = upper_3d - te_3d
+                                normal = np.cross(chord_3d, v1_3d)
+                                norm_len = np.linalg.norm(normal)
+                                normal = normal / norm_len if norm_len > 0 else np.array([1, 0, 0])
+                                up_dir = np.cross(normal, chord_dir)
+                                up_norm = np.linalg.norm(up_dir)
+                                up_dir = up_dir / up_norm if up_norm > 0 else np.array([0, 0, 1])
+                                pilot_rel_3d = pilot_point_3d - te_3d
+                                pilot_chord_pos = np.dot(pilot_rel_3d, chord_dir) / chord_length
+                                pilot_up_pos = np.dot(pilot_rel_3d, up_dir) / chord_length
+                                te_2d_x = (rib.profile_2d.data[0][0] + rib.profile_2d.data[-1][0]) / 2
+                                le_2d_x = rib.profile_2d.data[rib.profile_2d.noseindex][0]
+                                pilot_2d_x = te_2d_x + pilot_chord_pos * (le_2d_x - te_2d_x)
+                                pilot_2d_y = pilot_up_pos
+                                pilot_2d = np.array([pilot_2d_x, pilot_2d_y])
+                    except Exception as e:
+                        print(f"[apply_holes] Pilot point projection error: {e}")
                 
                 for ap in attachment_points:
                     v1 = rib.profile_2d.align([ap.rib_pos, -1.0]) # Apex on intrados
 
                     angle_rad = np.deg2rad(self.hole_free_angle_s)
 
-                    # Calculate angle_offset based on direction toward pilot (like preview does)
+                    # Calculate angle_offset from pilot direction (same as preview/compute_pull_axis_projection)
                     if pilot_2d is not None:
                         line_direction = v1 - pilot_2d
                         if np.linalg.norm(line_direction) > 1e-9:
@@ -400,70 +466,8 @@ class ParametricGlider(object):
                             line_direction = np.array([0, 1])
                         angle_offset = np.arctan2(line_direction[1], line_direction[0])
                     else:
-                        # Fallback to local vertical if no pilot point
-                        upper_point = rib.profile_2d.align([ap.rib_pos, 1.0])
-                        angle_offset = np.pi/2 # Default vertical
-
-                        # Try to get pilot point for smarter alignment (match preview)
-                        pilot_point_3d = None
-                        if hasattr(glider, 'lineset') and glider.lineset:
-                            try:
-                                main_ap = glider.lineset.get_main_attachment_point()
-                                if main_ap is not None and hasattr(main_ap, 'vec'):
-                                    pilot_point_3d = np.array(main_ap.vec)
-                            except:
-                                pass
-                        
-                        if pilot_point_3d is not None:
-                             try:
-                                 # 3D Project logic
-                                 le_3d = np.array(rib.profile_3d.data[rib.profile_2d.noseindex])
-                                 te_3d = (np.array(rib.profile_3d.data[0]) + np.array(rib.profile_3d.data[-1])) / 2
-                                 chord_3d = le_3d - te_3d
-                                 chord_len = np.linalg.norm(chord_3d)
-                                 
-                                 if chord_len > 1e-6:
-                                     chord_dir = chord_3d / chord_len
-                                     
-                                     # Normal to rib plane (using upper surface point)
-                                     upper_idx = len(rib.profile_3d.data) // 4
-                                     upper_3d = np.array(rib.profile_3d.data[upper_idx])
-                                     v1_3d = upper_3d - te_3d
-                                     normal = np.cross(chord_3d, v1_3d)
-                                     if np.linalg.norm(normal) > 1e-6:
-                                          normal /= np.linalg.norm(normal)
-                                          up_dir = np.cross(normal, chord_dir)
-                                          if np.linalg.norm(up_dir) > 1e-6:
-                                               up_dir /= np.linalg.norm(up_dir)
-                                               
-                                               # Project pilot
-                                               pilot_rel = pilot_point_3d - te_3d
-                                               pilot_chord_pos = np.dot(pilot_rel, chord_dir) / chord_len
-                                               pilot_up_pos = np.dot(pilot_rel, up_dir) / chord_len
-                                               
-                                               # Map to normalized 2D
-                                               te_2d_x = (rib.profile_2d.data[0][0] + rib.profile_2d.data[-1][0])/2
-                                               le_2d_x = rib.profile_2d.data[rib.profile_2d.noseindex][0]
-                                               
-                                               pilot_2d_x = te_2d_x + pilot_chord_pos * (le_2d_x - te_2d_x)
-                                               pilot_2d_y = pilot_up_pos
-                                               pilot_2d = np.array([pilot_2d_x, pilot_2d_y])
-                                               
-                                               # Vector from pilot to AP
-                                               line_dir = v1 - pilot_2d
-                                               if np.linalg.norm(line_dir) > 1e-9:
-                                                    angle_offset = np.arctan2(line_dir[1], line_dir[0])
-                             except Exception as e:
-                                  print("Angle calculation error: {}".format(e))
-                                  # Fallback to local vertical
-                                  local_vertical = upper_point - v1
-                                  if np.linalg.norm(local_vertical) > 1e-9:
-                                       angle_offset = np.arctan2(local_vertical[1], local_vertical[0])
-                        else:
-                             # Fallback
-                             local_vertical = upper_point - v1
-                             if np.linalg.norm(local_vertical) > 1e-9:
-                                  angle_offset = np.arctan2(local_vertical[1], local_vertical[0])
+                        # Fallback to local vertical
+                        angle_offset = np.pi / 2
 
                     dir2 = np.array([np.cos(angle_offset - angle_rad), np.sin(angle_offset - angle_rad)])
                     dir3 = np.array([np.cos(angle_offset + angle_rad), np.sin(angle_offset + angle_rad)])
@@ -472,12 +476,394 @@ class ParametricGlider(object):
                     extrados_poly = rib.profile_2d.get_extrados_poly()
 
                     far_factor = 10.0  # Normalized coordinates
-                    v2 = extrados_poly.line_intersection(v1, v1 + dir2 * far_factor)
-                    v3 = extrados_poly.line_intersection(v1, v1 + dir3 * far_factor)
-
-                    if v2 is not None and v3 is not None:
-                        no_hole_zones.append((v1, v2, v3))
+                    
+                    if halfmoon_radius_norm_global > 1e-6:
+                        # Build expanded exclusion polygon (same as preview)
+                        halfmoon_circles.append((v1, halfmoon_radius_norm_global))
+                        arc_span_rad = np.deg2rad(getattr(self, 'hole_arc_span_s', 120.0))
+                        half_arc = arc_span_rad / 2.0
                         
+                        arc_angle_left = angle_offset + half_arc
+                        arc_angle_right = angle_offset - half_arc
+                        
+                        v1_left = v1 + halfmoon_radius_norm_global * np.array(
+                            [np.cos(arc_angle_left), np.sin(arc_angle_left)])
+                        v1_right = v1 + halfmoon_radius_norm_global * np.array(
+                            [np.cos(arc_angle_right), np.sin(arc_angle_right)])
+                        
+                        v2_new = extrados_poly.line_intersection(v1_left, v1_left + dir3 * far_factor)
+                        v3_new = extrados_poly.line_intersection(v1_right, v1_right + dir2 * far_factor)
+                        
+                        if v2_new is not None and v3_new is not None:
+                            # Build full halfmoon arc points
+                            full_halfmoon = []
+                            num_arc_pts = 20
+                            for i in range(num_arc_pts + 1):
+                                t = i / num_arc_pts
+                                arc_ang = np.pi + t * (-np.pi)
+                                arc_pt = v1 + halfmoon_radius_norm_global * np.array(
+                                    [np.cos(arc_ang), np.sin(arc_ang)])
+                                full_halfmoon.append(arc_pt)
+                            
+                            # Trace extrados curve between intersection points
+                            extrados_curve = []
+                            v2_x, v3_x = v2_new[0], v3_new[0]
+                            num_ext_pts = 15
+                            for i in range(num_ext_pts + 1):
+                                t = i / num_ext_pts
+                                x = v2_x + t * (v3_x - v2_x)
+                                ext_pts = [p for p in rib.profile_2d.data if p[1] > 0]
+                                closest = min(ext_pts, key=lambda p: abs(p[0] - x), default=None)
+                                if closest is not None:
+                                    extrados_curve.append(np.array(closest))
+                                else:
+                                    y = v2_new[1] + t * (v3_new[1] - v2_new[1])
+                                    extrados_curve.append(np.array([x, y]))
+                            
+                            # Full exclusion polygon: halfmoon + sides + extrados
+                            exclusion_polygon = full_halfmoon + [v3_new] + list(reversed(extrados_curve)) + [v2_new, full_halfmoon[0]]
+                            no_hole_zones.append(tuple(exclusion_polygon))
+                        else:
+                            # Fallback to simple triangle
+                            v2 = extrados_poly.line_intersection(v1, v1 + dir2 * far_factor)
+                            v3 = extrados_poly.line_intersection(v1, v1 + dir3 * far_factor)
+                            if v2 is not None and v3 is not None:
+                                no_hole_zones.append((v1, v2, v3))
+                    else:
+                        # No halfmoon - simple triangle
+                        v2 = extrados_poly.line_intersection(v1, v1 + dir2 * far_factor)
+                        v3 = extrados_poly.line_intersection(v1, v1 + dir3 * far_factor)
+                        if v2 is not None and v3 is not None:
+                            no_hole_zones.append((v1, v2, v3))
+                
+                # === CONE HOLE GENERATION ===
+                if getattr(self, 'cone_holes_enabled_s', False):
+                  try:
+                    num_zones = getattr(self, 'cone_hole_num_zones_s', 1)
+                    margin_top_m = getattr(self, 'cone_hole_margin_top_s', 3.0) / 1000.0
+                    margin_side_m = getattr(self, 'cone_hole_margin_side_s', 3.0) / 1000.0
+                    margin_bottom_m = getattr(self, 'cone_hole_margin_bottom_s', 3.0) / 1000.0
+                    cone_corner_pct = getattr(self, 'cone_hole_corner_radius_s', 25.0) / 100.0
+                    
+                    margin_top = margin_top_m / rib.chord
+                    margin_side = margin_side_m / rib.chord
+                    margin_bottom = margin_bottom_m / rib.chord
+                    
+                    # Get reinforcement radius
+                    halfmoon_radius_norm = 0.0
+                    if getattr(self, 'reinforcement_enabled_s', False):
+                        master_config = getattr(self, 'reinforcement_master_s', {})
+                        halfmoon_radius_norm = master_config.get('halfmoon_radius', 0.03) / rib.chord
+                    
+                    for ap in attachment_points:
+                        v1 = rib.profile_2d.align([ap.rib_pos, -1.0])
+                        angle_rad_cone = np.deg2rad(self.hole_free_angle_s)
+                        arc_span_rad = np.deg2rad(getattr(self, 'hole_arc_span_s', 120.0))
+                        half_arc = arc_span_rad / 2.0
+                        
+                        if pilot_2d is not None:
+                            line_dir_cone = v1 - pilot_2d
+                            if np.linalg.norm(line_dir_cone) > 1e-9:
+                                line_dir_cone = line_dir_cone / np.linalg.norm(line_dir_cone)
+                            else:
+                                line_dir_cone = np.array([0, 1])
+                            angle_offset_cone = np.arctan2(line_dir_cone[1], line_dir_cone[0])
+                        else:
+                            angle_offset_cone = np.pi / 2
+                        
+                        extrados_poly = rib.profile_2d.get_extrados_poly()
+                        far_factor = 10.0
+                        inner_radius = halfmoon_radius_norm if halfmoon_radius_norm > 1e-6 else 0.005
+                        
+                        # Exclusion angle directions
+                        dir2 = np.array([np.cos(angle_offset_cone - angle_rad_cone),
+                                         np.sin(angle_offset_cone - angle_rad_cone)])
+                        dir3 = np.array([np.cos(angle_offset_cone + angle_rad_cone),
+                                         np.sin(angle_offset_cone + angle_rad_cone)])
+                        
+                        # Center axis
+                        d_center = np.array([np.cos(angle_offset_cone), np.sin(angle_offset_cone)])
+                        center_bottom = v1 + inner_radius * d_center
+                        center_top = extrados_poly.line_intersection(
+                            v1, v1 + d_center * far_factor)
+                        if center_top is None:
+                            continue
+                        
+                        # Zone edge boundaries (with arc span offset)
+                        if halfmoon_radius_norm > 1e-6:
+                            arc_angle_left = angle_offset_cone + half_arc
+                            arc_angle_right = angle_offset_cone - half_arc
+                            
+                            left_edge_bottom = v1 + inner_radius * np.array(
+                                [np.cos(arc_angle_left), np.sin(arc_angle_left)])
+                            right_edge_bottom = v1 + inner_radius * np.array(
+                                [np.cos(arc_angle_right), np.sin(arc_angle_right)])
+                            
+                            left_edge_top = extrados_poly.line_intersection(
+                                left_edge_bottom, left_edge_bottom + dir3 * far_factor)
+                            right_edge_top = extrados_poly.line_intersection(
+                                right_edge_bottom, right_edge_bottom + dir2 * far_factor)
+                        else:
+                            left_edge_bottom = v1.copy()
+                            right_edge_bottom = v1.copy()
+                            left_edge_top = extrados_poly.line_intersection(
+                                v1, v1 + dir3 * far_factor)
+                            right_edge_top = extrados_poly.line_intersection(
+                                v1, v1 + dir2 * far_factor)
+                        
+                        if left_edge_top is None or right_edge_top is None:
+                            continue
+                        
+                        # Process each side
+                        for side_data in [
+                            (center_bottom, center_top, left_edge_bottom, left_edge_top),
+                            (right_edge_bottom, right_edge_top, center_bottom, center_top),
+                        ]:
+                            s_bot_left, s_top_left, s_bot_right, s_top_right = side_data
+                            
+                            for zone_i in range(num_zones):
+                                t0 = zone_i / num_zones
+                                t1 = (zone_i + 1) / num_zones
+                                
+                                bl_bot = s_bot_left * (1 - t0) + s_bot_right * t0
+                                bl_top = s_top_left * (1 - t0) + s_top_right * t0
+                                br_bot = s_bot_left * (1 - t1) + s_bot_right * t1
+                                br_top = s_top_left * (1 - t1) + s_top_right * t1
+                                
+                                d_left_line = bl_top - bl_bot
+                                d_right_line = br_top - br_bot
+                                len_left = np.linalg.norm(d_left_line)
+                                len_right = np.linalg.norm(d_right_line)
+                                
+                                if len_left < 1e-9 or len_right < 1e-9:
+                                    continue
+                                
+                                d_left_unit = d_left_line / len_left
+                                d_right_unit = d_right_line / len_right
+                                
+                                perp_left = np.array([-d_left_unit[1], d_left_unit[0]])
+                                perp_right = np.array([d_right_unit[1], -d_right_unit[0]])
+                                
+                                off_bl_bot = bl_bot + perp_left * margin_side
+                                off_br_bot = br_bot + perp_right * margin_side
+                                
+                                # Bottom corners: intersect offset side lines with inner circle
+                                R_arc = inner_radius + margin_bottom
+                                single_bottom = False
+                                
+                                u_l = off_bl_bot - v1
+                                dot_l = np.dot(u_l, d_left_unit)
+                                disc_l = dot_l**2 - np.dot(u_l, u_l) + R_arc**2
+                                
+                                u_r = off_br_bot - v1
+                                dot_r = np.dot(u_r, d_right_unit)
+                                disc_r = dot_r**2 - np.dot(u_r, u_r) + R_arc**2
+                                
+                                if disc_l < 0 or disc_r < 0:
+                                    single_bottom = True
+                                else:
+                                    p_bl = off_bl_bot + (-dot_l + np.sqrt(disc_l)) * d_left_unit
+                                    p_br = off_br_bot + (-dot_r + np.sqrt(disc_r)) * d_right_unit
+                                    ref_vec = br_bot - bl_bot
+                                    if np.dot(p_br - p_bl, ref_vec) <= 0:
+                                        single_bottom = True
+                                
+                                if single_bottom:
+                                    dx = off_br_bot - off_bl_bot
+                                    det_s = d_left_unit[0]*(-d_right_unit[1]) - d_left_unit[1]*(-d_right_unit[0])
+                                    if abs(det_s) < 1e-12:
+                                        continue
+                                    t_cross = (dx[0]*(-d_right_unit[1]) - dx[1]*(-d_right_unit[0])) / det_s
+                                    p_bottom = off_bl_bot + t_cross * d_left_unit
+                                    p_bl = p_bottom
+                                    p_br = p_bottom
+                                
+                                # Top corners
+                                p_tl_ext = extrados_poly.line_intersection(
+                                    off_bl_bot, off_bl_bot + d_left_unit * far_factor)
+                                p_tr_ext = extrados_poly.line_intersection(
+                                    off_br_bot, off_br_bot + d_right_unit * far_factor)
+                                if p_tl_ext is None or p_tr_ext is None:
+                                    continue
+                                d_tl_r = p_tl_ext - v1
+                                p_tl = p_tl_ext - (d_tl_r / np.linalg.norm(d_tl_r)) * margin_top
+                                d_tr_r = p_tr_ext - v1
+                                p_tr = p_tr_ext - (d_tr_r / np.linalg.norm(d_tr_r)) * margin_top
+                                
+                                ref_vec_t = br_bot - bl_bot
+                                if np.dot(p_tr - p_tl, ref_vec_t) <= 0:
+                                    continue
+                                if np.dot(p_tl - p_bl, d_center) <= 0:
+                                    continue
+                                
+                                num_curve_pts = 10
+                                num_fillet_pts = 6
+                                cr = cone_corner_pct
+                                
+                                angle_tr = np.arctan2(p_tr[1] - v1[1], p_tr[0] - v1[0])
+                                angle_tl = np.arctan2(p_tl[1] - v1[1], p_tl[0] - v1[0])
+                                ad_top = angle_tl - angle_tr
+                                while ad_top > np.pi: ad_top -= 2 * np.pi
+                                while ad_top < -np.pi: ad_top += 2 * np.pi
+                                
+                                if single_bottom:
+                                    # === V-SHAPE ===
+                                    side_r = np.linalg.norm(p_tr - p_bottom)
+                                    side_l = np.linalg.norm(p_tl - p_bottom)
+                                    if cr > 1e-6:
+                                        dir_r = (p_tr - p_bottom) / max(side_r, 1e-9)
+                                        dir_l = (p_tl - p_bottom) / max(side_l, 1e-9)
+                                        cut_r = side_r * cr * 0.5
+                                        cut_l = side_l * cr * 0.5
+                                        bot_r = p_bottom + dir_r * cut_r
+                                        bot_l = p_bottom + dir_l * cut_l
+                                        tr_s = p_tr - dir_r * cut_r
+                                        tl_s = p_tl - dir_l * cut_l
+                                        st = np.sign(ad_top) if abs(ad_top) > 1e-9 else 1.0
+                                        dist_tr = max(np.linalg.norm(p_tr - v1), 1e-9)
+                                        dist_tl = max(np.linalg.norm(p_tl - v1), 1e-9)
+                                        dtr = min(cut_r / dist_tr, abs(ad_top) * 0.45)
+                                        dtl = min(cut_l / dist_tl, abs(ad_top) * 0.45)
+                                        a_tr_f = angle_tr + st * dtr
+                                        a_tl_f = angle_tl - st * dtl
+                                        d_tr_f = np.array([np.cos(a_tr_f), np.sin(a_tr_f)])
+                                        e_tr = extrados_poly.line_intersection(v1, v1 + d_tr_f * far_factor)
+                                        tr_c = (e_tr - d_tr_f * margin_top) if e_tr is not None else p_tr
+                                        d_tl_f = np.array([np.cos(a_tl_f), np.sin(a_tl_f)])
+                                        e_tl = extrados_poly.line_intersection(v1, v1 + d_tl_f * far_factor)
+                                        tl_c = (e_tl - d_tl_f * margin_top) if e_tl is not None else p_tl
+                                        hole_pts = []
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * bot_l + 2*(1-t)*t * p_bottom + t**2 * bot_r)
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * tr_s + 2*(1-t)*t * p_tr + t**2 * tr_c)
+                                        ad_t_s = a_tl_f - a_tr_f
+                                        while ad_t_s > np.pi: ad_t_s -= 2*np.pi
+                                        while ad_t_s < -np.pi: ad_t_s += 2*np.pi
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = a_tr_f + t * ad_t_s
+                                            d = np.array([np.cos(a), np.sin(a)])
+                                            ext_pt = extrados_poly.line_intersection(v1, v1 + d * far_factor)
+                                            if ext_pt is not None:
+                                                hole_pts.append(ext_pt - d * margin_top)
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * tl_c + 2*(1-t)*t * p_tl + t**2 * tl_s)
+                                        hole_pts.append(hole_pts[0])
+                                    else:
+                                        hole_pts = [p_bottom, p_tr]
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = angle_tr + t * ad_top
+                                            d = np.array([np.cos(a), np.sin(a)])
+                                            ext_pt = extrados_poly.line_intersection(v1, v1 + d * far_factor)
+                                            if ext_pt is not None:
+                                                hole_pts.append(ext_pt - d * margin_top)
+                                        hole_pts.append(p_tl)
+                                        hole_pts.append(p_bottom)
+                                else:
+                                    # === NORMAL ARC ===
+                                    side_right = np.linalg.norm(p_tr - p_br)
+                                    side_left = np.linalg.norm(p_tl - p_bl)
+                                    dir_left_up = (p_tl - p_bl) / max(side_left, 1e-9)
+                                    dir_right_up = (p_tr - p_br) / max(side_right, 1e-9)
+                                    cut_left = side_left * cr * 0.5
+                                    cut_right = side_right * cr * 0.5
+                                    angle_bl = np.arctan2(p_bl[1] - v1[1], p_bl[0] - v1[0])
+                                    angle_br = np.arctan2(p_br[1] - v1[1], p_br[0] - v1[0])
+                                    ad_bot = angle_br - angle_bl
+                                    while ad_bot > np.pi: ad_bot -= 2 * np.pi
+                                    while ad_bot < -np.pi: ad_bot += 2 * np.pi
+                                    if cr > 1e-6:
+                                        bl_s = p_bl + dir_left_up * cut_left
+                                        br_s = p_br + dir_right_up * cut_right
+                                        tr_s = p_tr - dir_right_up * cut_right
+                                        tl_s = p_tl - dir_left_up * cut_left
+                                        sb = np.sign(ad_bot) if abs(ad_bot) > 1e-9 else 1.0
+                                        dbl = min(cut_left / R_arc, abs(ad_bot) * 0.45)
+                                        dbr = min(cut_right / R_arc, abs(ad_bot) * 0.45)
+                                        a_bl_f = angle_bl + sb * dbl
+                                        a_br_f = angle_br - sb * dbr
+                                        bl_a = v1 + R_arc * np.array([np.cos(a_bl_f), np.sin(a_bl_f)])
+                                        br_a = v1 + R_arc * np.array([np.cos(a_br_f), np.sin(a_br_f)])
+                                        st = np.sign(ad_top) if abs(ad_top) > 1e-9 else 1.0
+                                        dist_tr = max(np.linalg.norm(p_tr - v1), 1e-9)
+                                        dist_tl = max(np.linalg.norm(p_tl - v1), 1e-9)
+                                        dtr = min(cut_right / dist_tr, abs(ad_top) * 0.45)
+                                        dtl = min(cut_left / dist_tl, abs(ad_top) * 0.45)
+                                        a_tr_f = angle_tr + st * dtr
+                                        a_tl_f = angle_tl - st * dtl
+                                        d_tr_f = np.array([np.cos(a_tr_f), np.sin(a_tr_f)])
+                                        e_tr = extrados_poly.line_intersection(v1, v1 + d_tr_f * far_factor)
+                                        tr_c = (e_tr - d_tr_f * margin_top) if e_tr is not None else p_tr
+                                        d_tl_f = np.array([np.cos(a_tl_f), np.sin(a_tl_f)])
+                                        e_tl = extrados_poly.line_intersection(v1, v1 + d_tl_f * far_factor)
+                                        tl_c = (e_tl - d_tl_f * margin_top) if e_tl is not None else p_tl
+                                        hole_pts = []
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * bl_s + 2*(1-t)*t * p_bl + t**2 * bl_a)
+                                        ad_b_s = a_br_f - a_bl_f
+                                        while ad_b_s > np.pi: ad_b_s -= 2*np.pi
+                                        while ad_b_s < -np.pi: ad_b_s += 2*np.pi
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = a_bl_f + t * ad_b_s
+                                            hole_pts.append(v1 + R_arc * np.array([np.cos(a), np.sin(a)]))
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * br_a + 2*(1-t)*t * p_br + t**2 * br_s)
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * tr_s + 2*(1-t)*t * p_tr + t**2 * tr_c)
+                                        ad_t_s = a_tl_f - a_tr_f
+                                        while ad_t_s > np.pi: ad_t_s -= 2*np.pi
+                                        while ad_t_s < -np.pi: ad_t_s += 2*np.pi
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = a_tr_f + t * ad_t_s
+                                            d = np.array([np.cos(a), np.sin(a)])
+                                            ext_pt = extrados_poly.line_intersection(v1, v1 + d * far_factor)
+                                            if ext_pt is not None:
+                                                hole_pts.append(ext_pt - d * margin_top)
+                                        for fi in range(num_fillet_pts):
+                                            t = fi / (num_fillet_pts - 1)
+                                            hole_pts.append((1-t)**2 * tl_c + 2*(1-t)*t * p_tl + t**2 * tl_s)
+                                        hole_pts.append(hole_pts[0])
+                                    else:
+                                        hole_pts = [p_bl]
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = angle_bl + t * ad_bot
+                                            hole_pts.append(v1 + R_arc * np.array([np.cos(a), np.sin(a)]))
+                                        hole_pts.append(p_br)
+                                        hole_pts.append(p_tr)
+                                        for ci in range(1, num_curve_pts):
+                                            t = ci / num_curve_pts
+                                            a = angle_tr + t * ad_top
+                                            d = np.array([np.cos(a), np.sin(a)])
+                                            ext_pt = extrados_poly.line_intersection(v1, v1 + d * far_factor)
+                                            if ext_pt is not None:
+                                                hole_pts.append(ext_pt - d * margin_top)
+                                        hole_pts.append(p_tl)
+                                        hole_pts.append(p_bl)
+                                
+                                custom_pts = [list(p) for p in hole_pts]
+                                print(f"[CONE_HOLE_DEBUG] rib={rib.name} chord={rib.chord:.4f} pts={len(custom_pts)}")
+                                print(f"  corners: bl={p_bl} br={p_br} tr={p_tr} tl={p_tl}")
+                                print(f"  v1={v1} inner_R={inner_radius:.5f} margins t={margin_top:.5f} s={margin_side:.5f} b={margin_bottom:.5f}")
+                                print(f"  x_range=[{min(p[0] for p in custom_pts):.5f}, {max(p[0] for p in custom_pts):.5f}]")
+                                print(f"  y_range=[{min(p[1] for p in custom_pts):.5f}, {max(p[1] for p in custom_pts):.5f}]")
+                                if not hasattr(rib, 'cone_holes'):
+                                    rib.cone_holes = []
+                                rib.cone_holes.append(
+                                    RibHole(ap.rib_pos, custom_points=custom_pts)
+                                )
+                  except Exception as e:
+                    print(f"[apply_holes] Cone hole error for rib {rib.name}: {e}")
 
             else:
                 shape_idx, num_holes, w_factor, h_factor, v_shift_factor, start_pos, end_pos, hole_height_mode, hole_margin, corner_radius = (
@@ -486,6 +872,7 @@ class ParametricGlider(object):
                     self.hole_height_mode_ns, self.hole_margin_ns, getattr(self, 'hole_corner_radius_ns', 0.005)
                 )
                 no_hole_zones = []
+                halfmoon_circles = []
 
             hole_shape = 'ellipse' if shape_idx == 0 else 'rounded_rectangle'
 
@@ -530,13 +917,29 @@ class ParametricGlider(object):
                         hole_center_x = (upper[0] + lower[0]) / 2.0
                         min_y_ceiling = upper[1]
 
-                        for v1, v2, v3 in no_hole_zones:
-                            if min(v1[0], v2[0], v3[0]) <= hole_center_x <= max(v1[0], v2[0], v3[0]):
-                                for p1, p2 in [(v1, v2), (v2, v3), (v3, v1)]:
+                        # Check if this position is inside any halfmoon circle (same as preview)
+                        inside_halfmoon = False
+                        for hm_center, hm_radius in halfmoon_circles:
+                            dist = np.sqrt((hole_center_x - hm_center[0])**2 + (lower[1] - hm_center[1])**2)
+                            if dist < hm_radius:
+                                inside_halfmoon = True
+                                break
+                        if inside_halfmoon:
+                            continue
+
+                        for zone in no_hole_zones:
+                            # Get all x values from zone vertices
+                            zone_x = [v[0] for v in zone]
+                            if min(zone_x) <= hole_center_x <= max(zone_x):
+                                # Iterate over edges of the polygon
+                                n = len(zone)
+                                for i in range(n):
+                                    p1 = zone[i]
+                                    p2 = zone[(i + 1) % n]
                                     if p1[0] != p2[0] and ((p1[0] <= hole_center_x <= p2[0]) or (p2[0] <= hole_center_x <= p1[0])):
                                         y_intersect = p1[1] + (p2[1] - p1[1]) * (hole_center_x - p1[0]) / (p2[0] - p1[0])
-                                        if y_intersect < min_y_ceiling: # Constrain ceiling from above
-                                             min_y_ceiling = min(min_y_ceiling, y_intersect)
+                                        if y_intersect < min_y_ceiling:
+                                            min_y_ceiling = min(min_y_ceiling, y_intersect)
 
                         available_height = min_y_ceiling - lower[1]
                         hole_center_y = lower[1] + available_height / 2
@@ -844,6 +1247,13 @@ class ParametricGlider(object):
             "hole_margin_s": getattr(self, "hole_margin_s", 0.02),
             "hole_corner_radius_s": getattr(self, "hole_corner_radius_s", 0.005),
             "hole_free_angle_s": getattr(self, "hole_free_angle_s", 30.0),
+            "hole_arc_span_s": getattr(self, "hole_arc_span_s", 120.0),
+            "cone_holes_enabled_s": getattr(self, "cone_holes_enabled_s", False),
+            "cone_hole_num_zones_s": getattr(self, "cone_hole_num_zones_s", 1),
+            "cone_hole_margin_top_s": getattr(self, "cone_hole_margin_top_s", 3.0),
+            "cone_hole_margin_side_s": getattr(self, "cone_hole_margin_side_s", 3.0),
+            "cone_hole_margin_bottom_s": getattr(self, "cone_hole_margin_bottom_s", 3.0),
+            "cone_hole_corner_radius_s": getattr(self, "cone_hole_corner_radius_s", 25.0),
             # Airfoil Structure - Extrados Sleeve (suspended)
             "extrados_sleeve_enabled_s": getattr(self, "extrados_sleeve_enabled_s", False),
             "extrados_sleeve_width_s": getattr(self, "extrados_sleeve_width_s", 0.015),

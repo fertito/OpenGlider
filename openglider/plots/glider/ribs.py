@@ -293,7 +293,13 @@ class RibPlot(object):
 
     def insert_holes(self):
         for hole in self.rib.holes:
-            self.plotpart.layers["cuts"].append(hole.get_flattened(self.rib))
+            poly = hole.get_flattened(self.rib)
+            self.plotpart.layers["cuts"].append(poly)
+        # Cone holes are stored separately to avoid Triangle meshing issues
+        cone_holes = getattr(self.rib, 'cone_holes', [])
+        for hole in cone_holes:
+            poly = hole.get_flattened(self.rib)
+            self.plotpart.layers["cuts"].append(poly)
 
     def draw_rib(self, glider):
         """
