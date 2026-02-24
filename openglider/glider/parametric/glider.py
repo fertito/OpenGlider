@@ -1024,6 +1024,13 @@ class ParametricGlider(object):
                     
                     if is_full:
                         drib.cone_hole_config = cone_config
+                    
+                    # Detect horizontal bands (both sides extrados, same height)
+                    is_band = (left_is_extrados and right_is_extrados and
+                              abs(left_h[0] - right_h[0]) < 0.01 and
+                              abs(left_h[1] - right_h[1]) < 0.01)
+                    if is_band:
+                        drib.band_hole_config = cone_config
 
     def apply_reinforcements(self, glider):
         """Apply reinforcement configurations to ribs for 2D export."""

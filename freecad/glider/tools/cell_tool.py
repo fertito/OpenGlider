@@ -564,29 +564,41 @@ class CellTool(BaseTool):
         # Each line type (A, B, C, D) gets its own bands on cells that don't have diagonals of that type
         # Bands connect extrados to extrados (never to intrados)
         
-
-        
-        # Track which cells have diagonals of each line type
+        # Track which cells have diagonals of each line type AND their extrados ranges
         # cells_by_layer[layer] = set of cell numbers with diagonals of that layer
         cells_by_layer = {}
         layer_params = {}  # Store params for each layer
+        # layer_ext_ranges[(layer, cell_no)] = (ext_start, ext_end, ext_height)
+        layer_ext_ranges = {}
         
         for cell_no in range(cell_count):
             cell_data = cell_diagonals[cell_no]
-            for diag_list in [cell_data["from_left"], cell_data["from_right"]]:
-                for rib_pos, layer, params in diag_list:
+            for direction in ["from_left", "from_right"]:
+                for rib_pos, layer, params in cell_data[direction]:
                     if layer not in cells_by_layer:
                         cells_by_layer[layer] = set()
-                        layer_params[layer] = params  # Store params for this layer
+                        layer_params[layer] = params
                     cells_by_layer[layer].add(cell_no)
+                    
+                    # Compute the extrados range for this diagonal (same as above)
+                    before_axis = params["before_axis"]
+                    after_axis = params["after_axis"]
+                    if direction == "from_left":
+                        rib_idx = cell_no
+                    else:
+                        rib_idx = cell_no + 1
+                    axis_x = _get_axis_x(rib_projections, rib_idx, rib_pos, before_axis, after_axis)
+                    ext_start = max(0, axis_x - before_axis)
+                    ext_end = min(1, axis_x + after_axis)
+                    mid_x = (ext_start + ext_end) / 2
+                    ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
+                    
+                    # Store (or update) the extrados range for this layer+cell
+                    layer_ext_ranges[(layer, cell_no)] = (ext_start, ext_end, ext_height)
         
-
-        
-        # For each line type, find gaps and create bands
+        # For each line type, find gaps and create bands using neighbor ranges
         for layer, cells_with_diag in cells_by_layer.items():
             params = layer_params[layer]
-            before_axis = params["before_axis"]
-            after_axis = params["after_axis"]
             num_bands = params.get("num_bands", 1)
             
             # Find cells that DON'T have diagonals of this layer
@@ -595,30 +607,30 @@ class CellTool(BaseTool):
                     continue  # This cell has a diagonal of this layer, skip
                 
                 # Check if there are neighboring cells with this layer's diagonals
-                # (to know if we need a band here)
                 has_left_neighbor = (cell_no - 1) in cells_with_diag if cell_no > 0 else False
                 has_right_neighbor = (cell_no + 1) in cells_with_diag if cell_no < cell_count - 1 else False
                 
-                # Only create band if there are diagonals on both sides (gap to fill)
-                # OR if there's at least one neighbor with this layer
+                # Only create band if there are diagonals on at least one side
                 if has_left_neighbor or has_right_neighbor:
-                    # Use an average axis_x from neighboring cells for band positioning
-                    # Try left rib, then right rib
-                    avg_axis_x = None
-                    for neighbor_rib_idx in [cell_no, cell_no + 1]:
-                        if neighbor_rib_idx in rib_projections:
-                            proj_map = rib_projections[neighbor_rib_idx]
-                            if proj_map:
-                                avg_axis_x = sum(proj_map.values()) / len(proj_map)
-                                break
+                    # Look up the extrados range from the nearest neighbor diagonal
+                    ext_start = ext_end = ext_height = None
                     
-                    if avg_axis_x is None:
-                        # Fallback: center of chord
-                        avg_axis_x = 0.3
+                    if has_left_neighbor and (layer, cell_no - 1) in layer_ext_ranges:
+                        left_range = layer_ext_ranges[(layer, cell_no - 1)]
+                        ext_start, ext_end, ext_height = left_range
                     
-                    ext_start = max(0, avg_axis_x - before_axis)
-                    ext_end = min(1, avg_axis_x + after_axis)
-                    ext_height = get_extrados_height_with_offset((ext_start + ext_end) / 2, offset_mm)
+                    if has_right_neighbor and (layer, cell_no + 1) in layer_ext_ranges:
+                        right_range = layer_ext_ranges[(layer, cell_no + 1)]
+                        if ext_start is None:
+                            ext_start, ext_end, ext_height = right_range
+                        else:
+                            # Average between left and right neighbor ranges
+                            ext_start = (ext_start + right_range[0]) / 2
+                            ext_end = (ext_end + right_range[1]) / 2
+                            ext_height = (ext_height + right_range[2]) / 2
+                    
+                    if ext_start is None:
+                        continue  # No valid range found
                     
                     # Split the horizontal bands using the same logic as diagonals
                     bands = split_range_into_bands(ext_start, ext_end, num_bands)

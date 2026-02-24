@@ -782,8 +782,104 @@ class DribPlot(object):
         self._insert_attachment_points(plotpart, attachment_points)
         self._insert_text(plotpart)
         self._insert_diagonal_cone_holes(plotpart, attachment_points)
+        self._insert_band_ellipse_holes(plotpart, attachment_points)
 
         return plotpart
+
+    def _insert_band_ellipse_holes(self, plotpart, attachment_points=None):
+        """Insert elliptical holes into horizontal bands (both sides extrados).
+        
+        The band connects two diagonals. The diagonals have 2*num_zones holes
+        (num_zones per side). The band gets the same number of ellipses,
+        evenly distributed along its length. Ellipse width matches the max
+        width of the neighboring diagonal holes at the extrados edge.
+        """
+        config = getattr(self.drib, 'band_hole_config', None)
+        if not config:
+            return
+        
+        from numpy.linalg import norm
+        
+        num_zones = config['num_zones']
+        margin_side = config['margin_side_m']
+        margin_top = config['margin_top_m']
+        
+        total_holes = 2 * num_zones  # num_zones per side of center axis
+        
+        # Flattened band curves
+        inner = self.left
+        outer = self.right
+        
+        inner_total = inner.get_length()
+        outer_total = outer.get_length()
+        if inner_total < 1e-9 or outer_total < 1e-9:
+            return
+        
+        # Band width (distance between the two curves at midpoint)
+        p_mid_inner = np.array(inner[inner.walk(0, 0.5 * inner_total)])
+        p_mid_outer = np.array(outer[outer.walk(0, 0.5 * outer_total)])
+        band_width = norm(p_mid_outer - p_mid_inner)
+        
+        if band_width < 2 * margin_top:
+            return  # Band too narrow for holes
+        
+        # Ellipse semi-height = (band_width - 2*margin_top) / 2
+        ellipse_h = (band_width - 2 * margin_top) / 2
+        
+        # Ellipse semi-width: match the max diagonal hole width at extrados
+        # The band length roughly equals the extrados edge of the diagonal
+        # Each zone gets an equal share of the band length
+        usable_length = inner_total - 2 * margin_side
+        if usable_length <= 0 or total_holes <= 0:
+            return
+        
+        zone_width = usable_length / total_holes
+        ellipse_w = max((zone_width - 2 * margin_side) / 2, 0.001)
+        
+        if ellipse_w < 0.001 or ellipse_h < 0.001:
+            return
+        
+        for i in range(total_holes):
+            # Center of this zone along the band (with margin at edges)
+            t_center = (margin_side + zone_width * (i + 0.5)) / inner_total
+            t_center = min(max(t_center, 0.01), 0.99)
+            
+            # Position on inner and outer curves
+            ik_inner = inner.walk(0, t_center * inner_total)
+            ik_outer = outer.walk(0, t_center * outer_total)
+            p_inner = np.array(inner[ik_inner])
+            p_outer = np.array(outer[ik_outer])
+            
+            center = (p_inner + p_outer) / 2
+            
+            # Tangent direction (along the band)
+            dt = 0.01
+            t_lo = max(0, t_center - dt)
+            t_hi = min(1, t_center + dt)
+            p_lo = np.array(inner[inner.walk(0, t_lo * inner_total)])
+            p_hi = np.array(inner[inner.walk(0, t_hi * inner_total)])
+            tangent = p_hi - p_lo
+            tang_len = norm(tangent)
+            if tang_len < 1e-9:
+                continue
+            tangent = tangent / tang_len
+            
+            # Normal (across the band width)
+            normal = p_outer - p_inner
+            norm_len = norm(normal)
+            if norm_len < 1e-9:
+                continue
+            normal = normal / norm_len
+            
+            # Generate ellipse points
+            n_pts = 30
+            pts = []
+            for j in range(n_pts + 1):
+                angle = 2 * np.pi * j / n_pts
+                pt = center + ellipse_w * np.cos(angle) * tangent + ellipse_h * np.sin(angle) * normal
+                pts.append(pt.tolist() if isinstance(pt, np.ndarray) else list(pt))
+            
+            plotpart.layers["cuts"].append(PolyLine2D(pts))
 
     def _insert_diagonal_cone_holes(self, plotpart, attachment_points=None):
         """Insert cone-shaped holes into full (non-split) diagonals."""
