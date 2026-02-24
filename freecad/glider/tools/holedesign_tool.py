@@ -43,7 +43,7 @@ class HoleDesignTool(BaseTool):
         self.coneHoleCornerRadiusSpinBox_cone = QtGui.QDoubleSpinBox(self.base_widget)
 
         # Diagonal hole controls
-        self.diagHoleLabel = QtGui.QLabel("<b>Diagonal Holes</b>", self.base_widget)
+        self.diagHoleLabel = QtGui.QLabel("<b>Diagonal Holes</b> <i>(3D view incorrect, but 2D export correct)</i>", self.base_widget)
         self.diagHolesEnabledCheckBox = QtGui.QCheckBox("Enable", self.base_widget)
         self.diagHoleNumZonesSpinBox = QtGui.QSpinBox(self.base_widget)
         self.diagHoleMarginTopSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
