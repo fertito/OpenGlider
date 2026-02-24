@@ -34,13 +34,22 @@ class HoleDesignTool(BaseTool):
         self.noHoleAngleSpinBox = QtGui.QDoubleSpinBox(self.base_widget)  # Direction to extrados
 
         # Cone hole controls
-        self.coneHoleLabel = QtGui.QLabel("<b>Trous dans cônes d'exclusion</b>", self.base_widget)
-        self.coneHolesEnabledCheckBox = QtGui.QCheckBox("Activer", self.base_widget)
+        self.coneHoleLabel = QtGui.QLabel("<b>Cone Exclusion Holes</b>", self.base_widget)
+        self.coneHolesEnabledCheckBox = QtGui.QCheckBox("Enable", self.base_widget)
         self.coneHoleNumZonesSpinBox = QtGui.QSpinBox(self.base_widget)
         self.coneHoleMarginTopSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.coneHoleMarginSideSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.coneHoleMarginBottomSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
         self.coneHoleCornerRadiusSpinBox_cone = QtGui.QDoubleSpinBox(self.base_widget)
+
+        # Diagonal hole controls
+        self.diagHoleLabel = QtGui.QLabel("<b>Diagonal Holes</b>", self.base_widget)
+        self.diagHolesEnabledCheckBox = QtGui.QCheckBox("Enable", self.base_widget)
+        self.diagHoleNumZonesSpinBox = QtGui.QSpinBox(self.base_widget)
+        self.diagHoleMarginTopSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.diagHoleMarginSideSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.diagHoleMarginBottomSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
+        self.diagHoleCornerRadiusSpinBox = QtGui.QDoubleSpinBox(self.base_widget)
 
         # Preview rib selector - ComboBox to show only relevant ribs with real names
         self.previewRibComboBox = QtGui.QComboBox(self.base_widget)
@@ -76,11 +85,21 @@ class HoleDesignTool(BaseTool):
         # Cone hole controls
         self.layout.addRow(self.coneHoleLabel)
         self.layout.addRow("", self.coneHolesEnabledCheckBox)
-        self.layout.addRow("Nb zones par côté", self.coneHoleNumZonesSpinBox)
-        self.layout.addRow("Marge haut (mm)", self.coneHoleMarginTopSpinBox)
-        self.layout.addRow("Marge côté (mm)", self.coneHoleMarginSideSpinBox)
-        self.layout.addRow("Marge bas (mm)", self.coneHoleMarginBottomSpinBox)
-        self.layout.addRow("Rayon coins cône (%)", self.coneHoleCornerRadiusSpinBox_cone)
+        self.layout.addRow("Zones per Side", self.coneHoleNumZonesSpinBox)
+        self.layout.addRow("Top Margin (mm)", self.coneHoleMarginTopSpinBox)
+        self.layout.addRow("Side Margin (mm)", self.coneHoleMarginSideSpinBox)
+        self.layout.addRow("Bottom Margin (mm)", self.coneHoleMarginBottomSpinBox)
+        self.layout.addRow("Corner Radius (%)", self.coneHoleCornerRadiusSpinBox_cone)
+
+        # Diagonal hole controls (suspended only)
+        self.layout.addRow(self.diagHoleLabel)
+        self.layout.addRow("", self.diagHolesEnabledCheckBox)
+        self.layout.addRow("Diag Zones", self.diagHoleNumZonesSpinBox)
+        self.layout.addRow("Diag Top Margin (mm)", self.diagHoleMarginTopSpinBox)
+        self.layout.addRow("Diag Side Margin (mm)", self.diagHoleMarginSideSpinBox)
+        self.layout.addRow("Diag Bottom Margin (mm)", self.diagHoleMarginBottomSpinBox)
+        self.layout.addRow("Diag Corner Radius (%)", self.diagHoleCornerRadiusSpinBox)
+
         self.layout.addRow("Preview Rib", self.previewRibComboBox)
 
         # Right-align the apply button
@@ -140,6 +159,23 @@ class HoleDesignTool(BaseTool):
         self.coneHoleCornerRadiusSpinBox_cone.setRange(0.0, 50.0)
         self.coneHoleCornerRadiusSpinBox_cone.setValue(25.0)
 
+        # Diagonal hole spinbox configuration
+        self.diagHoleNumZonesSpinBox.setRange(1, 5)
+        self.diagHoleNumZonesSpinBox.setValue(1)
+
+        for spinbox in [self.diagHoleMarginTopSpinBox, self.diagHoleMarginSideSpinBox, self.diagHoleMarginBottomSpinBox]:
+            spinbox.setSingleStep(0.5)
+            spinbox.setDecimals(1)
+            spinbox.setSuffix(" mm")
+            spinbox.setRange(0.0, 50.0)
+            spinbox.setValue(3.0)
+
+        self.diagHoleCornerRadiusSpinBox.setSingleStep(5.0)
+        self.diagHoleCornerRadiusSpinBox.setDecimals(0)
+        self.diagHoleCornerRadiusSpinBox.setSuffix(" %")
+        self.diagHoleCornerRadiusSpinBox.setRange(0.0, 50.0)
+        self.diagHoleCornerRadiusSpinBox.setValue(25.0)
+
         # Load initial values
         self.update_form_from_glider_data()
 
@@ -163,6 +199,13 @@ class HoleDesignTool(BaseTool):
         self.coneHoleMarginSideSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.coneHoleMarginBottomSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.coneHoleCornerRadiusSpinBox_cone.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        # Diagonal hole signal connections
+        self.diagHolesEnabledCheckBox.stateChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.diagHoleNumZonesSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.diagHoleMarginTopSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.diagHoleMarginSideSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.diagHoleMarginBottomSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
+        self.diagHoleCornerRadiusSpinBox.valueChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.previewRibComboBox.currentIndexChanged.connect(lambda: self.update_glider_data_and_preview(switch=False))
         self.applyButton.clicked.connect(self.accept)
 
@@ -178,6 +221,15 @@ class HoleDesignTool(BaseTool):
                    self.coneHoleNumZonesSpinBox, self.coneHoleMarginTopSpinBox,
                    self.coneHoleMarginSideSpinBox, self.coneHoleMarginBottomSpinBox,
                    self.coneHoleCornerRadiusSpinBox_cone]:
+            w.setVisible(is_suspended)
+            label = self.layout.labelForField(w)
+            if label:
+                label.setVisible(is_suspended)
+        # Diagonal hole controls
+        for w in [self.diagHoleLabel, self.diagHolesEnabledCheckBox,
+                   self.diagHoleNumZonesSpinBox, self.diagHoleMarginTopSpinBox,
+                   self.diagHoleMarginSideSpinBox, self.diagHoleMarginBottomSpinBox,
+                   self.diagHoleCornerRadiusSpinBox]:
             w.setVisible(is_suspended)
             label = self.layout.labelForField(w)
             if label:
@@ -284,6 +336,15 @@ class HoleDesignTool(BaseTool):
                    self.coneHoleNumZonesSpinBox, self.coneHoleMarginTopSpinBox,
                    self.coneHoleMarginSideSpinBox, self.coneHoleMarginBottomSpinBox,
                    self.coneHoleCornerRadiusSpinBox_cone]:
+            w.setVisible(is_suspended)
+            label = self.layout.labelForField(w)
+            if label:
+                label.setVisible(is_suspended)
+        # Diagonal hole controls
+        for w in [self.diagHoleLabel, self.diagHolesEnabledCheckBox,
+                   self.diagHoleNumZonesSpinBox, self.diagHoleMarginTopSpinBox,
+                   self.diagHoleMarginSideSpinBox, self.diagHoleMarginBottomSpinBox,
+                   self.diagHoleCornerRadiusSpinBox]:
             w.setVisible(is_suspended)
             label = self.layout.labelForField(w)
             if label:
@@ -1036,6 +1097,355 @@ class HoleDesignTool(BaseTool):
                 shape_points_scaled = [p * scale for p in shape_points_closed]
                 self.preview_root.addChild(Line_old(shape_points_scaled + [shape_points_scaled[0]], color='blue').object)
 
+        # === DIAGONAL 2D PREVIEW ===
+        if self.diagHolesEnabledCheckBox.isChecked():
+            try:
+                self._draw_diagonal_preview(rib, scale)
+            except Exception:
+                pass
+
+    def _draw_diagonal_preview(self, rib, scale):
+        """Draw 2D flattened diagonals adjacent to the selected rib."""
+        from numpy.linalg import norm
+        glider_instance = self.obj.Proxy.getGliderInstance()
+        
+        # Find cells adjacent to this rib
+        diag_items = []  # (drib, cell, side_idx)
+        for cell in glider_instance.cells:
+            if cell.rib1 is rib or cell.rib2 is rib:
+                for drib in cell.diagonals:
+                    left_h = (drib.left_front[1], drib.left_back[1])
+                    right_h = (drib.right_front[1], drib.right_back[1])
+                    left_is_int = (left_h[0] == -1.0 and left_h[1] == -1.0)
+                    right_is_int = (right_h[0] == -1.0 and right_h[1] == -1.0)
+                    left_is_ext = (left_h[0] > 0 and left_h[1] > 0)
+                    right_is_ext = (right_h[0] > 0 and right_h[1] > 0)
+                    is_full = (left_is_int and right_is_ext) or (right_is_int and left_is_ext)
+                    if is_full:
+                        side = 0 if cell.rib1 is rib else 1
+                        diag_items.append((drib, cell, side))
+        
+        if not diag_items:
+            return
+        
+        # Get diagonal hole config
+        pg = self.parametric_glider
+        config = {
+            'num_zones': self.diagHoleNumZonesSpinBox.value(),
+            'margin_top_m': self.diagHoleMarginTopSpinBox.value() / 1000.0,
+            'margin_side_m': self.diagHoleMarginSideSpinBox.value() / 1000.0,
+            'margin_bottom_m': self.diagHoleMarginBottomSpinBox.value() / 1000.0,
+            'corner_radius_pct': self.diagHoleCornerRadiusSpinBox.value() / 100.0,
+        }
+        
+        # Position diagonals ABOVE the rib profile, aligned on AP axis
+        y_base = 0.18 * scale  # Base offset above the rib
+        
+        for diag_idx, (drib, cell, side_idx) in enumerate(diag_items):
+            try:
+                left, right = drib.get_flattened(cell)
+            except Exception:
+                continue
+            
+            if side_idx == 0:
+                front = drib.left_front
+                back = drib.left_back
+                inner = left
+                other_inner = right
+                target_rib = cell.rib1
+            else:
+                front = drib.right_front
+                back = drib.right_back
+                inner = right
+                other_inner = left
+                target_rib = cell.rib2
+            
+            if front[1] != -1:
+                continue
+            
+            # Find the AP position to align the diagonal on the suspension axis
+            x_front, x_back = front[0], back[0]
+            t_ap_range = (min(x_front, x_back), max(x_front, x_back))
+            all_aps = glider_instance.get_rib_attachment_points(target_rib)
+            aps_in_range = [ap for ap in all_aps 
+                          if hasattr(ap, 'rib_pos') and ap.rib_pos <= 0.9
+                          and t_ap_range[0] <= ap.rib_pos <= t_ap_range[1]]
+            
+            if not aps_in_range:
+                continue
+            
+            # Use first AP for alignment
+            ap = aps_in_range[0]
+            t_ap = 0.5 if abs(x_back - x_front) < 1e-9 else (ap.rib_pos - x_front) / (x_back - x_front)
+            t_ap = min(max(t_ap, 0), 1)
+            
+            inner_total = inner.get_length()
+            other_total = other_inner.get_length()
+            if inner_total < 1e-9 or other_total < 1e-9:
+                continue
+            ik_ap = inner.walk(0, t_ap * inner_total)
+            p_ap_diag = np.array(inner[ik_ap])
+            
+            # Center of outer curve (extrados side)
+            ik_center_outer = other_inner.walk(0, t_ap * other_total)
+            p_center_outer = np.array(other_inner[ik_center_outer])
+            
+            # Compute rotation: rotate AP→center_outer to point upward (0, 1)
+            pull_dir = p_center_outer - p_ap_diag
+            pull_len = norm(pull_dir)
+            if pull_len < 1e-9:
+                continue
+            pull_dir = pull_dir / pull_len
+            
+            # Rotation angle: from pull_dir to (0, 1)
+            # To rotate (ux, uy) to (0, 1): cos(a) = uy, sin(a) = ux
+            cos_a = pull_dir[1]
+            sin_a = pull_dir[0]
+            
+            # AP position on the rib profile (scaled)
+            ap_rib_pos = rib.profile_2d.align([ap.rib_pos, -1.0])
+            ap_rib_scaled = ap_rib_pos * scale
+            
+            # Y base above rib
+            y_offset = y_base + diag_idx * 0.08 * scale
+            
+            def transform_pt(p):
+                """Rotate point around AP then translate to rib position."""
+                rel = np.array(p) - p_ap_diag
+                rx = cos_a * rel[0] - sin_a * rel[1]
+                ry = sin_a * rel[0] + cos_a * rel[1]
+                return [ap_rib_scaled[0] + rx, ap_rib_scaled[1] + y_offset + ry, 0]
+            
+            # Draw outline
+            outline_pts = []
+            for i in range(len(inner)):
+                outline_pts.append(transform_pt(inner[i]))
+            outline_pts.append(transform_pt(other_inner[len(other_inner)-1]))
+            for i in range(len(other_inner) - 1, -1, -1):
+                outline_pts.append(transform_pt(other_inner[i]))
+            outline_pts.append(transform_pt(inner[0]))
+            
+            self.preview_root.addChild(Line_old(outline_pts, color='green', width=2).object)
+            
+            # Draw front and back edges
+            front_edge = [transform_pt(inner[0]), transform_pt(other_inner[0])]
+            back_edge = [transform_pt(inner[len(inner)-1]), transform_pt(other_inner[len(other_inner)-1])]
+            self.preview_root.addChild(Line_old(front_edge, color='green').object)
+            self.preview_root.addChild(Line_old(back_edge, color='green').object)
+            
+            # Draw holes with corner rounding
+            for ap_hole in aps_in_range:
+                hole_polys = self._compute_diag_holes(
+                    ap_hole, inner, other_inner, front, back, config)
+                for poly in hole_polys:
+                    pts_3d = [transform_pt(p) for p in poly]
+                    self.preview_root.addChild(Line_old(pts_3d, color='blue', width=1).object)
+    
+    def _compute_diag_holes(self, ap, inner, other_inner, front, back, config):
+        """Compute diagonal hole polygons (same logic as cell.py _create_diag_holes).
+        Returns list of polygon point lists."""
+        from numpy.linalg import norm
+        
+        num_zones = config['num_zones']
+        margin_side = config['margin_side_m']
+        margin_top = config['margin_top_m']
+        margin_bottom = config['margin_bottom_m']
+        corner_pct = config['corner_radius_pct']
+        
+        x_front, x_back = front[0], back[0]
+        t_ap = 0.5 if abs(x_back - x_front) < 1e-9 else (ap.rib_pos - x_front) / (x_back - x_front)
+        t_ap = min(max(t_ap, 0), 1)
+        
+        inner_total = inner.get_length()
+        other_total = other_inner.get_length()
+        if inner_total < 1e-9 or other_total < 1e-9:
+            return []
+        
+        ik_ap_inner = inner.walk(0, t_ap * inner_total)
+        p_ap = np.array(inner[ik_ap_inner])
+        
+        ik_ap_outer = other_inner.walk(0, t_ap * other_total)
+        p_center_outer = np.array(other_inner[ik_ap_outer])
+        
+        center_dir = p_center_outer - p_ap
+        center_len = norm(center_dir)
+        if center_len < 1e-9:
+            return []
+        d_center = center_dir / center_len
+        
+        A = np.array(inner[0])
+        B = np.array(other_inner[0])
+        C = np.array(inner[len(inner) - 1])
+        D = np.array(other_inner[len(other_inner) - 1])
+        
+        front_dir = B - p_ap
+        front_len = norm(front_dir)
+        back_dir = D - p_ap
+        back_len = norm(back_dir)
+        if front_len < 1e-9 or back_len < 1e-9:
+            return []
+        d_front = front_dir / front_len
+        d_back = back_dir / back_len
+        
+        results = []
+        
+        for side_data in [(d_center, d_front), (d_center, d_back)]:
+            s_d_left_edge, s_d_right_edge = side_data
+            
+            for zone_i in range(num_zones):
+                t0 = zone_i / num_zones
+                t1 = (zone_i + 1) / num_zones
+                
+                d_left = (1 - t0) * s_d_left_edge + t0 * s_d_right_edge
+                d_left = d_left / max(norm(d_left), 1e-9)
+                d_right = (1 - t1) * s_d_left_edge + t1 * s_d_right_edge
+                d_right = d_right / max(norm(d_right), 1e-9)
+                
+                cross = d_left[0] * d_right[1] - d_left[1] * d_right[0]
+                if cross >= 0:
+                    perp_left = np.array([-d_left[1], d_left[0]])
+                    perp_right = np.array([d_right[1], -d_right[0]])
+                else:
+                    perp_left = np.array([d_left[1], -d_left[0]])
+                    perp_right = np.array([-d_right[1], d_right[0]])
+                
+                off_left_base = p_ap + perp_left * margin_side
+                off_right_base = p_ap + perp_right * margin_side
+                
+                p_bl = off_left_base + d_left * margin_bottom
+                p_br = off_right_base + d_right * margin_bottom
+                
+                d_avg = (d_left + d_right) / 2
+                ref_vec = np.array([-d_avg[1], d_avg[0]]) if cross >= 0 else np.array([d_avg[1], -d_avg[0]])
+                
+                is_v = False
+                if np.dot(p_br - p_bl, ref_vec) <= 0:
+                    dx = off_right_base - off_left_base
+                    det_s = d_left[0]*(-d_right[1]) - d_left[1]*(-d_right[0])
+                    if abs(det_s) < 1e-12:
+                        continue
+                    t_cross = (dx[0]*(-d_right[1]) - dx[1]*(-d_right[0])) / det_s
+                    p_bottom = off_left_base + t_cross * d_left
+                    p_bl = p_bottom
+                    p_br = p_bottom
+                    is_v = True
+                
+                # Ray-curve intersection for top
+                p_tl = self._ray_curve_intersect_preview(off_left_base, d_left, other_inner)
+                p_tr = self._ray_curve_intersect_preview(off_right_base, d_right, other_inner)
+                if p_tl is None or p_tr is None:
+                    continue
+                
+                d_tl_r = p_tl - p_ap
+                if norm(d_tl_r) > 1e-9:
+                    p_tl = p_tl - (d_tl_r / norm(d_tl_r)) * margin_top
+                d_tr_r = p_tr - p_ap
+                if norm(d_tr_r) > 1e-9:
+                    p_tr = p_tr - (d_tr_r / norm(d_tr_r)) * margin_top
+                
+                if np.dot(p_tr - p_tl, ref_vec) <= 0:
+                    continue
+                if np.dot(p_tl - p_bl, d_center) <= 0:
+                    continue
+                
+                # Build polygon with corner rounding
+                if is_v:
+                    p_bottom = p_bl
+                    if corner_pct > 1e-6:
+                        side_r = norm(p_tr - p_bottom)
+                        side_l = norm(p_tl - p_bottom)
+                        top_side = norm(p_tl - p_tr)
+                        dir_r = (p_tr - p_bottom) / max(side_r, 1e-9)
+                        dir_l = (p_tl - p_bottom) / max(side_l, 1e-9)
+                        dir_top = (p_tl - p_tr) / max(top_side, 1e-9)
+                        cut_bot = min(side_r, side_l) * corner_pct * 0.5
+                        cut_tr = min(side_r * corner_pct * 0.5, top_side * 0.4)
+                        cut_tl = min(side_l * corner_pct * 0.5, top_side * 0.4)
+                        
+                        poly = []
+                        # Bottom fillet
+                        bot_l = p_bottom + dir_l * cut_bot
+                        bot_r = p_bottom + dir_r * cut_bot
+                        for fi in range(6):
+                            t = fi / 5
+                            poly.append(((1-t)**2 * bot_l + 2*(1-t)*t * p_bottom + t**2 * bot_r).tolist())
+                        # Right side → top-right fillet
+                        tr_from = p_tr - dir_r * cut_tr
+                        tr_to = p_tr + dir_top * cut_tr
+                        poly.append(tr_from.tolist())
+                        for fi in range(6):
+                            t = fi / 5
+                            poly.append(((1-t)**2 * tr_from + 2*(1-t)*t * p_tr + t**2 * tr_to).tolist())
+                        # Top side → top-left fillet
+                        tl_from = p_tl - dir_top * cut_tl
+                        tl_to = p_tl - dir_l * cut_tl
+                        poly.append(tl_from.tolist())
+                        for fi in range(6):
+                            t = fi / 5
+                            poly.append(((1-t)**2 * tl_from + 2*(1-t)*t * p_tl + t**2 * tl_to).tolist())
+                        poly.append(poly[0])
+                    else:
+                        poly = [p_bl.tolist(), p_tr.tolist(), p_tl.tolist(), p_bl.tolist()]
+                else:
+                    # Normal quad with rounded corners
+                    poly = self._round_quad_preview(p_bl, p_br, p_tr, p_tl, corner_pct)
+                results.append(poly)
+        
+        return results
+    
+    def _round_quad_preview(self, p1, p2, p3, p4, radius_pct):
+        """Create a rounded quadrilateral from 4 corners for preview."""
+        from numpy.linalg import norm
+        corners = [np.array(p1), np.array(p2), np.array(p3), np.array(p4)]
+        n = len(corners)
+        edge_lengths = sorted([norm(corners[(i+1) % n] - corners[i]) for i in range(n)])
+        ref_len = (edge_lengths[-1] + edge_lengths[-2]) / 2
+        radius = ref_len * radius_pct
+        if radius < 1e-6:
+            return [c.tolist() for c in corners] + [corners[0].tolist()]
+        pts = []
+        for i in range(n):
+            prev_pt = corners[(i - 1) % n]
+            curr_pt = corners[i]
+            next_pt = corners[(i + 1) % n]
+            d_in = curr_pt - prev_pt
+            d_out = next_pt - curr_pt
+            len_in, len_out = norm(d_in), norm(d_out)
+            if len_in < 1e-9 or len_out < 1e-9:
+                pts.append(curr_pt.tolist())
+                continue
+            offset = min(radius, len_in * 0.4, len_out * 0.4)
+            p_start = curr_pt - d_in / len_in * offset
+            p_end = curr_pt + d_out / len_out * offset
+            for j in range(9):
+                t = j / 8
+                pt = (1-t)**2 * p_start + 2*(1-t)*t * curr_pt + t**2 * p_end
+                pts.append(pt.tolist())
+        pts.append(pts[0])
+        return pts
+    
+    def _ray_curve_intersect_preview(self, ray_origin, ray_dir, curve):
+        """Find where a ray intersects a PolyLine2D (for preview)."""
+        from numpy.linalg import norm
+        normal = np.array([-ray_dir[1], ray_dir[0]])
+        ref_val = np.dot(ray_origin, normal)
+        best = None
+        best_t = float('inf')
+        for i in range(len(curve) - 1):
+            p0 = np.array(curve[i])
+            p1 = np.array(curve[i + 1])
+            v0 = np.dot(p0, normal) - ref_val
+            v1 = np.dot(p1, normal) - ref_val
+            if v0 * v1 <= 0 and abs(v1 - v0) > 1e-12:
+                s = v0 / (v0 - v1)
+                if -1e-9 <= s <= 1 + 1e-9:
+                    pt = p0 + s * (p1 - p0)
+                    t_ray = np.dot(pt - ray_origin, ray_dir)
+                    if t_ray > -1e-9 and t_ray < best_t:
+                        best = pt
+                        best_t = t_ray
+        return best
+
     def create_rounded_rectangle(self, width, height, corner_radius_ratio=0.25):
         # corner_radius_ratio is a ratio of min(width, height)
         radius = min(width, height) * corner_radius_ratio
@@ -1123,7 +1533,11 @@ class HoleDesignTool(BaseTool):
         widgets_to_block = [self.holeShapeComboBox, self.numHolesSpinBox, self.holeWidthSpinBox,
                             self.holeHeightSpinBox, self.verticalShiftSpinBox,
                             self.minPosSpinBox, self.maxPosSpinBox,
-                            self.holeMarginSpinBox, self.holeCornerRadiusSpinBox]
+                            self.holeMarginSpinBox, self.holeCornerRadiusSpinBox,
+                            # Diagonal hole widgets (always loaded)
+                            self.diagHolesEnabledCheckBox, self.diagHoleNumZonesSpinBox,
+                            self.diagHoleMarginTopSpinBox, self.diagHoleMarginSideSpinBox,
+                            self.diagHoleMarginBottomSpinBox, self.diagHoleCornerRadiusSpinBox]
         if is_suspended:
             widgets_to_block.extend([self.noHoleAngleSpinBox,
                                      self.coneHolesEnabledCheckBox,
@@ -1163,6 +1577,22 @@ class HoleDesignTool(BaseTool):
             self.coneHoleMarginBottomSpinBox.setValue(getattr(pg, 'cone_hole_margin_bottom_s', 3.0))
             self.coneHoleCornerRadiusSpinBox_cone.setValue(getattr(pg, 'cone_hole_corner_radius_s', 25.0))
 
+        # Diagonal hole parameters (always loaded, with backward compat)
+        diag_enabled = getattr(pg, 'diag_holes_enabled', None)
+        if diag_enabled is None:
+            diag_enabled = getattr(pg, 'cone_holes_enabled_s', False)
+        self.diagHolesEnabledCheckBox.setChecked(diag_enabled)
+        self.diagHoleNumZonesSpinBox.setValue(getattr(pg, 'diag_hole_num_zones',
+                                             getattr(pg, 'cone_hole_num_zones_s', 1)))
+        self.diagHoleMarginTopSpinBox.setValue(getattr(pg, 'diag_hole_margin_top',
+                                              getattr(pg, 'cone_hole_margin_top_s', 3.0)))
+        self.diagHoleMarginSideSpinBox.setValue(getattr(pg, 'diag_hole_margin_side',
+                                               getattr(pg, 'cone_hole_margin_side_s', 3.0)))
+        self.diagHoleMarginBottomSpinBox.setValue(getattr(pg, 'diag_hole_margin_bottom',
+                                                 getattr(pg, 'cone_hole_margin_bottom_s', 3.0)))
+        self.diagHoleCornerRadiusSpinBox.setValue(getattr(pg, 'diag_hole_corner_radius',
+                                                 getattr(pg, 'cone_hole_corner_radius_s', 25.0)))
+
         # Initial visibility update
         self.on_height_mode_change(0)  # Default mode
 
@@ -1192,7 +1622,16 @@ class HoleDesignTool(BaseTool):
             pg.cone_hole_margin_side_s = self.coneHoleMarginSideSpinBox.value()
             pg.cone_hole_margin_bottom_s = self.coneHoleMarginBottomSpinBox.value()
             pg.cone_hole_corner_radius_s = self.coneHoleCornerRadiusSpinBox_cone.value()
-        else:
+
+        # Diagonal hole params (always saved)
+        pg.diag_holes_enabled = self.diagHolesEnabledCheckBox.isChecked()
+        pg.diag_hole_num_zones = self.diagHoleNumZonesSpinBox.value()
+        pg.diag_hole_margin_top = self.diagHoleMarginTopSpinBox.value()
+        pg.diag_hole_margin_side = self.diagHoleMarginSideSpinBox.value()
+        pg.diag_hole_margin_bottom = self.diagHoleMarginBottomSpinBox.value()
+        pg.diag_hole_corner_radius = self.diagHoleCornerRadiusSpinBox.value()
+
+        if not is_suspended:
             pg.hole_shape_ns = self.holeShapeComboBox.currentIndex()
             pg.num_holes_ns = self.numHolesSpinBox.value()
             pg.hole_width_ns = self.holeWidthSpinBox.value()

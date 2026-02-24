@@ -391,12 +391,10 @@ class ParametricGlider(object):
         for rib_idx, rib in enumerate(glider.ribs):
             # Skip the last rib if last_profile_enabled (should be solid, no holes)
             if getattr(self, 'last_profile_enabled', False) and rib_idx == len(glider.ribs) - 1:
-                print(f"[apply_holes] Skipping last rib {rib.name}: last_profile_enabled")
                 continue
             
             # Skip ribs with chord too small for reliable hole generation
             if rib.chord < MIN_CHORD_FOR_HOLES:
-                print(f"[apply_holes] Skipping rib {rib.name}: chord {rib.chord:.3f}m < {MIN_CHORD_FOR_HOLES}m")
                 continue
                 
             is_suspended = rib in suspended_ribs
@@ -450,8 +448,7 @@ class ParametricGlider(object):
                                 pilot_2d_y = pilot_up_pos
                                 pilot_2d = np.array([pilot_2d_x, pilot_2d_y])
                     except Exception as e:
-                        print(f"[apply_holes] Pilot point projection error: {e}")
-                
+                        pass
                 for ap in attachment_points:
                     v1 = rib.profile_2d.align([ap.rib_pos, -1.0]) # Apex on intrados
 
@@ -852,18 +849,13 @@ class ParametricGlider(object):
                                         hole_pts.append(p_bl)
                                 
                                 custom_pts = [list(p) for p in hole_pts]
-                                print(f"[CONE_HOLE_DEBUG] rib={rib.name} chord={rib.chord:.4f} pts={len(custom_pts)}")
-                                print(f"  corners: bl={p_bl} br={p_br} tr={p_tr} tl={p_tl}")
-                                print(f"  v1={v1} inner_R={inner_radius:.5f} margins t={margin_top:.5f} s={margin_side:.5f} b={margin_bottom:.5f}")
-                                print(f"  x_range=[{min(p[0] for p in custom_pts):.5f}, {max(p[0] for p in custom_pts):.5f}]")
-                                print(f"  y_range=[{min(p[1] for p in custom_pts):.5f}, {max(p[1] for p in custom_pts):.5f}]")
                                 if not hasattr(rib, 'cone_holes'):
                                     rib.cone_holes = []
                                 rib.cone_holes.append(
                                     RibHole(ap.rib_pos, custom_points=custom_pts)
                                 )
                   except Exception as e:
-                    print(f"[apply_holes] Cone hole error for rib {rib.name}: {e}")
+                      pass
 
             else:
                 shape_idx, num_holes, w_factor, h_factor, v_shift_factor, start_pos, end_pos, hole_height_mode, hole_margin, corner_radius = (
@@ -997,6 +989,41 @@ class ParametricGlider(object):
                             corner_radius=corner_radius
                         )
                     )
+
+        # === DIAGONAL CONE HOLES ===
+        # Store cone hole config on eligible (full) diagonals
+        # Check new param first, fall back to old param for backward compatibility
+        diag_enabled = getattr(self, 'diag_holes_enabled', None)
+        if diag_enabled is None:
+            diag_enabled = getattr(self, 'cone_holes_enabled_s', False)
+        if diag_enabled:
+            cone_config = {
+                'num_zones': getattr(self, 'diag_hole_num_zones',
+                             getattr(self, 'cone_hole_num_zones_s', 1)),
+                'margin_top_m': getattr(self, 'diag_hole_margin_top',
+                                getattr(self, 'cone_hole_margin_top_s', 3.0)) / 1000.0,
+                'margin_side_m': getattr(self, 'diag_hole_margin_side',
+                                 getattr(self, 'cone_hole_margin_side_s', 3.0)) / 1000.0,
+                'margin_bottom_m': getattr(self, 'diag_hole_margin_bottom',
+                                   getattr(self, 'cone_hole_margin_bottom_s', 3.0)) / 1000.0,
+                'corner_radius_pct': getattr(self, 'diag_hole_corner_radius',
+                                     getattr(self, 'cone_hole_corner_radius_s', 25.0)) / 100.0,
+            }
+            for cell in glider.cells:
+                for drib in cell.diagonals:
+                    left_h = (drib.left_front[1], drib.left_back[1])
+                    right_h = (drib.right_front[1], drib.right_back[1])
+                    
+                    left_is_intrados = (left_h[0] == -1.0 and left_h[1] == -1.0)
+                    right_is_intrados = (right_h[0] == -1.0 and right_h[1] == -1.0)
+                    left_is_extrados = (left_h[0] > 0 and left_h[1] > 0)
+                    right_is_extrados = (right_h[0] > 0 and right_h[1] > 0)
+                    
+                    is_full = (left_is_intrados and right_is_extrados) or \
+                              (right_is_intrados and left_is_extrados)
+                    
+                    if is_full:
+                        drib.cone_hole_config = cone_config
 
     def apply_reinforcements(self, glider):
         """Apply reinforcement configurations to ribs for 2D export."""
@@ -1520,7 +1547,7 @@ class ParametricGlider(object):
             last_rib_index = len(self.shape.rib_x_values) - 1
             is_last = rib_index == last_rib_index
             if is_last:
-                print(f"[DEBUG] Last rib check: enabled={last_enabled}, rib_index={rib_index}, last_rib_index={last_rib_index}")
+                pass
             if last_enabled and is_last:
                 profile = self._get_last_profile(profile)
         
@@ -1607,17 +1634,13 @@ class ParametricGlider(object):
         - 'custom': User-imported profile
         """
         last_profile_type = getattr(self, 'last_profile_type', 'line')
-        print(f"[DEBUG] _get_last_profile called with type='{last_profile_type}'")
-        print(f"[DEBUG] base_profile.thickness = {base_profile.thickness}")
         
         if last_profile_type == 'line':
             return self._create_line_profile(base_profile)
         elif last_profile_type == 'thin':
             relative_thickness = getattr(self, 'last_profile_thickness', 0.3)  # 30% of original
             target = base_profile.thickness * relative_thickness
-            print(f"[DEBUG] Creating thin profile: relative={relative_thickness}, target_thickness={target}")
             result = self._create_thin_profile(base_profile, target)
-            print(f"[DEBUG] Result thin profile thickness = {result.thickness}")
             return result
         elif last_profile_type == 'custom':
             custom = getattr(self, 'last_profile_custom', None)
@@ -1627,7 +1650,6 @@ class ParametricGlider(object):
                 return custom_copy
         
         # Fallback to line
-        print(f"[DEBUG] Fallback to line profile")
         return self._create_line_profile(base_profile)
     
     def _create_line_profile(self, base_profile):
@@ -1915,10 +1937,6 @@ class ParametricGlider(object):
         prev_chord = None
         last_rib_index = len(x_values) - 1
         
-        print(f"[DEBUG] ===== get_glider_3d: {len(x_values)} ribs, last_rib_index={last_rib_index} =====")
-        print(f"[DEBUG] last_profile_enabled={getattr(self, 'last_profile_enabled', False)}")
-        print(f"[DEBUG] last_profile_type={getattr(self, 'last_profile_type', 'line')}")
-        print(f"[DEBUG] last_profile_thickness={getattr(self, 'last_profile_thickness', 0.3)}")
         
         for rib_no, pos in enumerate(x_values):
             front, back = shape_ribs[rib_no]
@@ -1930,19 +1948,17 @@ class ParametricGlider(object):
             
             # Debug for last few ribs
             if rib_no >= last_rib_index - 2:
-                print(f"[DEBUG] Rib {rib_no}: front[1]={front[1]:.4f}, back[1]={back[1]:.4f}, chord={chord:.4f}, prev_chord={prev_chord}")
+                pass
             
             # For last rib with last_profile_enabled: use previous rib's chord if current is 0
             # This ensures the thin/custom profile is visible instead of collapsed to a line
             if rib_no == last_rib_index and getattr(self, 'last_profile_enabled', False):
-                print(f"[DEBUG] Processing LAST RIB: chord={chord}, prev_chord={prev_chord}")
                 if chord < 0.01 and prev_chord is not None:  # Chord is essentially zero
                     chord = prev_chord * getattr(self, 'last_profile_thickness', 0.3)
-                    print(f"[DEBUG] OVERRIDE: Using scaled chord for last rib: {chord}")
                 elif chord >= 0.01:
-                    print(f"[DEBUG] NOT OVERRIDING: chord ({chord}) >= 0.01")
+                    pass
                 else:
-                    print(f"[DEBUG] NOT OVERRIDING: prev_chord is None")
+                    pass
             
             factor = profile_merge_curve(abs(pos))
             profile = self.get_merge_profile(factor, pos_x=pos, rib_index=rib_no)
@@ -1951,7 +1967,7 @@ class ParametricGlider(object):
             
             # Debug profile thickness for last rib
             if rib_no == last_rib_index:
-                print(f"[DEBUG] Last rib profile.thickness={profile.thickness}, final chord={chord}")
+                pass
             
             prev_chord = chord if chord > 0.01 else prev_chord
 
@@ -2000,7 +2016,7 @@ class ParametricGlider(object):
         if not getattr(self, 'last_profile_enabled', False):
             glider.close_rib()
         else:
-            print(f"[DEBUG] Skipping close_rib() because last_profile_enabled=True")
+            pass
 
         # CELL-ELEMENTS
         self.get_panels(glider)
