@@ -231,35 +231,68 @@ class CellTool(BaseTool):
         """
         Auto-generate diagonal ribs from attachment points.
         Shows configuration dialog with per-line-type parameters.
+        Supports two modes: Percentage (% avant/arrière axe) and Angle (opening angle from pull axis).
         """
+        import math
+        
         # Configuration dialog
         dialog = QtGui.QDialog()
-        dialog.setWindowTitle("Configuration des diagonales")
-        dialog.setMinimumWidth(550)
+        dialog.setWindowTitle("Diagonal Auto-fill Configuration")
+        dialog.setMinimumWidth(600)
         layout = QtGui.QVBoxLayout(dialog)
         
+        # Mode selection
+        mode_layout = QtGui.QHBoxLayout()
+        mode_layout.addWidget(QtGui.QLabel("Mode:"))
+        mode_combo = QtGui.QComboBox()
+        mode_combo.addItems(["Percentage", "Angle"])
+        saved_mode = getattr(self.parametric_glider, 'diagonal_autofill_mode', 'percent')
+        mode_combo.setCurrentIndex(0 if saved_mode == 'percent' else 1)
+        mode_layout.addWidget(mode_combo)
+        mode_layout.addStretch()
+        layout.addLayout(mode_layout)
+        
+        # Help text (updates with mode)
+        help_label = QtGui.QLabel()
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet("color: #555; font-size: 11px; padding: 4px; background: #f8f8f8; border-radius: 3px;")
+        layout.addWidget(help_label)
+        
+        HELP_PERCENT = (
+            "<b>Percentage mode:</b> For each attachment point, the pull axis is projected "
+            "onto the extrados. The diagonal extends a fixed <i>% of chord</i> forward and backward "
+            "from this projection point. Adjust <i>% Fwd</i> and <i>% Aft</i> per line layer."
+        )
+        HELP_ANGLE = (
+            "<b>Angle mode:</b> For each attachment point, the pull axis is used as bisector. "
+            "Two rays are traced at ±<i>angle/2</i> from the pull axis, starting from the base edges "
+            "(intrados), until they meet the extrados of the adjacent cell. This produces diagonals "
+            "whose opening adapts naturally to the local profile geometry."
+        )
+        
         # Header
-        header = QtGui.QLabel("Paramètres par type de ligne")
+        header = QtGui.QLabel("Parameters per line layer")
         header.setStyleSheet("font-weight: bold; font-size: 12px;")
         layout.addWidget(header)
         
-        # Create table for line parameters
+        # Create table for line parameters - 5 columns, show/hide based on mode
         line_types = ["A", "B", "C", "D"]
-        param_table = QtGui.QTableWidget(len(line_types), 4)
+        param_table = QtGui.QTableWidget(len(line_types), 5)
         param_table.setHorizontalHeaderLabels([
-            "Largeur intrados (cm)",
-            "% avant axe",
-            "% arrière axe",
-            "Nb bandes"
+            "Intrados width (cm)",    # col 0 - always visible
+            "% Fwd of axis",          # col 1 - percent mode only
+            "% Aft of axis",          # col 2 - percent mode only
+            "Angle (°)",              # col 3 - angle mode only
+            "Num. bands"              # col 4 - always visible
         ])
         param_table.setVerticalHeaderLabels(line_types)
         param_table.horizontalHeader().setStretchLastSection(True)
         
-        # Default values for each line type - read from ParametricGlider for persistence
-        # (intrados_cm, before_axis_%, after_axis_%, num_bands)
+        # Default values - read from ParametricGlider for persistence
         saved_params = getattr(self.parametric_glider, 'diagonal_autofill_params', None)
+        saved_angles = getattr(self.parametric_glider, 'diagonal_autofill_angles', None)
         if saved_params:
-            defaults = dict(saved_params)  # Copy to avoid modifying the original
+            defaults = dict(saved_params)
         else:
             defaults = {
                 "A": (4.0, 5.0, 5.0, 1),
@@ -267,8 +300,13 @@ class CellTool(BaseTool):
                 "C": (4.0, 8.0, 12.0, 1),
                 "D": (4.0, 10.0, 15.0, 1),
             }
+        if saved_angles:
+            angle_defaults = dict(saved_angles)
+        else:
+            angle_defaults = {"A": 45.0, "B": 45.0, "C": 45.0, "D": 45.0}
         
         line_spinboxes = {}
+        angle_spinboxes = {}
         for row, line_type in enumerate(line_types):
             intrados_spin = QtGui.QDoubleSpinBox()
             intrados_spin.setRange(1, 20)
@@ -285,6 +323,12 @@ class CellTool(BaseTool):
             after_axis_spin.setValue(defaults[line_type][2])
             after_axis_spin.setSuffix(" %")
             
+            angle_spin = QtGui.QDoubleSpinBox()
+            angle_spin.setRange(5, 120)
+            angle_spin.setValue(angle_defaults.get(line_type, 45.0))
+            angle_spin.setSuffix(" °")
+            angle_spin.setSingleStep(5.0)
+            
             num_bands_spin = QtGui.QSpinBox()
             num_bands_spin.setRange(1, 10)
             num_bands_spin.setValue(defaults[line_type][3])
@@ -292,19 +336,32 @@ class CellTool(BaseTool):
             param_table.setCellWidget(row, 0, intrados_spin)
             param_table.setCellWidget(row, 1, before_axis_spin)
             param_table.setCellWidget(row, 2, after_axis_spin)
-            param_table.setCellWidget(row, 3, num_bands_spin)
+            param_table.setCellWidget(row, 3, angle_spin)
+            param_table.setCellWidget(row, 4, num_bands_spin)
             
             line_spinboxes[line_type] = (intrados_spin, before_axis_spin, after_axis_spin, num_bands_spin)
+            angle_spinboxes[line_type] = angle_spin
+        
+        # Show/hide columns and help text based on mode
+        def update_columns():
+            is_angle = mode_combo.currentIndex() == 1
+            param_table.setColumnHidden(1, is_angle)   # % Fwd
+            param_table.setColumnHidden(2, is_angle)   # % Aft
+            param_table.setColumnHidden(3, not is_angle)  # Angle
+            help_label.setText(HELP_ANGLE if is_angle else HELP_PERCENT)
+        
+        mode_combo.currentIndexChanged.connect(update_columns)
+        update_columns()  # Apply initial state
         
         layout.addWidget(param_table)
         
         # Vertical offset for all diagonals (in mm)
         layout.addWidget(QtGui.QLabel(""))
         offset_layout = QtGui.QHBoxLayout()
-        offset_layout.addWidget(QtGui.QLabel("Décalage vertical (depuis extrados):"))
+        offset_layout.addWidget(QtGui.QLabel("Vertical offset (from extrados):"))
         offset_spin = QtGui.QSpinBox()
         offset_spin.setRange(0, 100)
-        offset_spin.setValue(getattr(self.parametric_glider, 'diagonal_autofill_offset', 0))  # Restore saved value
+        offset_spin.setValue(getattr(self.parametric_glider, 'diagonal_autofill_offset', 0))
         offset_spin.setSuffix(" mm")
         offset_layout.addWidget(offset_spin)
         offset_layout.addStretch()
@@ -321,8 +378,13 @@ class CellTool(BaseTool):
         if dialog.exec_() != QtGui.QDialog.Accepted:
             return
         
+        # Determine selected mode
+        use_angle_mode = mode_combo.currentIndex() == 1
+        
         # Save entered values to ParametricGlider for persistence
+        self.parametric_glider.diagonal_autofill_mode = 'angle' if use_angle_mode else 'percent'
         self.parametric_glider.diagonal_autofill_params = {}
+        self.parametric_glider.diagonal_autofill_angles = {}
         for line_type, (intrados_spin, before_spin, after_spin, num_bands_spin) in line_spinboxes.items():
             self.parametric_glider.diagonal_autofill_params[line_type] = (
                 intrados_spin.value(),
@@ -330,6 +392,7 @@ class CellTool(BaseTool):
                 after_spin.value(),
                 num_bands_spin.value()
             )
+            self.parametric_glider.diagonal_autofill_angles[line_type] = angle_spinboxes[line_type].value()
         self.parametric_glider.diagonal_autofill_offset = offset_spin.value()
         
         # Get vertical offset in mm - will be converted per position using real profile thickness
@@ -414,18 +477,18 @@ class CellTool(BaseTool):
         for line_type, (intrados_spin, before_spin, after_spin, num_bands_spin) in line_spinboxes.items():
             # Convert cm to fraction of chord, % to fraction
             half_width_intrados = (intrados_spin.value() / 2) / chord_cm
-            before_axis = before_spin.value() / 100.0  # % chord before projected axis
-            after_axis = after_spin.value() / 100.0    # % chord after projected axis
+            before_axis = before_spin.value() / 100.0
+            after_axis = after_spin.value() / 100.0
             num_bands = num_bands_spin.value()
+            angle_deg = angle_spinboxes[line_type].value()
             
             line_params[line_type] = {
                 "half_intrados": half_width_intrados,
                 "before_axis": before_axis,
                 "after_axis": after_axis,
                 "num_bands": num_bands,
+                "angle_deg": angle_deg,
             }
-        
-
         
         # Default params for unknown line types
         default_params = line_params.get("A", {
@@ -433,30 +496,107 @@ class CellTool(BaseTool):
             "before_axis": 0.05,
             "after_axis": 0.05,
             "num_bands": 1,
+            "angle_deg": 45.0,
         })
         
         # Pre-compute pull axis projections for all ribs (keyed by rib index)
-        # This maps each rib to its AP projections for axis-relative positioning
-        rib_projections = {}  # rib_index -> {ap_rib_pos -> extrados_intersection_x}
+        # Store full projection data for both % mode (extrados_intersection_x) and angle mode
+        rib_projections = {}  # rib_index -> {ap_rib_pos -> projection_dict}
+        rib_extrados_polys = {}  # rib_index -> extrados PolyLine2D
         for rib_idx, rib in enumerate(glider_3d.ribs):
             projections = compute_pull_axis_projection(rib, glider_3d)
             if projections:
                 proj_map = {}
                 for proj in projections:
-                    proj_map[round(proj['ap'].rib_pos, 4)] = proj['extrados_intersection_x']
+                    proj_map[round(proj['ap'].rib_pos, 4)] = proj
                 rib_projections[rib_idx] = proj_map
+            # Cache extrados poly for angle intersection
+            try:
+                rib_extrados_polys[rib_idx] = rib.profile_2d.get_extrados_poly()
+            except Exception:
+                pass
         
         def _get_axis_x(projections, rib_idx, rib_pos, before, after):
-            """Look up pull axis extrados intersection for a given rib+AP.
-            Falls back to rib_pos + before (midpoint of before/after range) if unavailable."""
+            """Look up pull axis extrados intersection for a given rib+AP."""
             if rib_idx in projections:
                 proj_map = projections[rib_idx]
-                # Find closest matching AP position
+                best_key = min(proj_map.keys(), key=lambda k: abs(k - round(rib_pos, 4)), default=None)
+                if best_key is not None and abs(best_key - round(rib_pos, 4)) < 0.05:
+                    return proj_map[best_key]['extrados_intersection_x']
+            return rib_pos
+        
+        def _get_full_proj(projections, rib_idx, rib_pos):
+            """Get full projection dict for a given rib+AP (for angle mode)."""
+            if rib_idx in projections:
+                proj_map = projections[rib_idx]
                 best_key = min(proj_map.keys(), key=lambda k: abs(k - round(rib_pos, 4)), default=None)
                 if best_key is not None and abs(best_key - round(rib_pos, 4)) < 0.05:
                     return proj_map[best_key]
-            # Fallback: use rib_pos as axis (no projection data)
-            return rib_pos
+            return None
+        
+        def _compute_angle_extrados(rib_idx, rib_pos, half_intrados, angle_deg):
+            """Compute extrados x-values using angle mode (trapezoid shape).
+            
+            The diagonal is a truncated triangle (trapezoid):
+            - Base: intrados width centered on AP (2 * half_intrados)
+            - Sides: at ±angle/2 from pull axis (bisector)
+            - Top: intersection with extrados
+            
+            Rays start from each base EDGE and go in the direction
+            at ±angle/2 from the pull axis until they hit the extrados.
+            """
+            proj = _get_full_proj(rib_projections, rib_idx, rib_pos)
+            if proj is None:
+                return None
+            
+            extrados_poly = rib_extrados_polys.get(rib_idx)
+            if extrados_poly is None:
+                return None
+            
+            import numpy as np
+            
+            # Pull axis direction (from pilot to AP, normalized 2D profile coords)
+            line_dir = proj['line_direction_2d']
+            
+            # Base edge positions (intrados, in profile coords)
+            rib = glider_3d.ribs[rib_idx]
+            base_front_x = rib_pos - half_intrados
+            base_back_x = rib_pos + half_intrados
+            base_front_pt = rib.profile_2d.align([base_front_x, -1.0])
+            base_back_pt = rib.profile_2d.align([base_back_x, -1.0])
+            
+            # Rotate pull axis by ±angle/2
+            half_angle = math.radians(angle_deg / 2.0)
+            cos_a = math.cos(half_angle)
+            sin_a = math.sin(half_angle)
+            
+            # Front side: rotate pull axis by +angle/2 (toward front/LE)
+            ray_front = np.array([
+                line_dir[0] * cos_a - line_dir[1] * sin_a,
+                line_dir[0] * sin_a + line_dir[1] * cos_a
+            ])
+            # Back side: rotate pull axis by -angle/2 (toward back/TE)
+            ray_back = np.array([
+                line_dir[0] * cos_a + line_dir[1] * sin_a,
+                -line_dir[0] * sin_a + line_dir[1] * cos_a
+            ])
+            
+            # Intersect: front ray from front base edge, back ray from back base edge
+            far_factor = rib.chord * 100
+            
+            ext_front_pt = extrados_poly.line_intersection(
+                base_front_pt, base_front_pt + ray_front * far_factor
+            )
+            ext_back_pt = extrados_poly.line_intersection(
+                base_back_pt, base_back_pt + ray_back * far_factor
+            )
+            
+            if ext_front_pt is not None and ext_back_pt is not None:
+                x1 = ext_front_pt[0]
+                x2 = ext_back_pt[0]
+                return (min(x1, x2), max(x1, x2))
+            
+            return None
         
         rib_attachments = self._get_suspended_ribs_with_layer()
         cell_count = self._get_cell_count()
@@ -503,9 +643,20 @@ class CellTool(BaseTool):
                 
                 # Get the axis x for this AP on its rib (left rib of this cell = rib cell_no)
                 left_rib_idx = cell_no
-                axis_x = _get_axis_x(rib_projections, left_rib_idx, rib_pos, before_axis, after_axis)
-                ext_start = max(0, axis_x - before_axis)
-                ext_end = min(1, axis_x + after_axis)
+                
+                if use_angle_mode:
+                    angle_result = _compute_angle_extrados(
+                        left_rib_idx, rib_pos, half_bottom, params.get('angle_deg', 45))
+                    if angle_result:
+                        ext_start, ext_end = angle_result
+                    else:
+                        axis_x = _get_axis_x(rib_projections, left_rib_idx, rib_pos, before_axis, after_axis)
+                        ext_start = max(0, axis_x - before_axis)
+                        ext_end = min(1, axis_x + after_axis)
+                else:
+                    axis_x = _get_axis_x(rib_projections, left_rib_idx, rib_pos, before_axis, after_axis)
+                    ext_start = max(0, axis_x - before_axis)
+                    ext_end = min(1, axis_x + after_axis)
                 
                 # Calculate extrados height at the middle of the range
                 mid_x = (ext_start + ext_end) / 2
@@ -536,9 +687,20 @@ class CellTool(BaseTool):
                 
                 # Get the axis x for this AP on its rib (right rib of this cell = rib cell_no + 1)
                 right_rib_idx = cell_no + 1
-                axis_x = _get_axis_x(rib_projections, right_rib_idx, rib_pos, before_axis, after_axis)
-                ext_start = max(0, axis_x - before_axis)
-                ext_end = min(1, axis_x + after_axis)
+                
+                if use_angle_mode:
+                    angle_result = _compute_angle_extrados(
+                        right_rib_idx, rib_pos, half_bottom, params.get('angle_deg', 45))
+                    if angle_result:
+                        ext_start, ext_end = angle_result
+                    else:
+                        axis_x = _get_axis_x(rib_projections, right_rib_idx, rib_pos, before_axis, after_axis)
+                        ext_start = max(0, axis_x - before_axis)
+                        ext_end = min(1, axis_x + after_axis)
+                else:
+                    axis_x = _get_axis_x(rib_projections, right_rib_idx, rib_pos, before_axis, after_axis)
+                    ext_start = max(0, axis_x - before_axis)
+                    ext_end = min(1, axis_x + after_axis)
                 
                 # Calculate extrados height at the middle of the range
                 mid_x = (ext_start + ext_end) / 2
@@ -583,13 +745,25 @@ class CellTool(BaseTool):
                     # Compute the extrados range for this diagonal (same as above)
                     before_axis = params["before_axis"]
                     after_axis = params["after_axis"]
+                    half_intrados = params["half_intrados"]
                     if direction == "from_left":
                         rib_idx = cell_no
                     else:
                         rib_idx = cell_no + 1
-                    axis_x = _get_axis_x(rib_projections, rib_idx, rib_pos, before_axis, after_axis)
-                    ext_start = max(0, axis_x - before_axis)
-                    ext_end = min(1, axis_x + after_axis)
+                    
+                    if use_angle_mode:
+                        angle_result = _compute_angle_extrados(
+                            rib_idx, rib_pos, half_intrados, params.get('angle_deg', 45))
+                        if angle_result:
+                            ext_start, ext_end = angle_result
+                        else:
+                            axis_x = _get_axis_x(rib_projections, rib_idx, rib_pos, before_axis, after_axis)
+                            ext_start = max(0, axis_x - before_axis)
+                            ext_end = min(1, axis_x + after_axis)
+                    else:
+                        axis_x = _get_axis_x(rib_projections, rib_idx, rib_pos, before_axis, after_axis)
+                        ext_start = max(0, axis_x - before_axis)
+                        ext_end = min(1, axis_x + after_axis)
                     mid_x = (ext_start + ext_end) / 2
                     ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
                     
@@ -690,7 +864,7 @@ class CellTool(BaseTool):
         """
         # Configuration dialog
         dialog = QtGui.QDialog()
-        dialog.setWindowTitle("Configuration des bandes de tension")
+        dialog.setWindowTitle("Vector Straps Configuration")
         layout = QtGui.QFormLayout(dialog)
         
         # Width in mm
@@ -698,7 +872,7 @@ class CellTool(BaseTool):
         width_spin.setRange(10, 1000)
         width_spin.setValue(40)
         width_spin.setSuffix(" mm")
-        layout.addRow("Largeur des bandes:", width_spin)
+        layout.addRow("Strap width:", width_spin)
         
         # Button box
         buttons = QtGui.QDialogButtonBox(
