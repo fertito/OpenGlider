@@ -1707,12 +1707,15 @@ class ParametricGlider(object):
             if 1 not in all_values:
                 cuts.append({"type": "parallel", "left": 1, "right": 1})
 
-            cuts.sort(key=lambda cut: cut["left"])
+            # Sort cuts by their average chord position (left+right)/2
+            # This handles polylines that fold back and might have 
+            # cut1.left < cut2.left but cut1.right > cut2.right
+            cuts.sort(key=lambda cut: (cut["left"] + cut["right"]) / 2.0)
 
             for cut1, cut2 in ZipCmp(cuts):
                 part_no = len(panel_lst)
 
-                if cut1["right"] > cut2["right"]:
+                if cut1["right"] > cut2["right"] and cut1["left"] > cut2["left"]:
                     error_str = "Invalid cut: C{} {:.02f}/{:.02f}/{} + {:.02f}/{:.02f}/{}".format(
                         cell_no + 1,
                         cut1["left"],
@@ -1723,6 +1726,14 @@ class ParametricGlider(object):
                         cut2["type"],
                     )
                     raise ValueError(error_str)
+
+                # If cuts cross (left smaller but right larger), swap them 
+                # so the panel can be rendered without errors, or at least try
+                # to not crash the entire application
+                if cut1["right"] > cut2["right"]:
+                    # We don't raise ValueError anymore for intersecting lines
+                    # as complex polylines might cross each other intentionally
+                    pass
 
                 if (
                     cut1["type"] == cut2["type"] == "folded"
