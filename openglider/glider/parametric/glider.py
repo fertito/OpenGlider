@@ -186,8 +186,8 @@ class ParametricGlider(object):
 
         # Lines Auto-Placement configuration
         self.lines_placement_config = kwargs.get('lines_placement_config', {
-            "demi_ecartement": 0.2,
-            "profondeur": 0.5,
+            "demi_ecartement": 20,      # cm (half-span spread)
+            "profondeur": 20.0,         # % of central chord (depth)
             "hauteur_cone": 7.0,
             "riser_length": 0.47,
             "basses_auto": True,
@@ -196,7 +196,11 @@ class ParametricGlider(object):
             "inter_length": 1.0,
             "include_stabilo": True,
             "stabilo_position": 50.0,
-            "line_type_name": "default",
+            "line_type_lowers": "default",
+            "line_type_mid": "default",
+            "line_type_uppers": "default",
+            "fork_angle_auto": False,
+            "fork_angle_max": 15.0,
             "line_types": {
                 "A": {"enabled": True, "position": 8.5, "interval": 1, "start_cell": 0, "patterns": "3:1, 2:2:1"},
                 "B": {"enabled": True, "position": 27.5, "interval": 2, "start_cell": 0, "patterns": "2:2:1, 2:1"},
@@ -234,6 +238,9 @@ class ParametricGlider(object):
         self.last_profile_type = kwargs.get('last_profile_type', 'line')  # 'line', 'thin', 'custom'
         self.last_profile_thickness = kwargs.get('last_profile_thickness', 0.3)  # Relative thickness (0.3 = 30% of original)
         self.last_profile_custom = kwargs.get('last_profile_custom', None)  # Custom Profile2D
+
+        # Aerodynamic analysis results (stored for use by Lines Auto-placement tool)
+        self.aerodynamics_results = kwargs.get('aerodynamics_results', None)
 
     def get_sleeve_exclusion_zones(self, rib, rib_idx, is_suspended):
         """
@@ -1366,7 +1373,11 @@ class ParametricGlider(object):
                 "inter_length": 1.0,
                 "include_stabilo": True,
                 "stabilo_position": 50.0,
-                "line_type_name": "default",
+                "line_type_lowers": "default",
+                "line_type_mid": "default",
+                "line_type_uppers": "default",
+                "fork_angle_auto": False,
+                "fork_angle_max": 15.0,
                 "line_types": {
                     "A": {"enabled": True, "position": 8.5, "interval": 1, "start_cell": 0, "patterns": "3:1, 2:2:1"},
                     "B": {"enabled": True, "position": 27.5, "interval": 2, "start_cell": 0, "patterns": "2:2:1, 2:1"},
@@ -1393,6 +1404,8 @@ class ParametricGlider(object):
             "last_profile_type": getattr(self, "last_profile_type", "line"),
             "last_profile_thickness": getattr(self, "last_profile_thickness", 0.3),
             "last_profile_custom": getattr(self, "last_profile_custom", None),
+            # Aerodynamic analysis results
+            "aerodynamics_results": getattr(self, "aerodynamics_results", None),
         }
 
 

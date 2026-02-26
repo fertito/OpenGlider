@@ -42,12 +42,12 @@ class GroupPatternWidget(QtGui.QWidget):
         
         # Pattern input as text
         self.pattern_edit = QtGui.QLineEdit()
-        self.pattern_edit.setPlaceholderText("ex: 3:1, 2:2:1, 2:1, 2:1")
+        self.pattern_edit.setPlaceholderText("e.g.: 3:1, 2:2:1, 2:1, 2:1")
         self.pattern_edit.setText("2:1")
         layout.addWidget(self.pattern_edit)
         
         # Help label
-        help_label = QtGui.QLabel("Format: pattern1, pattern2, ... (répété si besoin)")
+        help_label = QtGui.QLabel("Format: pattern1, pattern2, ... (repeated as needed)")
         help_label.setStyleSheet("color: gray; font-size: 10px;")
         layout.addWidget(help_label)
     
@@ -174,10 +174,11 @@ class LineTypeConfigRow(QtGui.QWidget):
     def get_config(self):
         return {
             "enabled": self.is_enabled(),
-            "position": self.position_spinbox.value() / 100.0,
+            "position": self.position_spinbox.value(),  # Keep as % for save/load roundtrip
             "interval": self.interval_spinbox.value(),
             "start_cell": self.start_spinbox.value(),
             "group_patterns": self.get_group_patterns(),
+            "patterns": self.patterns_edit.text(),  # Save raw text too
         }
 
 
@@ -205,36 +206,84 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         except:
             self.half_span = 6.0
         
-        self.setWindowTitle("Auto-placement des suspentes")
+        # Calculate central chord for % depth conversion
+        try:
+            ribs = self.parametric_glider.shape.ribs
+            fr, ba = ribs[0]  # Central rib
+            self.central_chord = abs(ba[1] - fr[1])  # Always positive chord length
+        except:
+            self.central_chord = 2.5  # Fallback
+        
+        self.setWindowTitle("Suspension Lines Auto-Placement")
         self.setMinimumWidth(520)
         
         self.setup_ui()
-        self.load_from_glider()  # Load saved configuration
+        self.load_from_glider()  # Restore saved dialog state (fork angle, etc.)
+        self._extract_from_existing_lineset()  # Override with real lineset data
         
     def setup_ui(self):
-        main_layout = QtGui.QVBoxLayout(self)
+        outer_layout = QtGui.QVBoxLayout(self)
         
-        # === Point Pilote ===
-        lower_group = QtGui.QGroupBox("Point Pilote (X=envergure, Y=corde, Z=hauteur)")
+        # Scroll area for all content
+        scroll = QtGui.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_widget = QtGui.QWidget()
+        main_layout = QtGui.QVBoxLayout(scroll_widget)
+        scroll.setWidget(scroll_widget)
+        outer_layout.addWidget(scroll)
+        
+        # === Main Point ===
+        lower_group = QtGui.QGroupBox("Main Point (X=span, Y=chord, Z=height)")
         lower_layout = QtGui.QFormLayout(lower_group)
         
-        # Demi-écartement (X - span direction)
+        # Half-span spread (X - span direction) in cm
         self.demi_ecartement = QtGui.QDoubleSpinBox()
-        self.demi_ecartement.setRange(0, 2.0)
-        self.demi_ecartement.setValue(0.2)
-        self.demi_ecartement.setSingleStep(0.05)
-        self.demi_ecartement.setSuffix(" m")
-        lower_layout.addRow("Demi-écartement:", self.demi_ecartement)
+        self.demi_ecartement.setRange(0, 200)
+        self.demi_ecartement.setValue(20)
+        self.demi_ecartement.setSingleStep(1)
+        self.demi_ecartement.setSuffix(" cm")
+        lower_layout.addRow("Half-span spread:", self.demi_ecartement)
         
-        # Profondeur (Y - chord direction, from leading edge)
+        # Depth (Y - chord direction, as % of central chord)
         self.profondeur = QtGui.QDoubleSpinBox()
-        self.profondeur.setRange(-5, 5)
-        self.profondeur.setValue(0.5)
-        self.profondeur.setSingleStep(0.1)
-        self.profondeur.setSuffix(" m")
-        lower_layout.addRow("Profondeur:", self.profondeur)
+        self.profondeur.setRange(-100, 200)
+        self.profondeur.setValue(20.0)
+        self.profondeur.setSingleStep(1.0)
+        self.profondeur.setDecimals(1)
+        self.profondeur.setSuffix(" %")
+        lower_layout.addRow("Depth (% central chord):", self.profondeur)
         
-        # Hauteur cône (Z - height below wing)
+        # Central chord info label
+        chord_info = QtGui.QLabel(f"Central chord: {self.central_chord * 100:.0f} cm")
+        chord_info.setStyleSheet("color: gray; font-size: 10px;")
+        lower_layout.addRow("", chord_info)
+        
+        # === Aerodynamic Cp Reference ===
+        aero_results = getattr(self.parametric_glider, 'aerodynamics_results', None)
+        if aero_results:
+            cop_central = aero_results.get('cop_central_pct', None)
+            cop_global = aero_results.get('cop_global_pct', None)
+            best_alpha = aero_results.get('best_ld_alpha', None)
+            
+            aero_label_text = "<b>Aero Cp (Best L/D"
+            if best_alpha is not None:
+                aero_label_text += f", α={best_alpha:.1f}°"
+            aero_label_text += "):</b>"
+            
+            if cop_central is not None:
+                aero_label_text += f"  Central: <b>{cop_central:.1f}%</b>"
+            if cop_global is not None:
+                aero_label_text += f"  |  Average: <b>{cop_global:.1f}%</b>"
+            
+            aero_label = QtGui.QLabel(aero_label_text)
+            aero_label.setStyleSheet("color: #2196F3; font-size: 11px; padding: 2px;")
+            lower_layout.addRow("", aero_label)
+        else:
+            aero_hint = QtGui.QLabel("<i>Run Aerodynamic Analysis to get Cp guidance</i>")
+            aero_hint.setStyleSheet("color: gray; font-size: 10px;")
+            lower_layout.addRow("", aero_hint)
+        
+        # Cone height (Z - height below wing)
         hauteur_widget = QtGui.QWidget()
         hauteur_layout = QtGui.QHBoxLayout(hauteur_widget)
         hauteur_layout.setContentsMargins(0, 0, 0, 0)
@@ -249,54 +298,54 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.hauteur_cone.setEnabled(False)
         hauteur_layout.addWidget(self.hauteur_cone)
         
-        self.hauteur_auto = QtGui.QCheckBox("Auto (75% envergure)")
+        self.hauteur_auto = QtGui.QCheckBox("Auto (75% wingspan)")
         self.hauteur_auto.setChecked(True)
         self.hauteur_auto.toggled.connect(self._update_hauteur_auto)
         hauteur_layout.addWidget(self.hauteur_auto)
         
-        lower_layout.addRow("Hauteur cône:", hauteur_widget)
+        lower_layout.addRow("Cone height:", hauteur_widget)
         
         main_layout.addWidget(lower_group)
         
-        # === Point Freins (offset from pilote) ===
-        brake_group = QtGui.QGroupBox("Point Freins (décalage par rapport au point pilote)")
+        # === Brake Point (offset from main) ===
+        brake_group = QtGui.QGroupBox("Brake Point (offset from Main Point)")
         brake_layout = QtGui.QFormLayout(brake_group)
         
         # Enable separate brake point
-        self.brake_separate = QtGui.QCheckBox("Point séparé pour les freins")
+        self.brake_separate = QtGui.QCheckBox("Separate brake point")
         self.brake_separate.setChecked(True)
         self.brake_separate.toggled.connect(self._update_brake_enabled)
         brake_layout.addRow("", self.brake_separate)
         
-        # Offset hauteur (Z - higher than pilote, positive = higher)
+        # Offset height (Z - higher than main, positive = higher)
         self.brake_offset_z = QtGui.QDoubleSpinBox()
         self.brake_offset_z.setRange(-1.0, 2.0)
         self.brake_offset_z.setValue(0.40)  # 40cm higher
         self.brake_offset_z.setSingleStep(0.05)
         self.brake_offset_z.setSuffix(" m")
-        brake_layout.addRow("Décalage hauteur:", self.brake_offset_z)
+        brake_layout.addRow("Height offset:", self.brake_offset_z)
         
-        # Offset écartement (Y - more outward, positive = more spread)
+        # Offset spread (Y - more outward, positive = more spread)
         self.brake_offset_y = QtGui.QDoubleSpinBox()
         self.brake_offset_y.setRange(-0.5, 1.0)
         self.brake_offset_y.setValue(0.15)  # 15cm more outward
         self.brake_offset_y.setSingleStep(0.05)
         self.brake_offset_y.setSuffix(" m")
-        brake_layout.addRow("Décalage écartement:", self.brake_offset_y)
+        brake_layout.addRow("Spread offset:", self.brake_offset_y)
         
-        # Offset profondeur (X - chord direction, positive = more backward)
+        # Offset depth (X - chord direction, positive = more backward)
         self.brake_offset_x = QtGui.QDoubleSpinBox()
         self.brake_offset_x.setRange(-1.0, 1.0)
         self.brake_offset_x.setValue(0.0)  # 0cm by default
         self.brake_offset_x.setSingleStep(0.05)
         self.brake_offset_x.setSuffix(" m")
-        brake_layout.addRow("Décalage profondeur:", self.brake_offset_x)
+        brake_layout.addRow("Depth offset:", self.brake_offset_x)
         
         main_layout.addWidget(brake_group)
 
         
         # === Lengths ===
-        lengths_group = QtGui.QGroupBox("Longueurs")
+        lengths_group = QtGui.QGroupBox("Lengths")
         lengths_layout = QtGui.QFormLayout(lengths_group)
         
         self.riser_length = QtGui.QDoubleSpinBox()
@@ -304,9 +353,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.riser_length.setValue(0.47)
         self.riser_length.setSingleStep(0.01)
         self.riser_length.setSuffix(" m")
-        lengths_layout.addRow("Élévateurs:", self.riser_length)
+        lengths_layout.addRow("Risers:", self.riser_length)
         
-        # Basses (longest)
+        # Lowers (longest)
         basses_widget = QtGui.QWidget()
         basses_layout = QtGui.QHBoxLayout(basses_widget)
         basses_layout.setContentsMargins(0, 0, 0, 0)
@@ -320,9 +369,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.basses_auto.setChecked(True)
         self.basses_auto.toggled.connect(lambda c: self.basses_length.setEnabled(not c))
         basses_layout.addWidget(self.basses_auto)
-        lengths_layout.addRow("Basses:", basses_widget)
+        lengths_layout.addRow("Lowers:", basses_widget)
         
-        # Inter (medium)
+        # Mid (medium)
         inter_widget = QtGui.QWidget()
         inter_layout = QtGui.QHBoxLayout(inter_widget)
         inter_layout.setContentsMargins(0, 0, 0, 0)
@@ -336,9 +385,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.inter_auto.setChecked(True)
         self.inter_auto.toggled.connect(lambda c: self.inter_length.setEnabled(not c))
         inter_layout.addWidget(self.inter_auto)
-        lengths_layout.addRow("Inter:", inter_widget)
+        lengths_layout.addRow("Mid:", inter_widget)
         
-        # Hautes (shortest)
+        # Uppers (shortest)
         hautes_widget = QtGui.QWidget()
         hautes_layout = QtGui.QHBoxLayout(hautes_widget)
         hautes_layout.setContentsMargins(0, 0, 0, 0)
@@ -352,17 +401,41 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.hautes_auto.setChecked(True)
         self.hautes_auto.toggled.connect(lambda c: self.hautes_length.setEnabled(not c))
         hautes_layout.addWidget(self.hautes_auto)
-        lengths_layout.addRow("Hautes:", hautes_widget)
+        lengths_layout.addRow("Uppers:", hautes_widget)
         
         # Help text for auto calculation
-        lengths_help = QtGui.QLabel("Auto: Basses=45%, Inter=30%, Hautes=20% du cône")
-        lengths_help.setStyleSheet("color: gray; font-size: 10px;")
-        lengths_layout.addRow("", lengths_help)
+        self.lengths_help = QtGui.QLabel("Auto: Lowers=45%, Mid=30%, Uppers=20% of cone")
+        self.lengths_help.setStyleSheet("color: gray; font-size: 10px;")
+        lengths_layout.addRow("", self.lengths_help)
+        
+        # Fork angle auto mode
+        fork_widget = QtGui.QWidget()
+        fork_layout = QtGui.QHBoxLayout(fork_widget)
+        fork_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.fork_angle_auto = QtGui.QCheckBox("By max fork angle")
+        self.fork_angle_auto.setChecked(False)
+        self.fork_angle_auto.toggled.connect(self._update_fork_angle_mode)
+        fork_layout.addWidget(self.fork_angle_auto)
+        
+        self.fork_angle_max = QtGui.QDoubleSpinBox()
+        self.fork_angle_max.setRange(5, 45)
+        self.fork_angle_max.setValue(15.0)
+        self.fork_angle_max.setSingleStep(1.0)
+        self.fork_angle_max.setSuffix("°")
+        self.fork_angle_max.setEnabled(False)
+        fork_layout.addWidget(self.fork_angle_max)
+        
+        lengths_layout.addRow("", fork_widget)
+        
+        fork_help = QtGui.QLabel("Maximizes lowers to reduce drag while keeping fork angles within limit")
+        fork_help.setStyleSheet("color: gray; font-size: 10px;")
+        lengths_layout.addRow("", fork_help)
         
         main_layout.addWidget(lengths_group)
         
         # === Line Types ===
-        lines_group = QtGui.QGroupBox("Lignes (Type | Pos | /Cell | @Start | Patterns)")
+        lines_group = QtGui.QGroupBox("Lines (Type | Pos | /Cell | @Start | Patterns)")
         lines_layout = QtGui.QVBoxLayout(lines_group)
         
         self.line_type_rows = {}
@@ -375,17 +448,55 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             row.configChanged.connect(self._update_info)
         
         # Help text
-        help_text = QtGui.QLabel("Patterns: 2:1 = 2 hautes→1 basse | 2:2:1 = 2+2 hautes→2 inter→1 basse")
+        help_text = QtGui.QLabel("Patterns: 2:1 = 2 uppers→1 lower | 2:2:1 = 2+2 uppers→2 mid→1 lower")
         help_text.setStyleSheet("color: gray; font-size: 10px;")
         lines_layout.addWidget(help_text)
         
         main_layout.addWidget(lines_group)
         
+        # === Mini-Pyramidales ===
+        pyra_group = QtGui.QGroupBox("Mini-Pyramidales")
+        pyra_layout = QtGui.QFormLayout(pyra_group)
+        
+        self.pyra_enable = QtGui.QCheckBox("Enable")
+        self.pyra_enable.setChecked(False)
+        pyra_layout.addRow("", self.pyra_enable)
+        
+        self.pyra_layer = QtGui.QComboBox()
+        self.pyra_layer.addItems(["A", "B", "C", "D", "F"])
+        self.pyra_layer.setCurrentText("A")
+        pyra_layout.addRow("Layer:", self.pyra_layer)
+        
+        self.pyra_separation = QtGui.QDoubleSpinBox()
+        self.pyra_separation.setRange(1.0, 15.0)
+        self.pyra_separation.setValue(4.0)
+        self.pyra_separation.setSingleStep(0.5)
+        self.pyra_separation.setSuffix(" %")
+        pyra_layout.addRow("Separation:", self.pyra_separation)
+        
+        self.pyra_length = QtGui.QDoubleSpinBox()
+        self.pyra_length.setRange(0.05, 1.0)
+        self.pyra_length.setValue(0.20)
+        self.pyra_length.setSingleStep(0.05)
+        self.pyra_length.setSuffix(" m")
+        pyra_layout.addRow("Mini length:", self.pyra_length)
+        
+        self.pyra_groups = QtGui.QSpinBox()
+        self.pyra_groups.setRange(1, 10)
+        self.pyra_groups.setValue(2)
+        pyra_layout.addRow("Nb groups:", self.pyra_groups)
+        
+        pyra_help = QtGui.QLabel("Splits each attachment point into 2 points on chord, connected by short lines")
+        pyra_help.setStyleSheet("color: gray; font-size: 10px;")
+        pyra_layout.addRow("", pyra_help)
+        
+        main_layout.addWidget(pyra_group)
+        
         # === Stabilo ===
         stabilo_group = QtGui.QGroupBox("Stabilo")
         stabilo_layout = QtGui.QFormLayout(stabilo_group)
         
-        self.stabilo_checkbox = QtGui.QCheckBox("Inclure")
+        self.stabilo_checkbox = QtGui.QCheckBox("Include")
         self.stabilo_checkbox.setChecked(True)
         self.stabilo_checkbox.toggled.connect(self._update_stabilo_enabled)
         stabilo_layout.addRow("", self.stabilo_checkbox)
@@ -406,43 +517,66 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.stabilo_riser = QtGui.QComboBox()
         self.stabilo_riser.addItems(["A", "B", "C", "D", "F"])
         self.stabilo_riser.setCurrentText("A")  # Default to A riser
-        stabilo_layout.addRow("Connecter à:", self.stabilo_riser)
+        stabilo_layout.addRow("Connect to:", self.stabilo_riser)
         
         main_layout.addWidget(stabilo_group)
         
-        # === Material ===
-        material_group = QtGui.QGroupBox("Matériau")
+        # === Material (per-level) ===
+        material_group = QtGui.QGroupBox("Material")
         material_layout = QtGui.QFormLayout(material_group)
         
-        self.line_type_combo = QtGui.QComboBox()
-        for lt in sorted(LineType.types.keys()):
-            self.line_type_combo.addItem(lt)
-        idx = self.line_type_combo.findText("default")
+        line_type_names = sorted(LineType.types.keys())
+        
+        self.line_type_lowers = QtGui.QComboBox()
+        for lt in line_type_names:
+            self.line_type_lowers.addItem(lt)
+        idx = self.line_type_lowers.findText("default")
         if idx >= 0:
-            self.line_type_combo.setCurrentIndex(idx)
-        material_layout.addRow("Type:", self.line_type_combo)
+            self.line_type_lowers.setCurrentIndex(idx)
+        material_layout.addRow("Lowers:", self.line_type_lowers)
+        
+        self.line_type_mid = QtGui.QComboBox()
+        for lt in line_type_names:
+            self.line_type_mid.addItem(lt)
+        idx = self.line_type_mid.findText("default")
+        if idx >= 0:
+            self.line_type_mid.setCurrentIndex(idx)
+        material_layout.addRow("Mid:", self.line_type_mid)
+        
+        self.line_type_uppers = QtGui.QComboBox()
+        for lt in line_type_names:
+            self.line_type_uppers.addItem(lt)
+        idx = self.line_type_uppers.findText("default")
+        if idx >= 0:
+            self.line_type_uppers.setCurrentIndex(idx)
+        material_layout.addRow("Uppers:", self.line_type_uppers)
         
         main_layout.addWidget(material_group)
         
-        # === Buttons ===
+        # === Total Line Length (shown after generation) ===
+        self.total_length_label = QtGui.QLabel("")
+        self.total_length_label.setStyleSheet("font-size: 11px; color: #4CAF50; padding: 4px;")
+        main_layout.addWidget(self.total_length_label)
+        
+        # === Buttons (outside scroll) ===
         button_layout = QtGui.QHBoxLayout()
         button_layout.addStretch()
         
-        cancel_btn = QtGui.QPushButton("Annuler")
+        cancel_btn = QtGui.QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
         
-        apply_btn = QtGui.QPushButton("Appliquer")
+        apply_btn = QtGui.QPushButton("Apply")
         apply_btn.clicked.connect(self.accept)
         apply_btn.setDefault(True)
         button_layout.addWidget(apply_btn)
         
-        main_layout.addLayout(button_layout)
+        outer_layout.addLayout(button_layout)
         
         # Info
         self.info_label = QtGui.QLabel("")
         self.info_label.setStyleSheet("color: gray;")
-        main_layout.addWidget(self.info_label)
+        outer_layout.addWidget(self.info_label)
         
         self._update_info()
     
@@ -459,7 +593,7 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 groups += 1
         if hasattr(self, 'stabilo_checkbox') and self.stabilo_checkbox.isChecked():
             count += self.stabilo_count.value() if hasattr(self, 'stabilo_count') else 1
-        self.info_label.setText(f"Points: {count} | Élévateurs: {groups}")
+        self.info_label.setText(f"Points: {count} | Risers: {groups}")
     
     def _update_stabilo_enabled(self, enabled):
         """Update stabilo controls enabled state."""
@@ -473,6 +607,24 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.brake_offset_y.setEnabled(enabled)
         self.brake_offset_x.setEnabled(enabled)
     
+    def _update_fork_angle_mode(self, checked):
+        """Toggle fork angle auto mode."""
+        self.fork_angle_max.setEnabled(checked)
+        if checked:
+            # Disable individual auto checkboxes
+            self.basses_auto.setChecked(True)
+            self.basses_auto.setEnabled(False)
+            self.inter_auto.setChecked(True)
+            self.inter_auto.setEnabled(False)
+            self.hautes_auto.setChecked(True)
+            self.hautes_auto.setEnabled(False)
+            self.lengths_help.setText("Fork angle mode: maximizes lowers, minimizes uppers")
+        else:
+            self.basses_auto.setEnabled(True)
+            self.inter_auto.setEnabled(True)
+            self.hautes_auto.setEnabled(True)
+            self.lengths_help.setText("Auto: Lowers=45%, Mid=30%, Uppers=20% of cone")
+    
     def _update_hauteur_auto(self, auto):
         """Update hauteur cone when auto is toggled."""
         self.hauteur_cone.setEnabled(not auto)
@@ -480,23 +632,279 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             # Recalculate from full span (75% of wingspan)
             self.hauteur_cone.setValue(round(self.half_span * 2 * 0.75, 1))
     
+    def _extract_from_existing_lineset(self):
+        """Extract configuration from the existing lineset."""
+        lineset = getattr(self.parametric_glider, 'lineset', None)
+        if lineset is None:
+            print("[AutoPlace] No lineset attribute on parametric_glider")
+            return
+        if not hasattr(lineset, 'lines') or not lineset.lines:
+            print(f"[AutoPlace] Lineset has no lines (type={type(lineset).__name__})")
+            return
+        
+        print(f"[AutoPlace] Found lineset with {len(lineset.lines)} lines, {len(lineset.nodes)} nodes")
+        
+        try:
+            # Sort lines first (ensures lower_node/upper_node direction)
+            for node in lineset.get_lower_attachment_points():
+                lineset.sort_lines(node)
+            
+            # === Extract Lower Node (pilot point) ===
+            lower_nodes = lineset.get_lower_attachment_points()
+            print(f"[AutoPlace] Found {len(lower_nodes)} lower nodes")
+            
+            if lower_nodes:
+                main_lower = lower_nodes[0]
+                if hasattr(main_lower, 'pos_3D') and main_lower.pos_3D is not None:
+                    px, py, pz = main_lower.pos_3D
+                    print(f"[AutoPlace] Main lower pos_3D = [{px:.3f}, {py:.3f}, {pz:.3f}]")
+                    self.demi_ecartement.setValue(abs(py) * 100)
+                    self.profondeur.setValue((px / self.central_chord) * 100 if self.central_chord > 0.01 else 20.0)
+                    self.hauteur_cone.setValue(abs(pz))
+                    self.hauteur_auto.setChecked(False)
+            
+            # === Collect ALL upper nodes directly (most reliable) ===
+            all_upper_nodes = lineset.get_upper_nodes()
+            print(f"[AutoPlace] Found {len(all_upper_nodes)} upper nodes")
+            
+            # Group by layer
+            layer_upper_nodes = {}
+            for node in all_upper_nodes:
+                layer = getattr(node, 'layer', '') or ''
+                layer_upper_nodes.setdefault(layer, []).append(node)
+            
+            print(f"[AutoPlace] Layers found: {list(layer_upper_nodes.keys())}")
+            
+            # === Set upper node config per layer ===
+            for layer, nodes in layer_upper_nodes.items():
+                if layer not in self.line_type_rows:
+                    print(f"[AutoPlace] Layer '{layer}' not in rows, skipping")
+                    continue
+                if not nodes:
+                    continue
+                
+                row = self.line_type_rows[layer]
+                row.enable_checkbox.setChecked(True)
+                
+                # Position: average rib_pos → convert to %
+                avg_pos = sum(n.rib_pos for n in nodes) / len(nodes)
+                if avg_pos <= 1.0:
+                    avg_pos *= 100.0
+                row.position_spinbox.setValue(round(avg_pos, 1))
+                print(f"[AutoPlace] Layer {layer}: pos={avg_pos:.1f}%, {len(nodes)} nodes")
+                
+                # Interval from cell_no differences
+                cell_nos = sorted(set(n.cell_no for n in nodes))
+                if len(cell_nos) >= 2:
+                    intervals = [cell_nos[i+1] - cell_nos[i] for i in range(len(cell_nos)-1)]
+                    from collections import Counter
+                    interval = Counter(intervals).most_common(1)[0][0]
+                    row.interval_spinbox.setValue(max(interval, 1))
+                    print(f"[AutoPlace] Layer {layer}: interval={interval}, cells={cell_nos}")
+                
+                if cell_nos:
+                    row.start_spinbox.setValue(cell_nos[0])
+            
+            # === Extract patterns per layer ===
+            # Build adjacency for tree walk
+            upper_lines_adj = {}
+            lower_lines_adj = {}
+            for line in lineset.lines:
+                upper_lines_adj.setdefault(id(line.lower_node), []).append(line)
+                lower_lines_adj.setdefault(id(line.upper_node), []).append(line)
+            
+            for layer, nodes in layer_upper_nodes.items():
+                if layer not in self.line_type_rows:
+                    continue
+                row = self.line_type_rows[layer]
+                
+                # For each upper node of this layer, walk DOWN to find the
+                # basse node (first BatchNode2D directly below a LowerNode2D/riser)
+                # then count how many upper nodes connect through each basse
+                basse_groups = {}  # basse_node_id -> list of upper node counts per sub-fork
+                
+                def count_upper_children(node):
+                    """Count UpperNode2D leaves reachable from this node."""
+                    if isinstance(node, UpperNode2D):
+                        return 1
+                    children = upper_lines_adj.get(id(node), [])
+                    return sum(count_upper_children(c.upper_node) for c in children)
+                
+                def get_fork_pattern(node, depth=0):
+                    """Get the branching pattern from a basse node to upper nodes."""
+                    children = upper_lines_adj.get(id(node), [])
+                    if not children:
+                        return ""
+                    
+                    # Filter to only children in this layer
+                    layer_children = []
+                    for c in children:
+                        child_layer = getattr(c.upper_node, 'layer', getattr(c, 'layer', ''))
+                        if child_layer == layer or isinstance(c.upper_node, BatchNode2D):
+                            layer_children.append(c)
+                    
+                    if not layer_children:
+                        return ""
+                    
+                    # If all children are UpperNode2D, this is a simple fork
+                    if all(isinstance(c.upper_node, UpperNode2D) for c in layer_children):
+                        return str(len(layer_children))
+                    
+                    # Mix of BatchNode2D and UpperNode2D — recurse
+                    sub_counts = []
+                    for c in layer_children:
+                        if isinstance(c.upper_node, UpperNode2D):
+                            sub_counts.append("1")
+                        else:
+                            sub = get_fork_pattern(c.upper_node, depth + 1)
+                            if sub:
+                                # Count children of this sub-fork
+                                n_children = count_upper_children(c.upper_node)
+                                sub_counts.append(str(n_children))
+                    
+                    if sub_counts:
+                        return str(len(layer_children))
+                    return ""
+                
+                # Find basse nodes for this layer (BatchNode2D whose parent is a riser/lower)
+                group_patterns = []
+                for lower in lineset.get_lower_attachment_points():
+                    for riser_line in upper_lines_adj.get(id(lower), []):
+                        riser = riser_line.upper_node
+                        if not isinstance(riser, BatchNode2D):
+                            continue
+                        # Walk from riser to find basses for this layer
+                        for basse_line in upper_lines_adj.get(id(riser), []):
+                            basse = basse_line.upper_node
+                            basse_layer = getattr(basse_line, 'layer', '')
+                            if basse_layer != layer:
+                                continue
+                            # Count upper nodes from this basse
+                            n_upper = count_upper_children(basse)
+                            if n_upper > 0:
+                                # Get the fork pattern
+                                children = upper_lines_adj.get(id(basse), [])
+                                n_children = len(children)
+                                if n_children > 0 and n_upper > n_children:
+                                    # Multi-level: e.g. 2:2:1 = 4 uppers via 2 inters of 2
+                                    group_patterns.append(f"{n_children}:{n_upper // n_children}:1")
+                                else:
+                                    group_patterns.append(f"{n_upper}:1")
+                
+                if group_patterns:
+                    pattern_str = ", ".join(group_patterns)
+                    row.patterns_edit.setText(pattern_str)
+                    print(f"[AutoPlace] Layer {layer}: pattern='{pattern_str}'")
+            
+            # Disable layers with no upper nodes
+            for layer, row_widget in self.line_type_rows.items():
+                if layer not in layer_upper_nodes:
+                    row_widget.enable_checkbox.setChecked(False)
+            
+            # === Extract lengths by tree walk ===
+            upper_lines = {}
+            for line in lineset.lines:
+                upper_lines.setdefault(id(line.lower_node), []).append(line)
+            
+            riser_lengths, basses_lengths, inter_lengths, hautes_lengths = [], [], [], []
+            riser_types, basses_types, inter_types, hautes_types = [], [], [], []
+            
+            def classify_line(line, depth):
+                tl = line.target_length
+                lt_name = line.line_type.name if hasattr(line.line_type, 'name') else str(line.line_type)
+                
+                if isinstance(line.upper_node, UpperNode2D):
+                    hautes_lengths.append(tl)
+                    hautes_types.append(lt_name)
+                elif isinstance(line.upper_node, BatchNode2D):
+                    if depth == 0:
+                        riser_lengths.append(tl)
+                        riser_types.append(lt_name)
+                    elif depth == 1:
+                        basses_lengths.append(tl)
+                        basses_types.append(lt_name)
+                    else:
+                        inter_lengths.append(tl)
+                        inter_types.append(lt_name)
+                    
+                    for child in upper_lines.get(id(line.upper_node), []):
+                        classify_line(child, depth + 1)
+            
+            for lower in lower_nodes:
+                for line in upper_lines.get(id(lower), []):
+                    classify_line(line, 0)
+            
+            print(f"[AutoPlace] Lengths: riser={len(riser_lengths)}, basses={len(basses_lengths)}, "
+                  f"inter={len(inter_lengths)}, hautes={len(hautes_lengths)}")
+            
+            def median(lst):
+                s = sorted([x for x in lst if x is not None])
+                return s[len(s) // 2] if s else None
+            
+            def mode_str(lst):
+                if not lst:
+                    return None
+                from collections import Counter
+                return Counter(lst).most_common(1)[0][0]
+            
+            rl = median(riser_lengths)
+            if rl is not None:
+                self.riser_length.setValue(rl)
+            bl = median(basses_lengths)
+            if bl is not None:
+                self.basses_length.setValue(bl)
+                self.basses_auto.setChecked(False)
+            il = median(inter_lengths)
+            if il is not None:
+                self.inter_length.setValue(il)
+                self.inter_auto.setChecked(False)
+            hl = median(hautes_lengths)
+            if hl is not None:
+                self.hautes_length.setValue(hl)
+                self.hautes_auto.setChecked(False)
+            
+            def set_combo(combo, type_name):
+                if type_name:
+                    idx = combo.findText(type_name)
+                    if idx >= 0:
+                        combo.setCurrentIndex(idx)
+            
+            set_combo(self.line_type_lowers, mode_str(basses_types + riser_types))
+            set_combo(self.line_type_mid, mode_str(inter_types))
+            set_combo(self.line_type_uppers, mode_str(hautes_types))
+            
+            print("[AutoPlace] Extraction complete")
+                    
+        except Exception as e:
+            import traceback
+            print(f"[AutoPlace] ERROR: {e}")
+            traceback.print_exc()
+    
     def load_from_glider(self):
         """Load configuration from ParametricGlider if available."""
         config = getattr(self.parametric_glider, 'lines_placement_config', None)
         if not config:
             return
         
-        # Point Pilote
+        # Main Point
         if 'demi_ecartement' in config:
-            self.demi_ecartement.setValue(config['demi_ecartement'])
+            val = config['demi_ecartement']
+            # Backward compat: if value is small (< 5), it was in meters -> convert to cm
+            if val < 5:
+                val = val * 100
+            self.demi_ecartement.setValue(val)
         if 'profondeur' in config:
-            self.profondeur.setValue(config['profondeur'])
+            val = config['profondeur']
+            # Backward compat: if value is small (< 5), it was in meters -> convert to % of central chord
+            if abs(val) < 5:
+                val = (val / self.central_chord) * 100
+            self.profondeur.setValue(val)
         if 'hauteur_auto' in config:
             self.hauteur_auto.setChecked(config['hauteur_auto'])
         if 'hauteur_cone' in config:
             self.hauteur_cone.setValue(config['hauteur_cone'])
         
-        # Point Freins
+        # Brake Point
         if 'brake_separate' in config:
             self.brake_separate.setChecked(config['brake_separate'])
         if 'brake_offset_z' in config:
@@ -530,7 +938,11 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                     if 'enabled' in lt_config:
                         row.enable_checkbox.setChecked(lt_config['enabled'])
                     if 'position' in lt_config:
-                        row.position_spinbox.setValue(lt_config['position'])
+                        pos_val = lt_config['position']
+                        # Backward compat: if stored as fraction (<= 1.0), convert to %
+                        if pos_val <= 1.0 and pos_val > 0:
+                            pos_val *= 100.0
+                        row.position_spinbox.setValue(pos_val)
                     if 'interval' in lt_config:
                         row.interval_spinbox.setValue(lt_config['interval'])
                     if 'start_cell' in lt_config:
@@ -550,19 +962,46 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             if idx >= 0:
                 self.stabilo_riser.setCurrentIndex(idx)
         
-        # Material
-        if 'line_type_name' in config:
-            idx = self.line_type_combo.findText(config['line_type_name'])
-            if idx >= 0:
-                self.line_type_combo.setCurrentIndex(idx)
+        # Material (per-level)
+        for key, combo in [('line_type_lowers', self.line_type_lowers),
+                           ('line_type_mid', self.line_type_mid),
+                           ('line_type_uppers', self.line_type_uppers)]:
+            if key in config:
+                idx = combo.findText(config[key])
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+        # Backward compat: single line_type_name -> apply to all levels
+        if 'line_type_name' in config and 'line_type_lowers' not in config:
+            for combo in [self.line_type_lowers, self.line_type_mid, self.line_type_uppers]:
+                idx = combo.findText(config['line_type_name'])
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+        
+        # Fork angle
+        if 'fork_angle_auto' in config:
+            self.fork_angle_auto.setChecked(config['fork_angle_auto'])
+        if 'fork_angle_max' in config:
+            self.fork_angle_max.setValue(config['fork_angle_max'])
+        
+        # Mini-pyramidales
+        if 'pyra_enable' in config:
+            self.pyra_enable.setChecked(config['pyra_enable'])
+        if 'pyra_layer' in config:
+            self.pyra_layer.setCurrentText(config['pyra_layer'])
+        if 'pyra_separation' in config:
+            self.pyra_separation.setValue(config['pyra_separation'])
+        if 'pyra_length' in config:
+            self.pyra_length.setValue(config['pyra_length'])
+        if 'pyra_groups' in config:
+            self.pyra_groups.setValue(config['pyra_groups'])
         
         self._update_info()
     
     def save_to_glider(self):
         """Save configuration to ParametricGlider for persistence."""
         config = {
-            "demi_ecartement": self.demi_ecartement.value(),
-            "profondeur": self.profondeur.value(),
+            "demi_ecartement": self.demi_ecartement.value(),  # Now in cm
+            "profondeur": self.profondeur.value(),  # Now in % of central chord
             "hauteur_auto": self.hauteur_auto.isChecked(),
             "hauteur_cone": self.hauteur_cone.value(),
             "brake_separate": self.brake_separate.isChecked(),
@@ -580,7 +1019,16 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             "stabilo_count": self.stabilo_count.value(),
             "stabilo_position": self.stabilo_position.value(),
             "stabilo_riser": self.stabilo_riser.currentText(),
-            "line_type_name": self.line_type_combo.currentText(),
+            "line_type_lowers": self.line_type_lowers.currentText(),
+            "line_type_mid": self.line_type_mid.currentText(),
+            "line_type_uppers": self.line_type_uppers.currentText(),
+            "fork_angle_auto": self.fork_angle_auto.isChecked(),
+            "fork_angle_max": self.fork_angle_max.value(),
+            "pyra_enable": self.pyra_enable.isChecked(),
+            "pyra_layer": self.pyra_layer.currentText(),
+            "pyra_separation": self.pyra_separation.value(),
+            "pyra_length": self.pyra_length.value(),
+            "pyra_groups": self.pyra_groups.value(),
             "line_types": {}
         }
         
@@ -596,43 +1044,193 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         self.parametric_glider.lines_placement_config = config
     
     def get_configuration(self):
-        # Calculate cone height - auto uses full span (envergure totale)
+        import math
+        
+        # Calculate cone height - auto uses full span
         if self.hauteur_auto.isChecked():
             # ~75% of full wingspan (2 * half_span)
             hauteur = round(self.half_span * 2 * 0.75, 2)
         else:
             hauteur = self.hauteur_cone.value()
         
-        # Calculate lengths based on cone height with proper hierarchy
-        # Basses (longest): 45% of cone height
-        basses = self.basses_length.value()
-        if self.basses_auto.isChecked():
-            basses = round(hauteur * 0.45, 2)
+        if self.fork_angle_auto.isChecked():
+            # Fork angle mode: minimize total line length
+            # For each fork, the angle between two child lines must be <= max_angle
+            # L_min = spacing / (2 * tan(max_angle/2))
+            # Spacings computed from TRUE 3D positions (arc + shape)
+            max_angle_rad = math.radians(self.fork_angle_max.value())
+            half_tan = math.tan(max_angle_rad / 2)
+            
+            # Get 3D arc positions for each rib: [y_projected, z_arc]
+            try:
+                x_values = self.parametric_glider.shape.rib_x_values
+                arc_positions = list(self.parametric_glider.arc.get_arc_positions(x_values))
+                has_3d = True
+                print(f"[AutoPlace] Using 3D positions ({len(arc_positions)} ribs, "
+                      f"span={arc_positions[-1][0]:.2f}m)")
+            except Exception as e:
+                print(f"[AutoPlace] Could not get arc positions: {e}, falling back to 2D")
+                arc_positions = None
+                has_3d = False
+            
+            def get_node_3d(node):
+                """Get approximate 3D position of an upper node: [chord_x, span_y, height_z]"""
+                cell = min(node.cell_no, self.half_cell_num - 1)
+                shape_pos = self.parametric_glider.shape[cell, node.rib_pos]  # [span_x, chord_y]
+                
+                if has_3d and cell < len(arc_positions):
+                    # Arc position for this rib: [y_projected, z_arc]
+                    arc_y = arc_positions[cell][0]
+                    arc_z = arc_positions[cell][1]
+                    # 3D position: chord along wing, span with arc, height from arc
+                    return [shape_pos[1], arc_y, arc_z]  # [chord, y, z]
+                else:
+                    return [shape_pos[1], shape_pos[0], 0]  # Fallback 2D
+            
+            def dist_3d(p1, p2):
+                """3D distance between two points."""
+                return math.sqrt(sum((a - b)**2 for a, b in zip(p1, p2)))
+            
+            # Compute spacings at each fork level using 3D distances
+            max_hautes_spacing = 0.0
+            max_inter_spacing = 0.0
+            max_basses_spacing = 0.0
+            
+            enabled_types = [lt for lt in ["A", "B", "C", "D", "F"]
+                           if self.line_type_rows[lt].enable_checkbox.isChecked()]
+            
+            for lt in enabled_types:
+                row = self.line_type_rows[lt]
+                lt_config = row.get_config()
+                if not lt_config["enabled"]:
+                    continue
+                
+                upper_nodes = self._generate_upper_nodes(lt, lt_config)
+                if len(upper_nodes) < 2:
+                    continue
+                
+                # Get 3D positions for each upper node
+                positions_3d = [get_node_3d(n) for n in upper_nodes]
+                
+                group_patterns = lt_config["group_patterns"]
+                
+                node_idx = 0
+                group_idx = 0
+                group_center_positions = []
+                
+                while node_idx < len(positions_3d):
+                    pattern = group_patterns[group_idx % len(group_patterns)]
+                    nodes_per = self._calc_nodes_for_pattern(pattern)
+                    group_pos = positions_3d[node_idx:node_idx + nodes_per]
+                    
+                    if not group_pos:
+                        break
+                    
+                    # Hautes: 3D spacing within sub-groups
+                    if len(pattern) > 1:
+                        sub_size = pattern[0]
+                        sub_centers_3d = []
+                        for j in range(0, len(group_pos), sub_size):
+                            sub = group_pos[j:j + sub_size]
+                            if len(sub) >= 2:
+                                for k in range(len(sub) - 1):
+                                    s = dist_3d(sub[k], sub[k + 1])
+                                    max_hautes_spacing = max(max_hautes_spacing, s)
+                            if sub:
+                                center = [sum(p[d] for p in sub) / len(sub) for d in range(3)]
+                                sub_centers_3d.append(center)
+                        # Inter: 3D distance between sub-group centers
+                        for j in range(len(sub_centers_3d) - 1):
+                            s = dist_3d(sub_centers_3d[j], sub_centers_3d[j + 1])
+                            max_inter_spacing = max(max_inter_spacing, s)
+                    else:
+                        # Simple pattern: spacing between consecutive nodes
+                        for i in range(len(group_pos) - 1):
+                            s = dist_3d(group_pos[i], group_pos[i + 1])
+                            max_hautes_spacing = max(max_hautes_spacing, s)
+                    
+                    # Group center for basses level
+                    center = [sum(p[d] for p in group_pos) / len(group_pos) for d in range(3)]
+                    group_center_positions.append(center)
+                    
+                    node_idx += len(group_pos)
+                    group_idx += 1
+                
+                # Basses: 3D distance between group centers
+                for i in range(len(group_center_positions) - 1):
+                    s = dist_3d(group_center_positions[i], group_center_positions[i + 1])
+                    max_basses_spacing = max(max_basses_spacing, s)
+            
+            # L_min = spacing / (2 * tan(max_angle/2))
+            hautes = max(round(max_hautes_spacing / (2 * half_tan), 2), 0.20) if max_hautes_spacing > 0 else 0.30
+            inter_min = max(round(max_inter_spacing / (2 * half_tan), 2), 0.20) if max_inter_spacing > 0 else 0.30
+            basses_min = max(round(max_basses_spacing / (2 * half_tan), 2), 0.30) if max_basses_spacing > 0 else 0.30
+            
+            # Fixed cone height: hautes has priority, inter/basses absorb the rest
+            riser_len = self.riser_length.value()
+            remaining = hauteur - riser_len - hautes  # What's left for inter + basses
+            
+            if remaining >= inter_min + basses_min:
+                # Everything fits: use ideal values, basses takes the leftover
+                inter = inter_min
+                basses = remaining - inter
+            elif remaining > 0:
+                # Not enough for both at ideal — distribute proportionally
+                total_min = inter_min + basses_min
+                inter = round(remaining * (inter_min / total_min), 2)
+                basses = round(remaining - inter, 2)
+                actual_inter_angle = math.degrees(2 * math.atan(max_inter_spacing / (2 * inter))) if inter > 0.01 else 90
+                actual_basses_angle = math.degrees(2 * math.atan(max_basses_spacing / (2 * basses))) if basses > 0.01 else 90
+                print(f"[AutoPlace] WARNING: Cone too short for {self.fork_angle_max.value()}° everywhere. "
+                      f"Hautes={self.fork_angle_max.value()}°, Inter≈{actual_inter_angle:.0f}°, Basses≈{actual_basses_angle:.0f}°")
+            else:
+                # Even hautes alone exceeds available — shouldn't happen often
+                inter = 0.20
+                basses = 0.30
+                print(f"[AutoPlace] WARNING: Cone much too short for fork angle constraint!")
+            
+            print(f"[AutoPlace] Fork angle: spacings h={max_hautes_spacing:.3f} i={max_inter_spacing:.3f} b={max_basses_spacing:.3f}")
+            print(f"[AutoPlace] Fork angle: lengths h={hautes:.2f} i={inter:.2f} b={basses:.2f} (cone={hauteur:.1f}, riser={riser_len:.2f})")
+        else:
+            # Standard percentage mode
+            # Lowers (longest): 45% of cone height
+            basses = self.basses_length.value()
+            if self.basses_auto.isChecked():
+                basses = round(hauteur * 0.45, 2)
+            
+            # Mid (medium): 30% of cone height
+            inter = self.inter_length.value()
+            if self.inter_auto.isChecked():
+                inter = round(hauteur * 0.30, 2)
+            
+            # Uppers (shortest): 20% of cone height  
+            hautes = self.hautes_length.value()
+            if self.hautes_auto.isChecked():
+                hautes = round(hauteur * 0.20, 2)
         
-        # Inter (medium): 30% of cone height
-        inter = self.inter_length.value()
-        if self.inter_auto.isChecked():
-            inter = round(hauteur * 0.30, 2)
+        # Convert depth from % of central chord to meters
+        depth_pct = self.profondeur.value()
+        depth_m = (depth_pct / 100.0) * self.central_chord
         
-        # Hautes (shortest): 20% of cone height  
-        hautes = self.hautes_length.value()
-        if self.hautes_auto.isChecked():
-            hautes = round(hauteur * 0.20, 2)
+        # Convert half-span spread from cm to meters
+        half_spread_m = self.demi_ecartement.value() / 100.0
         
         return {
-            "demi_ecartement": self.demi_ecartement.value(),  # X - span
-            "profondeur": self.profondeur.value(),            # Y - chord
-            "hauteur_cone": hauteur,                          # Z - height
+            "demi_ecartement": half_spread_m,             # X - span (in m)
+            "profondeur": depth_m,                        # Y - chord (in m, converted from %)
+            "hauteur_cone": hauteur,                      # Z - height
             "brake_separate": self.brake_separate.isChecked(),
-            "brake_offset_z": self.brake_offset_z.value(),    # Higher than pilote
-            "brake_offset_y": self.brake_offset_y.value(),    # More outward than pilote
-            "brake_offset_x": self.brake_offset_x.value(),    # Depth offset from pilote
+            "brake_offset_z": self.brake_offset_z.value(),    # Higher than main
+            "brake_offset_y": self.brake_offset_y.value(),    # More outward than main
+            "brake_offset_x": self.brake_offset_x.value(),    # Depth offset from main
             "riser_length": self.riser_length.value(),
             "basses_length": basses,
             "inter_length": inter,
             "hautes_length": hautes,
             "line_types": {lt: row.get_config() for lt, row in self.line_type_rows.items()},
-            "line_type_name": self.line_type_combo.currentText(),
+            "line_type_lowers": self.line_type_lowers.currentText(),
+            "line_type_mid": self.line_type_mid.currentText(),
+            "line_type_uppers": self.line_type_uppers.currentText(),
             "include_stabilo": self.stabilo_checkbox.isChecked(),
             "stabilo_count": self.stabilo_count.value(),
             "stabilo_position": self.stabilo_position.value() / 100.0,
@@ -645,32 +1243,29 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         config = self.get_configuration()
         lines = []
         
-        # Point Pilote coordinates (raw values from user)
-        # X = profondeur (chord direction)
-        # Y = demi-écartement (span direction)  
-        # Z = -hauteur_cone (below wing)
+        # Main Point coordinates (values already converted to meters)
         lower_x = config["profondeur"]
         lower_y = config["demi_ecartement"]
         lower_z = -config["hauteur_cone"]
         
-        # Single main lower node (point pilote)
+        # Single main lower node
         main_lower = LowerNode2D(
-            pos_2D=[lower_x, lower_z],
+            pos_2D=[lower_y, lower_z],  # [span, height] for 2D view
             pos_3D=[lower_x, lower_y, lower_z],
-            name="pilote",
+            name="main",
             layer="",
         )
         
-        # Brake lower node (point freins) - separate if enabled
-        brake_lower = main_lower  # Default: same as main
+        # Brake lower node - separate if enabled
+        brake_lower = main_lower
         if config["brake_separate"]:
-            brake_z = lower_z + config["brake_offset_z"]  # Higher (less negative)
-            brake_y = lower_y + config["brake_offset_y"]  # More outward
-            brake_x = lower_x + config["brake_offset_x"]  # Depth offset
+            brake_z = lower_z + config["brake_offset_z"]
+            brake_y = lower_y + config["brake_offset_y"]
+            brake_x = lower_x + config["brake_offset_x"]
             brake_lower = LowerNode2D(
-                pos_2D=[brake_x, brake_z],
+                pos_2D=[brake_y, brake_z],  # [span, height]
                 pos_3D=[brake_x, brake_y, brake_z],
-                name="freins",
+                name="brake",
                 layer="F",
             )
         
@@ -678,33 +1273,30 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         enabled = [lt for lt in ["A", "B", "C", "D", "F"] 
                   if config["line_types"][lt]["enabled"]]
         
-        # Calculate layout parameters for clean 2D view
-        # Spread risers horizontally based on their chord position
-        # This creates a clear visual separation between line types
-        riser_nodes = {}
-        
-        # Get the shape extent for scaling
+        # Calculate layout parameters
         try:
             shape = self.parametric_glider.shape.get_half_shape()
-            x_extent = abs(shape.front[-1][0] - shape.front[0][0])  # Span
+            x_extent = abs(shape.front[-1][0] - shape.front[0][0])
         except:
             x_extent = 6.0
         
-        # Base height for risers (just above lower attachment points)
         riser_base_z = lower_z + config["riser_length"]
+        riser_nodes = {}
         
         for i, lt in enumerate(enabled):
-            # Position risers based on chord position of the line type
-            # This spreads them out naturally along the chord
-            lt_position = config["line_types"][lt]["position"] / 100.0
-            riser_x = lt_position * 1.5  # Scale for visual clarity
+            # Compute average span position of this line type's upper nodes
+            lt_config_temp = config["line_types"][lt]
+            temp_nodes = self._generate_upper_nodes(lt, lt_config_temp)
+            if temp_nodes:
+                riser_span = self._calc_span_position(temp_nodes)
+            else:
+                riser_span = lower_y
             
-            # Use brake_lower for F lines, main_lower for others
             lower_node_for_riser = brake_lower if lt == "F" else main_lower
             actual_lower_z = lower_node_for_riser.pos_3D[2] if hasattr(lower_node_for_riser, 'pos_3D') else lower_z
             
             riser = BatchNode2D(
-                pos_2D=[riser_x, actual_lower_z + config["riser_length"]],
+                pos_2D=[riser_span, actual_lower_z + config["riser_length"]],  # [avg span, riser height]
                 name=f"riser_{lt}",
                 layer=lt,
             )
@@ -713,12 +1305,12 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 lower_node=lower_node_for_riser,
                 upper_node=riser,
                 target_length=config["riser_length"],
-                line_type=config["line_type_name"],
+                line_type=config["line_type_lowers"],  # Risers use lowers material
                 layer=lt,
                 name=f"riser_{lt}",
             ))
         
-        # Generate lines for each type
+        # Generate lines for each type with per-level materials
         for lt in enabled:
             lt_config = config["line_types"][lt]
             upper_nodes = self._generate_upper_nodes(lt, lt_config)
@@ -731,7 +1323,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                     basses_length=config["basses_length"],
                     inter_length=config["inter_length"],
                     hautes_length=config["hautes_length"],
-                    line_type_name=config["line_type_name"],
+                    line_type_lowers=config["line_type_lowers"],
+                    line_type_mid=config["line_type_mid"],
+                    line_type_uppers=config["line_type_uppers"],
                     layer=lt,
                 )
                 lines.extend(lt_lines)
@@ -746,11 +1340,9 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 stabilo_riser = riser_nodes[stabilo_riser_name]
             else:
                 # Fallback: use first available riser or create one
-                stabilo_riser = list(riser_nodes.values())[0] if riser_nodes else None
+                stabilo_riser = list(riser_nodes.values())[0] if riser_nodes else main_lower # Fallback to main_lower if no risers
             
             if stabilo_riser:
-                # Generate stabilo attachment points on the last cells
-                stabilo_nodes = []
                 for i in range(stabilo_count):
                     # Distribute points on the outermost cells
                     cell_no = self.half_cell_num - 1 - i
@@ -765,53 +1357,32 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                         name=f"S{i + 1}",
                         layer="S",
                     )
-                    stabilo_nodes.append(stabilo)
-                
-                # Calculate basse position (average of all stabilo points)
-                stab_avg_pos = self._calc_batch_position(stabilo_nodes, 0)
-                riser_pos = stabilo_riser.pos_2D if hasattr(stabilo_riser, 'pos_2D') else [0, 0]
-                
-                # Basse node between riser and all stabilo points
-                # Position it proportionally based on basses vs hautes lengths
-                total_stab_height = config["basses_length"] + config["hautes_length"]
-                basse_ratio = config["basses_length"] / total_stab_height if total_stab_height > 0 else 0.6
-                basse_y = riser_pos[1] + (stab_avg_pos[1] - riser_pos[1]) * basse_ratio
-                
-                stab_basse = BatchNode2D(
-                    pos_2D=[stab_avg_pos[0], basse_y],
-                    name="S_basse",
-                    layer="S",
-                )
-                
-                # Connect basse to riser
-                lines.append(Line2D(
-                    lower_node=stabilo_riser,
-                    upper_node=stab_basse,
-                    target_length=config["basses_length"],
-                    line_type=config["line_type_name"],
-                    layer="S",
-                    name="S_basse",
-                ))
-                
-                # Connect each stabilo point (hautes) to the single basse
-                for i, stabilo in enumerate(stabilo_nodes):
                     lines.append(Line2D(
-                        lower_node=stab_basse,
+                        lower_node=stabilo_riser,
                         upper_node=stabilo,
                         target_length=config["hautes_length"],
-                        line_type=config["line_type_name"],
+                        line_type=config["line_type_uppers"],
                         layer="S",
                         name=f"S{i + 1}",
                     ))
         
-        return LineSet2D(lines)
+        lineset = LineSet2D(lines)
+        
+        # Calculate and display total line length
+        total_length = sum(getattr(line, 'target_length', 0) for line in lines)
+        self.total_length_label.setText(
+            f"<b>Total line length: {total_length:.1f} m</b>  "
+            f"(Lowers: {config['basses_length']:.2f} m, Mid: {config['inter_length']:.2f} m, Uppers: {config['hautes_length']:.2f} m)"
+        )
+        
+        return lineset
     
     def _generate_upper_nodes(self, line_type, config):
         """Generate upper attachment points."""
         nodes = []
         start = config["start_cell"]
         interval = config["interval"]
-        position = config["position"]
+        position = config["position"] / 100.0  # Convert % to fraction (0-1)
         
         idx = 1
         for cell_no in range(start, self.half_cell_num, interval):
@@ -832,7 +1403,8 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         return nodes
     
     def _generate_grouped_architecture(self, upper_nodes, riser_node, group_patterns,
-                                       basses_length, inter_length, hautes_length, line_type_name, layer):
+                                       basses_length, inter_length, hautes_length,
+                                       line_type_lowers, line_type_mid, line_type_uppers, layer):
         """
         Generate architecture with groups.
         Each group = 1 basse connected to riser.
@@ -845,6 +1417,13 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         
         # Get riser position for reference
         riser_pos = riser_node.pos_2D if hasattr(riser_node, 'pos_2D') else [0, 0]
+        
+        # Mini-pyramidal config
+        pyra_enabled = self.pyra_enable.isChecked() and self.pyra_layer.currentText() == layer
+        pyra_separation = self.pyra_separation.value() / 100.0  # % to fraction
+        pyra_length = self.pyra_length.value()
+        pyra_max_groups = self.pyra_groups.value()
+        print(f"[AutoPlace] Pyramidal: enabled={pyra_enabled} (checked={self.pyra_enable.isChecked()}, layer_ui={self.pyra_layer.currentText()}, layer_arg={layer}), sep={pyra_separation:.3f}, len={pyra_length}, groups={pyra_max_groups}")
         
         # Total number of groups for spacing calculation
         total_groups = 0
@@ -869,53 +1448,103 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             
             # Get nodes for this group
             group_nodes = upper_nodes[node_idx:node_idx + nodes_per_group]
-            
             if not group_nodes:
                 break
             
-            # Calculate basse position:
-            # X: average of upper nodes X positions  
-            # Y: positioned between riser and upper nodes, proportional to basses_length
+            # Calculate basse position: X = avg span, Y = interpolated from riser to wing chord
             upper_avg_pos = self._calc_batch_position(group_nodes, 0)
+            upper_span = upper_avg_pos[0]  # span from shape
             
-            # Interpolate X position: spread from riser X toward upper nodes X
-            # This creates a nice fan-out effect
-            if total_groups > 1:
-                group_spread = (group_idx / (total_groups - 1)) - 0.5  # -0.5 to 0.5
-            else:
-                group_spread = 0
-            
-            basse_x = upper_avg_pos[0]  # Use upper nodes X position
-            
-            # Y position: between riser and upper nodes, scaled by basses_length ratio
-            # Total line length = basses + inter + hautes
+            # Y: interpolate from riser toward wing chord position
             total_line_height = basses_length + inter_length + hautes_length
             basse_y_ratio = basses_length / total_line_height if total_line_height > 0 else 0.33
             basse_y = riser_pos[1] + (upper_avg_pos[1] - riser_pos[1]) * basse_y_ratio
             
             basse_node = BatchNode2D(
-                pos_2D=[basse_x, basse_y],
+                pos_2D=[upper_span, basse_y],
                 name=f"{layer}{group_idx + 1}_basse",
                 layer=layer,
             )
             
-            # Connect basse to riser
+            # Connect basse to riser (lowers material)
             lines.append(Line2D(
                 lower_node=riser_node,
                 upper_node=basse_node,
                 target_length=basses_length,
-                line_type=line_type_name,
+                line_type=line_type_lowers,
                 layer=layer,
                 name=f"{layer}{group_idx + 1}",
             ))
             
-            # Generate architecture within group (hautes connect via inter to basse)
+            # Generate architecture within group
             group_lines = self._generate_group_architecture(
-                group_nodes, basse_node, pattern, inter_length, hautes_length, line_type_name, layer, group_idx
+                group_nodes, basse_node, pattern, inter_length, hautes_length,
+                line_type_mid, line_type_uppers, layer, group_idx
             )
+            
+            # === Mini-pyramidales: insert BatchNode2D level between haute and wing ===
+            if pyra_enabled and group_idx < pyra_max_groups:
+                print(f"[AutoPlace] Applying pyramidal to group {group_idx} ({len(group_lines)} lines, {sum(1 for l in group_lines if isinstance(l.upper_node, UpperNode2D))} to wing)")
+                new_lines = []
+                for line in group_lines:
+                    if isinstance(line.upper_node, UpperNode2D):
+                        # This haute line goes to the wing → insert pyramidal level
+                        orig_node = line.upper_node
+                        front_pos = max(orig_node.rib_pos - pyra_separation / 2, 0.0)
+                        back_pos = min(orig_node.rib_pos + pyra_separation / 2, 1.0)
+                        
+                        front_node = UpperNode2D(
+                            cell_no=orig_node.cell_no, rib_pos=front_pos,
+                            cell_pos=orig_node.cell_pos, force=orig_node.force,
+                            name=f"{orig_node.name}_pf", layer=orig_node.layer,
+                        )
+                        back_node = UpperNode2D(
+                            cell_no=orig_node.cell_no, rib_pos=back_pos,
+                            cell_pos=orig_node.cell_pos, force=orig_node.force,
+                            name=f"{orig_node.name}_pb", layer=orig_node.layer,
+                        )
+                        
+                        # Pyramidal batch node between haute and wing
+                        shape_pos = list(orig_node.get_2D(self.parametric_glider.shape))
+                        shape_pos[1] -= pyra_length * 0.5  # Offset below wing in 2D
+                        pyra_batch = BatchNode2D(
+                            pos_2D=shape_pos,
+                            name=f"{orig_node.name}_pyra", layer=orig_node.layer,
+                        )
+                        
+                        # 1. Shortened haute: lower→pyra_batch (keep original length minus pyra)
+                        shortened = max(line.target_length - pyra_length, 0.10)
+                        lt_name = line.line_type.name if hasattr(line.line_type, 'name') else line.line_type
+                        new_lines.append(Line2D(
+                            lower_node=line.lower_node,
+                            upper_node=pyra_batch,
+                            target_length=shortened,
+                            line_type=lt_name, layer=layer,
+                            name=line.name,
+                        ))
+                        # 2. Pyra→front
+                        new_lines.append(Line2D(
+                            lower_node=pyra_batch,
+                            upper_node=front_node,
+                            target_length=pyra_length,
+                            line_type=line_type_uppers, layer=layer,
+                            name=f"{orig_node.name}_pf",
+                        ))
+                        # 3. Pyra→back
+                        new_lines.append(Line2D(
+                            lower_node=pyra_batch,
+                            upper_node=back_node,
+                            target_length=pyra_length,
+                            line_type=line_type_uppers, layer=layer,
+                            name=f"{orig_node.name}_pb",
+                        ))
+                    else:
+                        new_lines.append(line)
+                group_lines = new_lines
+            
             lines.extend(group_lines)
             
-            node_idx += len(group_nodes)
+            node_idx += len(upper_nodes[node_idx:node_idx + nodes_per_group])
             group_idx += 1
         
         return lines
@@ -935,11 +1564,12 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         return result
     
     def _generate_group_architecture(self, nodes, basse_node, pattern, 
-                                    inter_length, hautes_length, line_type_name, layer, group_idx):
+                                    inter_length, hautes_length,
+                                    line_type_mid, line_type_uppers, layer, group_idx):
         """
         Generate lines within a group.
-        - hautes_length: length of lines connecting to wing (uppermost)
-        - inter_length: length of intermediate lines
+        - hautes_length: length of lines connecting to wing (uppermost) → uppers material
+        - inter_length: length of intermediate lines → mid material
         """
         lines = []
         
@@ -947,38 +1577,37 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         basse_pos = basse_node.pos_2D if hasattr(basse_node, 'pos_2D') else [0, 0]
         
         if pattern == [1] or len(nodes) == 1:
-            # Direct connection: use hautes_length (direct basse to wing)
+            # Direct connection: use uppers material (basse to wing)
             for i, node in enumerate(nodes):
                 lines.append(Line2D(
                     lower_node=basse_node,
                     upper_node=node,
-                    target_length=hautes_length,  # Direct to wing = hautes
-                    line_type=line_type_name,
+                    target_length=hautes_length,
+                    line_type=line_type_uppers,
                     layer=layer,
                     name=node.name,
                 ))
             return lines
         
         if len(pattern) == 1:
-            # Simple pattern like 2:1 or 3:1: hautes go directly from basse to wing
+            # Simple pattern like 2:1 or 3:1: uppers go directly from basse to wing
             merge = pattern[0]
             for i, node in enumerate(nodes):
                 lines.append(Line2D(
                     lower_node=basse_node,
                     upper_node=node,
-                    target_length=hautes_length,  # Direct to wing = hautes
-                    line_type=line_type_name,
+                    target_length=hautes_length,
+                    line_type=line_type_uppers,
                     layer=layer,
                     name=node.name,
                 ))
             return lines
         
         # Multi-level pattern like 2:2:1
-        # First level connects to upper nodes (hautes), subsequent levels use inter
         current_nodes = list(nodes)
         total_levels = len(pattern) - 1
         
-        for level, merge in enumerate(pattern[:-1]):  # All but last (which connects to basse)
+        for level, merge in enumerate(pattern[:-1]):
             next_nodes = []
             
             for i in range(0, len(current_nodes), merge):
@@ -987,31 +1616,30 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                     next_nodes.append(group[0])
                     continue
                 
-                # Calculate inter position between basse and upper nodes
                 upper_avg_pos = self._calc_batch_position(group, level)
+                upper_span = upper_avg_pos[0]  # span from shape
                 
-                # Position inter node proportionally between basse and upper
-                # Earlier levels are closer to upper nodes
-                level_ratio = (level + 1) / (total_levels + 1)  # 0.33, 0.5, 0.66...
-                inter_x = upper_avg_pos[0]  # Keep same X as upper nodes
-                inter_y = basse_pos[1] + (upper_avg_pos[1] - basse_pos[1]) * (1 - level_ratio * 0.5)
+                # Y: interpolate from basse toward chord position of this sub-group
+                level_ratio = (level + 1) / (total_levels + 1)
+                inter_y = basse_pos[1] + (upper_avg_pos[1] - basse_pos[1]) * level_ratio
                 
                 inter_node = BatchNode2D(
-                    pos_2D=[inter_x, inter_y],
+                    pos_2D=[upper_span, inter_y],
                     name=f"{layer}{group_idx + 1}_i{level}_{i // merge}",
                     layer=layer,
                 )
                 
-                # First level (level 0) connects to wing = hautes_length
-                # Other levels use inter_length
+                # First level (level 0) connects to wing = uppers material
+                # Other levels use mid material
                 line_length = hautes_length if level == 0 else inter_length
+                line_mat = line_type_uppers if level == 0 else line_type_mid
                 
                 for node in group:
                     lines.append(Line2D(
                         lower_node=inter_node,
                         upper_node=node,
                         target_length=line_length,
-                        line_type=line_type_name,
+                        line_type=line_mat,
                         layer=layer,
                         name=f"{node.name}_h",
                     ))
@@ -1020,13 +1648,13 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
             
             current_nodes = next_nodes
         
-        # Connect remaining inter nodes to basse with inter_length
+        # Connect remaining inter nodes to basse with mid material
         for node in current_nodes:
             lines.append(Line2D(
                 lower_node=basse_node,
                 upper_node=node,
                 target_length=inter_length,
-                line_type=line_type_name,
+                line_type=line_type_mid,
                 layer=layer,
                 name=f"{layer}{group_idx + 1}_to_basse",
             ))
@@ -1054,3 +1682,26 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
                 sum(p[1] for p in positions) / len(positions),
             ]
         return [0, 0]
+    
+    def _calc_span_position(self, nodes):
+        """Calculate average span (X) position for a set of nodes.
+        
+        Uses shape[cell, rib_pos][0] for UpperNode2D (the span coordinate).
+        For BatchNode2D, uses pos_2D[0].
+        """
+        spans = []
+        for n in nodes:
+            if isinstance(n, UpperNode2D):
+                try:
+                    cell = min(n.cell_no, self.half_cell_num - 1)
+                    pos = self.parametric_glider.shape[cell, n.rib_pos]
+                    spans.append(pos[0])
+                except:
+                    spans.append(n.cell_no * 0.5)
+            elif hasattr(n, 'pos_2D'):
+                spans.append(n.pos_2D[0])
+        
+        if spans:
+            return sum(spans) / len(spans)
+        return 0.0
+
