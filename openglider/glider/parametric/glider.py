@@ -219,14 +219,13 @@ class ParametricGlider(object):
         self.thickness_curve = kwargs.get('thickness_curve', None)  # SymmetricBSpline or None
         self.thickness_curve_enabled = kwargs.get('thickness_curve_enabled', False)
         
-        # Shark nose: procedural intrados modification
+        # Shark nose: intrados shelf + angled drop at leading edge
         self.sharknose_enabled = kwargs.get('sharknose_enabled', False)
-        self.sharknose_x1 = kwargs.get('sharknose_x1', 0.06)  # Start position (% chord)
-        self.sharknose_x2 = kwargs.get('sharknose_x2', 0.09)  # Max shift position (% chord)
-        self.sharknose_x3 = kwargs.get('sharknose_x3', 0.90)  # End position (% chord)
-        self.sharknose_y_max = kwargs.get('sharknose_y_max', 0.03)  # Max shift amount (% chord)
-        self.sharknose_curve = kwargs.get('sharknose_curve', None)  # SymmetricBSpline for amount variation
-        self.sharknose_cells = kwargs.get('sharknose_cells', None)  # List of cell indices to apply sharknose (None = all)
+        self.sharknose_start = kwargs.get('sharknose_start', 0.03)  # Shelf start on intrados (% chord, near nose)
+        self.sharknose_end = kwargs.get('sharknose_end', 0.08)  # Drop position on intrados (% chord, further from nose)
+        self.sharknose_angle = kwargs.get('sharknose_angle', 5.0)  # Tilt of drop from vertical (degrees)
+        self.sharknose_curve = kwargs.get('sharknose_curve', None)  # SymmetricBSpline for spanwise variation
+        self.sharknose_cells = kwargs.get('sharknose_cells', None)  # List of cell indices (None = all)
         
         # Profile overrides: rib-specific profile assignment
         # Format: {rib_index: profile_index} - overrides the distribution curve for specific ribs
@@ -1392,10 +1391,9 @@ class ParametricGlider(object):
             "thickness_curve": getattr(self, "thickness_curve", None),
             "thickness_curve_enabled": getattr(self, "thickness_curve_enabled", False),
             "sharknose_enabled": getattr(self, "sharknose_enabled", False),
-            "sharknose_x1": getattr(self, "sharknose_x1", 0.06),
-            "sharknose_x2": getattr(self, "sharknose_x2", 0.09),
-            "sharknose_x3": getattr(self, "sharknose_x3", 0.90),
-            "sharknose_y_max": getattr(self, "sharknose_y_max", 0.03),
+            "sharknose_start": getattr(self, "sharknose_start", 0.03),
+            "sharknose_end": getattr(self, "sharknose_end", 0.08),
+            "sharknose_angle": getattr(self, "sharknose_angle", 5.0),
             "sharknose_curve": getattr(self, "sharknose_curve", None),
             "sharknose_cells": getattr(self, "sharknose_cells", None),
             "profile_overrides": getattr(self, "profile_overrides", {}),
@@ -1557,9 +1555,9 @@ class ParametricGlider(object):
                 apply_sharknose = any(c in sharknose_cells for c in cell_indices)
             
             if apply_sharknose:
-                sharknose_amount = self._get_sharknose_amount(pos_x)
-                if sharknose_amount > 0:
-                    profile = self._apply_sharknose(profile, sharknose_amount)
+                sharknose_factor = self._get_sharknose_factor(pos_x)
+                if sharknose_factor > 0:
+                    profile = self._apply_sharknose(profile, sharknose_factor)
         
         # 5. Override last rib profile if enabled (stabilo/wingtip)
         last_enabled = getattr(self, 'last_profile_enabled', False)
@@ -1609,40 +1607,118 @@ class ParametricGlider(object):
         new_profile.data = data
         return new_profile
     
-    def _get_sharknose_amount(self, pos_x):
-        """Get shark nose amount at given span position."""
+    def _get_sharknose_factor(self, pos_x):
+        """Get shark nose blending factor (0-1) at given span position."""
         if not getattr(self, 'sharknose_enabled', False):
             return 0.0
-        y_max = getattr(self, 'sharknose_y_max', 0.03)
         if hasattr(self, 'sharknose_curve') and self.sharknose_curve is not None:
             try:
                 interp = self.sharknose_curve.interpolation(num=self.num_interpolate)
-                return y_max * interp(abs(pos_x))
+                return max(0.0, min(1.0, interp(abs(pos_x))))
             except Exception:
-                return y_max
-        return y_max
+                return 1.0
+        return 1.0
     
-    def _apply_sharknose(self, profile, y_add):
-        """Apply shark nose deformation to profile intrados."""
-        if y_add <= 0:
-            return profile
-        x1 = getattr(self, 'sharknose_x1', 0.06)
-        x2 = getattr(self, 'sharknose_x2', 0.09)
-        x3 = getattr(self, 'sharknose_x3', 0.90)
+    def _apply_sharknose(self, profile, factor=1.0):
+        """Apply shark nose shelf + angled drop to profile intrados.
         
-        new_data = []
-        for x, y in profile.data:
-            if y < 0:  # Only intrados (negative Y)
-                if x > x1 and x < x2:
-                    # Rising transition zone
-                    y -= y_add * (x - x1) / (x2 - x1)
-                elif x > x2 and x < x3:
-                    # Falling transition zone
-                    y -= y_add * (x3 - x) / (x3 - x2)
-            new_data.append([x, y])
+        Geometry (5 zones):
+        A: x < start - r           → original (unchanged, near nose)
+        B: start-r <= x <= start+r → smooth entry corner (original → shelf)
+        C: start+r < x < end-xtilt → flat shelf at y_start
+        D: end-xtilt <= x <= end   → tilted drop (straight line, sharp top corner)
+        E: end < x <= end+r        → smooth exit corner (drop → original)
+        F: x > end + r             → original (unchanged)
+        
+        Rounding at corners B (original→shelf) and E (drop→original).
+        No rounding at shelf→drop junction (sharp angle).
+        
+        Args:
+            profile: Profile2D to modify
+            factor: Blending factor 0-1 (for spanwise variation)
+        """
+        if factor <= 0:
+            return profile
+        
+        start_x = getattr(self, 'sharknose_start', 0.03)
+        end_x = getattr(self, 'sharknose_end', 0.08)
+        angle_deg = getattr(self, 'sharknose_angle', 5.0)
+        
+        if start_x >= end_x:
+            return profile
+        
+        nose_idx = profile.noseindex
+        
+        # Extract intrados portion (after noseindex)
+        intrados_x = profile.data[nose_idx:, 0]
+        intrados_y = profile.data[nose_idx:, 1]
+        
+        # Interpolate original intrados y at start and end positions
+        y_at_start = np.interp(start_x, intrados_x, intrados_y)  # less negative
+        y_at_end = np.interp(end_x, intrados_x, intrados_y)      # more negative
+        
+        # Shelf level
+        shelf_y = y_at_start
+        
+        # Drop geometry: height and horizontal tilt
+        drop_height = abs(shelf_y - y_at_end)
+        angle_rad = np.radians(angle_deg)
+        x_tilt = drop_height * np.tan(angle_rad)  # horizontal shift due to tilt
+        
+        # Ensure x_tilt doesn't exceed available shelf space
+        shelf_length = end_x - start_x
+        x_tilt = min(x_tilt, shelf_length * 0.5)
+        
+        # Rounding radius (auto-computed, generous for visible effect)
+        radius = min(0.008, shelf_length * 0.25)
+        
+        # Drop line: from (end_x - x_tilt, shelf_y) to (end_x, y_at_end)
+        drop_top_x = end_x - x_tilt
+        
+        new_data = np.array(profile.data, dtype=float).copy()
+        
+        for i in range(nose_idx, len(new_data)):
+            px = new_data[i, 0]
+            orig_y = profile.data[i, 1]
+            
+            if px > end_x + radius:
+                break  # Past the affected zone (Zone F)
+            
+            if px < start_x - radius:
+                continue  # Before the affected zone (Zone A)
+            
+            # Zone B: Entry corner (original intrados → shelf)
+            if px <= start_x + radius:
+                t = (px - (start_x - radius)) / (2.0 * radius)
+                t = max(0.0, min(1.0, t))
+                blend = 0.5 * (1.0 - np.cos(np.pi * t))
+                target_y = orig_y + (shelf_y - orig_y) * blend
+            
+            # Zone C: Flat shelf
+            elif px < drop_top_x:
+                target_y = shelf_y
+            
+            # Zone D: Tilted drop (straight line, no rounding)
+            elif px <= end_x:
+                if x_tilt > 0:
+                    t = (px - drop_top_x) / (end_x - drop_top_x)
+                else:
+                    t = 1.0
+                t = max(0.0, min(1.0, t))
+                target_y = shelf_y + (y_at_end - shelf_y) * t
+            
+            # Zone E: Exit corner (drop → original intrados)
+            else:
+                t = (px - end_x) / radius
+                t = max(0.0, min(1.0, t))
+                blend = 0.5 * (1.0 - np.cos(np.pi * t))
+                target_y = y_at_end + (orig_y - y_at_end) * blend
+            
+            # Apply spanwise blending factor
+            new_data[i, 1] = orig_y + (target_y - orig_y) * factor
         
         new_profile = profile.copy()
-        new_profile.data = np.array(new_data)
+        new_profile.data = new_data
         return new_profile
     
     def _get_last_profile(self, base_profile):

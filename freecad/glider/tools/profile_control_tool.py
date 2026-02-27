@@ -196,7 +196,7 @@ class AirfoilControlTool(BaseTool):
         self.tab_widget.addTab(tab, "Overrides")
         
     def _create_sharknose_tab(self):
-        """Tab 3: Shark Nose procedural deformation with cell selection"""
+        """Tab 3: Shark Nose nose concavity with cell selection and 2D preview"""
         tab = QtGui.QWidget()
         layout = QtGui.QVBoxLayout(tab)
         
@@ -211,39 +211,40 @@ class AirfoilControlTool(BaseTool):
         # Parameters in form layout
         form = QtGui.QFormLayout()
         
-        self.sharknose_x1 = QtGui.QDoubleSpinBox()
-        self.sharknose_x1.setRange(0.0, 0.5)
-        self.sharknose_x1.setSingleStep(0.01)
-        self.sharknose_x1.setDecimals(3)
-        self.sharknose_x1.setValue(getattr(self.parametric_glider, 'sharknose_x1', 0.06))
-        self.sharknose_x1.valueChanged.connect(self._update_sharknose)
-        form.addRow("Start position (x1):", self.sharknose_x1)
+        self.sharknose_start_spin = QtGui.QDoubleSpinBox()
+        self.sharknose_start_spin.setRange(0.01, 0.15)
+        self.sharknose_start_spin.setSingleStep(0.005)
+        self.sharknose_start_spin.setDecimals(3)
+        self.sharknose_start_spin.setValue(getattr(self.parametric_glider, 'sharknose_start', 0.03))
+        self.sharknose_start_spin.valueChanged.connect(self._update_sharknose)
+        form.addRow("Start (% chord, near nose):", self.sharknose_start_spin)
         
-        self.sharknose_x2 = QtGui.QDoubleSpinBox()
-        self.sharknose_x2.setRange(0.0, 0.5)
-        self.sharknose_x2.setSingleStep(0.01)
-        self.sharknose_x2.setDecimals(3)
-        self.sharknose_x2.setValue(getattr(self.parametric_glider, 'sharknose_x2', 0.09))
-        self.sharknose_x2.valueChanged.connect(self._update_sharknose)
-        form.addRow("Max shift position (x2):", self.sharknose_x2)
+        self.sharknose_end_spin = QtGui.QDoubleSpinBox()
+        self.sharknose_end_spin.setRange(0.02, 0.30)
+        self.sharknose_end_spin.setSingleStep(0.005)
+        self.sharknose_end_spin.setDecimals(3)
+        self.sharknose_end_spin.setValue(getattr(self.parametric_glider, 'sharknose_end', 0.08))
+        self.sharknose_end_spin.valueChanged.connect(self._update_sharknose)
+        form.addRow("End (% chord, drop):", self.sharknose_end_spin)
         
-        self.sharknose_x3 = QtGui.QDoubleSpinBox()
-        self.sharknose_x3.setRange(0.0, 1.0)
-        self.sharknose_x3.setSingleStep(0.05)
-        self.sharknose_x3.setDecimals(2)
-        self.sharknose_x3.setValue(getattr(self.parametric_glider, 'sharknose_x3', 0.90))
-        self.sharknose_x3.valueChanged.connect(self._update_sharknose)
-        form.addRow("End position (x3):", self.sharknose_x3)
-        
-        self.sharknose_y_max = QtGui.QDoubleSpinBox()
-        self.sharknose_y_max.setRange(0.0, 0.1)
-        self.sharknose_y_max.setSingleStep(0.005)
-        self.sharknose_y_max.setDecimals(3)
-        self.sharknose_y_max.setValue(getattr(self.parametric_glider, 'sharknose_y_max', 0.03))
-        self.sharknose_y_max.valueChanged.connect(self._update_sharknose)
-        form.addRow("Max shift amount (y_max):", self.sharknose_y_max)
+        self.sharknose_angle_spin = QtGui.QDoubleSpinBox()
+        self.sharknose_angle_spin.setRange(0.0, 30.0)
+        self.sharknose_angle_spin.setSingleStep(1.0)
+        self.sharknose_angle_spin.setDecimals(1)
+        self.sharknose_angle_spin.setValue(getattr(self.parametric_glider, 'sharknose_angle', 5.0))
+        self.sharknose_angle_spin.valueChanged.connect(self._update_sharknose)
+        form.addRow("Drop angle (°):", self.sharknose_angle_spin)
         
         layout.addLayout(form)
+        
+        # 2D Profile Preview
+        layout.addWidget(QtGui.QLabel("Nose preview:"))
+        self.sharknose_scene = QtGui.QGraphicsScene()
+        self.sharknose_view = QtGui.QGraphicsView(self.sharknose_scene)
+        self.sharknose_view.setRenderHint(QtGui.QPainter.Antialiasing)
+        self.sharknose_view.setMinimumHeight(200)
+        self.sharknose_view.setMaximumHeight(300)
+        layout.addWidget(self.sharknose_view)
         
         # Cell selection
         layout.addWidget(QtGui.QLabel("Apply to cells:"))
@@ -282,6 +283,9 @@ class AirfoilControlTool(BaseTool):
         layout.addWidget(scroll)
         
         self.tab_widget.addTab(tab, "Shark Nose")
+        
+        # Initial preview
+        self._update_sharknose_preview()
         
     def _create_thickness_tab(self):
         """Tab 4: Thickness control along span"""
@@ -1664,10 +1668,9 @@ class AirfoilControlTool(BaseTool):
     def _update_sharknose(self, *args):
         """Update shark nose parameters and cell selection"""
         self.parametric_glider.sharknose_enabled = self.sharknose_enabled.isChecked()
-        self.parametric_glider.sharknose_x1 = self.sharknose_x1.value()
-        self.parametric_glider.sharknose_x2 = self.sharknose_x2.value()
-        self.parametric_glider.sharknose_x3 = self.sharknose_x3.value()
-        self.parametric_glider.sharknose_y_max = self.sharknose_y_max.value()
+        self.parametric_glider.sharknose_start = self.sharknose_start_spin.value()
+        self.parametric_glider.sharknose_end = self.sharknose_end_spin.value()
+        self.parametric_glider.sharknose_angle = self.sharknose_angle_spin.value()
         
         # Update cell selection
         selected_cells = []
@@ -1676,7 +1679,68 @@ class AirfoilControlTool(BaseTool):
                 selected_cells.append(i)
         self.parametric_glider.sharknose_cells = selected_cells
         
+        self._update_sharknose_preview()
         self.update_view_glider()
+    
+    def _update_sharknose_preview(self):
+        """Update the 2D nose preview showing original and shark-nosed profiles."""
+        self.sharknose_scene.clear()
+        
+        # Get the first profile as reference
+        if not self.parametric_glider.profiles:
+            return
+        
+        original = self.parametric_glider.profiles[0].copy()
+        
+        # Apply sharknose with full factor
+        modified = self.parametric_glider._apply_sharknose(original, factor=1.0)
+        
+        # Scale factor for display (profile is normalized 0-1, we need pixels)
+        scale = 2000.0
+        
+        # Draw original profile (grey)
+        pen_orig = QtGui.QPen(QtGui.QColor(180, 180, 180), 1.5)
+        orig_data = original.data
+        for i in range(len(orig_data) - 1):
+            self.sharknose_scene.addLine(
+                orig_data[i][0] * scale, -orig_data[i][1] * scale,
+                orig_data[i+1][0] * scale, -orig_data[i+1][1] * scale,
+                pen_orig
+            )
+        
+        # Draw modified profile (red)
+        pen_mod = QtGui.QPen(QtGui.QColor(220, 50, 50), 2.0)
+        mod_data = modified.data
+        for i in range(len(mod_data) - 1):
+            self.sharknose_scene.addLine(
+                mod_data[i][0] * scale, -mod_data[i][1] * scale,
+                mod_data[i+1][0] * scale, -mod_data[i+1][1] * scale,
+                pen_mod
+            )
+        
+        # Draw vertical guide lines at start and end positions
+        pen_guide = QtGui.QPen(QtGui.QColor(100, 100, 255), 1.0, QtCore.Qt.DashLine)
+        start_x = self.sharknose_start_spin.value()
+        end_x = self.sharknose_end_spin.value()
+        for gx in [start_x, end_x]:
+            self.sharknose_scene.addLine(
+                gx * scale, -0.10 * scale,
+                gx * scale, 0.10 * scale,
+                pen_guide
+            )
+        
+        # Zoom to show the shark nose region
+        margin = 0.02
+        view_left = max(0, start_x - margin) * scale
+        view_right = (end_x + margin) * scale
+        view_w = view_right - view_left
+        view_y = -0.08 * scale
+        view_h = 0.16 * scale
+        
+        self.sharknose_view.fitInView(
+            view_left, view_y, view_w, view_h,
+            QtCore.Qt.KeepAspectRatio
+        )
         
     def _select_all_sharknose_cells(self):
         """Select all cells for shark nose"""
