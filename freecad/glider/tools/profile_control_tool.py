@@ -13,12 +13,16 @@ Combines:
 """
 from __future__ import division
 
+import os
+from copy import deepcopy
+
 import numpy as np
 from pivy import coin
 from PySide import QtGui, QtCore
 
 from pivy import graphics
-from openglider.airfoil import Profile2D
+from openglider import jsonify
+from openglider.airfoil import Profile2D, BezierProfile2D
 from openglider.glider.rib import Rib
 from openglider.vector.spline import SymmetricBSpline
 
@@ -54,6 +58,7 @@ class AirfoilControlTool(BaseTool):
         self.text_scale = self.parametric_glider.shape.span / len(self.front) / 20.0
         
         # Create tabs
+        self._create_airfoil_selection_tab()
         self._create_distribution_tab()
         self._create_overrides_tab()
         self._create_sharknose_tab()
@@ -65,8 +70,15 @@ class AirfoilControlTool(BaseTool):
         # 3D preview elements
         self.shape = coin.SoSeparator()
         self.preview_shape = coin.SoSeparator()
+        self.airfoil_sep = coin.SoSeparator()
         
         # One SoSwitch per spline tab for visibility toggling
+        # Airfoil selection
+        self.airfoil_switch = coin.SoSwitch()
+        self.airfoil_switch.whichChild = 0
+        self.airfoil_container = coin.SoSeparator()
+        self.airfoil_switch.addChild(self.airfoil_container)
+        self.airfoil_container.addChild(self.airfoil_sep)
         # Distribution
         self.dist_switch = coin.SoSwitch()
         self.dist_switch.whichChild = 0
@@ -94,6 +106,308 @@ class AirfoilControlTool(BaseTool):
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         self._on_tab_changed(self.tab_widget.currentIndex())
         
+    def _create_airfoil_selection_tab(self):
+        """Tab 0: Airfoil Selection - manage base profiles"""
+        COMPARE_COLORS = ["blue", "green", "yellow", "cyan", "magenta", "orange"]
+        self._airfoil_colors = COMPARE_COLORS
+        self._airfoil_undo = {}  # item id -> list of previous airfoil states
+        
+        tab = QtGui.QWidget()
+        layout = QtGui.QVBoxLayout(tab)
+        
+        # Profile list with checkboxes for comparison overlay
+        layout.addWidget(QtGui.QLabel("Profiles:"))
+        self.airfoil_list = QtGui.QListWidget()
+        self.airfoil_list.setMaximumHeight(150)
+        self.airfoil_list.setDragDropMode(QtGui.QAbstractItemView.InternalMove)
+        
+        for profile in self.parametric_glider.profiles:
+            item = QtGui.QListWidgetItem(profile.name)
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable | QtCore.Qt.ItemIsUserCheckable)
+            item.setCheckState(QtCore.Qt.Unchecked)
+            item.airfoil = profile
+            self.airfoil_list.addItem(item)
+        
+        self.airfoil_list.setCurrentRow(0)
+        layout.addWidget(self.airfoil_list)
+        
+        # Buttons row 1: new / copy / delete
+        btn_row1 = QtGui.QHBoxLayout()
+        self.airfoil_new_btn = QtGui.QPushButton("new")
+        self.airfoil_copy_btn = QtGui.QPushButton("copy")
+        self.airfoil_delete_btn = QtGui.QPushButton("delete")
+        btn_row1.addWidget(self.airfoil_new_btn)
+        btn_row1.addWidget(self.airfoil_copy_btn)
+        btn_row1.addWidget(self.airfoil_delete_btn)
+        layout.addLayout(btn_row1)
+        
+        # Buttons row 2: import / export
+        btn_row2 = QtGui.QHBoxLayout()
+        self.airfoil_import_btn = QtGui.QPushButton("import .dat/.json")
+        self.airfoil_export_btn = QtGui.QPushButton("export .dat/.json")
+        btn_row2.addWidget(self.airfoil_import_btn)
+        btn_row2.addWidget(self.airfoil_export_btn)
+        layout.addLayout(btn_row2)
+        
+        # Apply as default button
+        self.airfoil_apply_btn = QtGui.QPushButton("Apply as default (entire wing)")
+        self.airfoil_apply_btn.setToolTip(
+            "Set the selected profile as the base profile for the entire wing.\n"
+            "Moves it to index 0 so the Distribution tab uses it."
+        )
+        layout.addWidget(self.airfoil_apply_btn)
+        
+        # Smoothing controls
+        smooth_layout = QtGui.QHBoxLayout()
+        smooth_layout.addWidget(QtGui.QLabel("Smooth:"))
+        
+        smooth_layout.addWidget(QtGui.QLabel("x from"))
+        self.airfoil_smooth_xfrom = QtGui.QDoubleSpinBox()
+        self.airfoil_smooth_xfrom.setRange(0.0, 1.0)
+        self.airfoil_smooth_xfrom.setValue(0.0)
+        self.airfoil_smooth_xfrom.setSingleStep(0.05)
+        self.airfoil_smooth_xfrom.setDecimals(2)
+        self.airfoil_smooth_xfrom.setToolTip("Start of smoothing zone (0=nose, 1=trailing edge)")
+        smooth_layout.addWidget(self.airfoil_smooth_xfrom)
+        
+        smooth_layout.addWidget(QtGui.QLabel("to"))
+        self.airfoil_smooth_xto = QtGui.QDoubleSpinBox()
+        self.airfoil_smooth_xto.setRange(0.0, 1.0)
+        self.airfoil_smooth_xto.setValue(1.0)
+        self.airfoil_smooth_xto.setSingleStep(0.05)
+        self.airfoil_smooth_xto.setDecimals(2)
+        self.airfoil_smooth_xto.setToolTip("End of smoothing zone (0=nose, 1=trailing edge)")
+        smooth_layout.addWidget(self.airfoil_smooth_xto)
+        
+        smooth_layout.addWidget(QtGui.QLabel("iter"))
+        self.airfoil_smooth_spin = QtGui.QSpinBox()
+        self.airfoil_smooth_spin.setRange(1, 50)
+        self.airfoil_smooth_spin.setValue(5)
+        self.airfoil_smooth_spin.setToolTip("Number of smoothing iterations")
+        smooth_layout.addWidget(self.airfoil_smooth_spin)
+        
+        self.airfoil_smooth_btn = QtGui.QPushButton("Smooth")
+        self.airfoil_smooth_btn.setToolTip("Smooth profile points in the selected X range")
+        smooth_layout.addWidget(self.airfoil_smooth_btn)
+        self.airfoil_undo_btn = QtGui.QPushButton("Undo")
+        self.airfoil_undo_btn.setToolTip("Undo last smooth operation")
+        self.airfoil_undo_btn.setEnabled(False)
+        smooth_layout.addWidget(self.airfoil_undo_btn)
+        layout.addLayout(smooth_layout)
+        
+        # Connections
+        self.airfoil_list.currentRowChanged.connect(self._on_airfoil_selection_changed)
+        self.airfoil_list.itemChanged.connect(self._on_airfoil_item_changed)
+        self.airfoil_new_btn.clicked.connect(self._airfoil_create)
+        self.airfoil_copy_btn.clicked.connect(self._airfoil_copy)
+        self.airfoil_delete_btn.clicked.connect(self._airfoil_delete)
+        self.airfoil_import_btn.clicked.connect(self._airfoil_import)
+        self.airfoil_export_btn.clicked.connect(self._airfoil_export)
+        self.airfoil_apply_btn.clicked.connect(self._airfoil_apply_as_default)
+        self.airfoil_smooth_btn.clicked.connect(self._airfoil_smooth)
+        self.airfoil_undo_btn.clicked.connect(self._airfoil_undo_smooth)
+        
+        layout.addStretch()
+        self.tab_widget.addTab(tab, "Airfoil Selection")
+    
+    def _on_airfoil_selection_changed(self, *args):
+        """Update 2D visualization when selection changes."""
+        self._update_airfoil_display()
+    
+    def _on_airfoil_item_changed(self, item):
+        """Update display when a checkbox is toggled or name is edited."""
+        if hasattr(item, 'airfoil') and item.airfoil is not None:
+            item.airfoil.name = item.text()
+        self._update_airfoil_display()
+    
+    def _update_airfoil_display(self):
+        """Draw selected airfoil (thick) and checked airfoils (thin, colored) for comparison."""
+        self.airfoil_sep.removeAllChildren()
+        current_row = self.airfoil_list.currentRow()
+        
+        # Draw checked (non-current) profiles first with colors
+        color_idx = 0
+        for index in range(self.airfoil_list.count()):
+            item = self.airfoil_list.item(index)
+            if index == current_row:
+                continue
+            if item.checkState() == QtCore.Qt.Checked:
+                airfoil = getattr(item, 'airfoil', None)
+                if airfoil is not None:
+                    color = self._airfoil_colors[color_idx % len(self._airfoil_colors)]
+                    color_idx += 1
+                    self.airfoil_sep.addChild(
+                        Line_old(vector3D(airfoil.data), color=color, width=1).object
+                    )
+        
+        # Draw current profile on top in red, thick
+        if current_row >= 0:
+            item = self.airfoil_list.item(current_row)
+            if item is not None:
+                airfoil = getattr(item, 'airfoil', None)
+                if airfoil is not None:
+                    self.airfoil_sep.addChild(
+                        Line_old(vector3D(airfoil.data), color="red", width=2).object
+                    )
+    
+    def _airfoil_create(self):
+        """Create a new NACA 4412 airfoil."""
+        j = self.airfoil_list.count()
+        airfoil = BezierProfile2D.compute_naca(4412)
+        airfoil.name = "airfoil{}".format(j)
+        item = QtGui.QListWidgetItem(airfoil.name)
+        item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable | QtCore.Qt.ItemIsUserCheckable)
+        item.setCheckState(QtCore.Qt.Unchecked)
+        item.airfoil = airfoil
+        self.airfoil_list.addItem(item)
+        self.airfoil_list.setCurrentItem(item)
+    
+    def _airfoil_copy(self):
+        """Copy the currently selected airfoil."""
+        if self.airfoil_list.currentItem() is None:
+            return
+        airfoil = deepcopy(self.airfoil_list.currentItem().airfoil)
+        airfoil.name = airfoil.name + "_copy"
+        item = QtGui.QListWidgetItem(airfoil.name)
+        item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable | QtCore.Qt.ItemIsUserCheckable)
+        item.setCheckState(QtCore.Qt.Unchecked)
+        item.airfoil = airfoil
+        self.airfoil_list.addItem(item)
+        self.airfoil_list.setCurrentItem(item)
+    
+    def _airfoil_delete(self):
+        """Delete the currently selected airfoil."""
+        row = self.airfoil_list.currentRow()
+        if row >= 0:
+            self.airfoil_list.takeItem(row)
+            self._update_airfoil_display()
+    
+    def _airfoil_import(self):
+        """Import airfoil(s) from .dat or .json file."""
+        filenames, _ = QtGui.QFileDialog.getOpenFileNames(
+            self.base_widget,
+            "Import Airfoil",
+            "",
+            "Airfoil files (*.dat *.json)",
+        )
+        for filename in filenames:
+            try:
+                name, ext = os.path.splitext(filename)
+                if ext == ".dat":
+                    airfoil = BezierProfile2D.import_from_dat(filename)
+                elif ext == ".json":
+                    with open(filename, "r") as fp:
+                        airfoil = jsonify.load(fp)["data"]
+                else:
+                    continue
+                item = QtGui.QListWidgetItem(airfoil.name)
+                item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable | QtCore.Qt.ItemIsUserCheckable)
+                item.setCheckState(QtCore.Qt.Unchecked)
+                item.airfoil = airfoil
+                self.airfoil_list.addItem(item)
+                self.airfoil_list.setCurrentItem(item)
+            except Exception:
+                pass
+    
+    def _airfoil_export(self):
+        """Export the currently selected airfoil to .dat or .json."""
+        if self.airfoil_list.currentItem() is None:
+            return
+        airfoil = self.airfoil_list.currentItem().airfoil
+        if airfoil is None:
+            return
+        filename, _ = QtGui.QFileDialog.getSaveFileName(
+            self.base_widget,
+            "Export Airfoil",
+            airfoil.name + ".dat",
+            "DAT files (*.dat);;JSON files (*.json)",
+        )
+        if filename:
+            name, ext = os.path.splitext(filename)
+            if ext == ".dat":
+                airfoil.export_dat(filename)
+            elif ext == ".json":
+                with open(filename, "w") as fp:
+                    jsonify.dump(airfoil, fp)
+
+    def _airfoil_apply_as_default(self):
+        """Apply the currently selected airfoil as profile 0 for the entire wing."""
+        row = self.airfoil_list.currentRow()
+        if row < 0:
+            return
+        item = self.airfoil_list.currentItem()
+        airfoil = getattr(item, 'airfoil', None)
+        if airfoil is None:
+            return
+        # Move selected item to position 0 in the list
+        if row != 0:
+            self.airfoil_list.takeItem(row)
+            self.airfoil_list.insertItem(0, item)
+            self.airfoil_list.setCurrentRow(0)
+        # Set as sole profile
+        self.parametric_glider.profiles = [deepcopy(airfoil)]
+        self.update_view_glider()
+    
+    def _airfoil_smooth(self):
+        """Smooth the current airfoil in the selected X range using local averaging."""
+        if self.airfoil_list.currentItem() is None:
+            return
+        item = self.airfoil_list.currentItem()
+        airfoil = getattr(item, 'airfoil', None)
+        if airfoil is None:
+            return
+        # Save state for undo
+        item_id = id(item)
+        if item_id not in self._airfoil_undo:
+            self._airfoil_undo[item_id] = []
+        self._airfoil_undo[item_id].append(deepcopy(airfoil))
+        self.airfoil_undo_btn.setEnabled(True)
+        
+        x_from = self.airfoil_smooth_xfrom.value()
+        x_to = self.airfoil_smooth_xto.value()
+        iterations = self.airfoil_smooth_spin.value()
+        
+        # Apply iterative local averaging on points within range
+        data = np.array(airfoil.data, dtype=float)
+        for _ in range(iterations):
+            new_data = data.copy()
+            for i in range(1, len(data) - 1):
+                x = abs(data[i][0])  # chord position (0=nose, 1=TE)
+                if x_from <= x <= x_to:
+                    # Blend factor: full smooth inside, fades at boundaries
+                    margin = 0.02
+                    blend = 1.0
+                    if x - x_from < margin and x_from > 0:
+                        blend = (x - x_from) / margin
+                    if x_to - x < margin and x_to < 1.0:
+                        blend = min(blend, (x_to - x) / margin)
+                    blend = max(0.0, min(1.0, blend))
+                    # Weighted average of neighbors
+                    smoothed = 0.25 * data[i - 1] + 0.5 * data[i] + 0.25 * data[i + 1]
+                    new_data[i] = data[i] * (1.0 - blend) + smoothed * blend
+            data = new_data
+        
+        airfoil.data = data
+        # Update splines if BezierProfile2D
+        if isinstance(airfoil, BezierProfile2D):
+            airfoil.upper_spline = airfoil.fit_upper()
+            airfoil.lower_spline = airfoil.fit_lower()
+        self._update_airfoil_display()
+    
+    def _airfoil_undo_smooth(self):
+        """Undo the last smooth operation on the current airfoil."""
+        if self.airfoil_list.currentItem() is None:
+            return
+        item = self.airfoil_list.currentItem()
+        item_id = id(item)
+        stack = self._airfoil_undo.get(item_id, [])
+        if not stack:
+            return
+        item.airfoil = stack.pop()
+        if not stack:
+            self.airfoil_undo_btn.setEnabled(False)
+        self._update_airfoil_display()
+
     def _create_distribution_tab(self):
         """Tab 1: Profile Distribution along span"""
         tab = QtGui.QWidget()
@@ -583,6 +897,7 @@ class AirfoilControlTool(BaseTool):
         # Add shape visualization
         self.task_separator.addChild(self.shape)
         self.task_separator.addChild(self.preview_shape)
+        self.task_separator.addChild(self.airfoil_switch)
         self.task_separator.addChild(self.dist_switch)
         self.task_separator.addChild(self.thickness_switch)
         self.task_separator.addChild(self.aoa_switch)
@@ -624,22 +939,27 @@ class AirfoilControlTool(BaseTool):
         # Setup spline controls for Zrot tab
         self._setup_zrot_spline()
         
+        # Initial airfoil display
+        self._update_airfoil_display()
+        
     def _on_tab_changed(self, index):
         """Show/hide 3D elements based on which tab is active.
         
         Tab indices:
-          0 = Distribution
-          1 = Overrides (no 3D spline)
-          2 = Shark Nose (no 3D spline)
-          3 = Thickness
-          4 = Last Airfoil (no 3D spline)
-          5 = AoA
-          6 = Z Rotation
+          0 = Airfoil Selection
+          1 = Distribution
+          2 = Overrides (no 3D spline)
+          3 = Shark Nose (no 3D spline)
+          4 = Thickness
+          5 = Last Airfoil (no 3D spline)
+          6 = AoA
+          7 = Z Rotation
         """
-        self.dist_switch.whichChild = 0 if index == 0 else -1
-        self.thickness_switch.whichChild = 0 if index == 3 else -1
-        self.aoa_switch.whichChild = 0 if index == 5 else -1
-        self.zrot_switch.whichChild = 0 if index == 6 else -1
+        self.airfoil_switch.whichChild = 0 if index == 0 else -1
+        self.dist_switch.whichChild = 0 if index == 1 else -1
+        self.thickness_switch.whichChild = 0 if index == 4 else -1
+        self.aoa_switch.whichChild = 0 if index == 6 else -1
+        self.zrot_switch.whichChild = 0 if index == 7 else -1
         
     def _setup_distribution_spline(self):
         """Setup spline control points for profile distribution with grid"""
@@ -1822,6 +2142,17 @@ class AirfoilControlTool(BaseTool):
                 
     def accept(self):
         """Accept changes and close"""
+        # Save profiles from airfoil selection tab
+        profiles = []
+        for index in range(self.airfoil_list.count()):
+            item = self.airfoil_list.item(index)
+            airfoil = getattr(item, 'airfoil', None)
+            if airfoil is not None:
+                airfoil.name = item.text()
+                profiles.append(airfoil)
+        if profiles:
+            self.parametric_glider.profiles = profiles
+        
         if hasattr(self, 'dist_controlpoints'):
             self.dist_controlpoints.remove_callbacks()
         if hasattr(self, 'thickness_controlpoints'):

@@ -1,5 +1,8 @@
 from __future__ import division
 
+import json
+import os
+
 import numpy
 from pivy import coin
 import FreeCADGui as Gui
@@ -19,6 +22,7 @@ from .tools import (
 class BallooningTool(BaseTool):
     widget_name = "Selection"
     scale_y = 5
+    COMPARE_COLORS = ["blue", "green", "yellow", "cyan", "magenta", "orange"]
 
     def __init__(self, obj):
         super(BallooningTool, self).__init__(obj)
@@ -26,6 +30,8 @@ class BallooningTool(BaseTool):
         self.QList_View = QtGui.QListWidget(self.base_widget)
         self.Qdelete_button = QtGui.QPushButton("delete", self.base_widget)
         self.Qnew_button = QtGui.QPushButton("new", self.base_widget)
+        self.Qexport_button = QtGui.QPushButton("export JSON", self.base_widget)
+        self.Qimport_button = QtGui.QPushButton("import JSON", self.base_widget)
         self.Qballooning_name = QtGui.QLineEdit()
 
         self.Qballooning_widget = QtGui.QWidget()
@@ -61,12 +67,18 @@ class BallooningTool(BaseTool):
         self.QList_View.setCurrentRow(0)
         self.layout.addWidget(self.Qnew_button)
         self.layout.addWidget(self.Qdelete_button)
+        self.layout.addWidget(self.Qexport_button)
+        self.layout.addWidget(self.Qimport_button)
         self.QList_View.setDragDropMode(QtGui.QAbstractItemView.InternalMove)
+        self.QList_View.setSelectionMode(QtGui.QAbstractItemView.ExtendedSelection)
 
         # connections
         self.Qnew_button.clicked.connect(self.create_ballooning)
         self.Qdelete_button.clicked.connect(self.delete_ballooning)
+        self.Qexport_button.clicked.connect(self.export_ballooning)
+        self.Qimport_button.clicked.connect(self.import_ballooning)
         self.QList_View.currentRowChanged.connect(self.update_selection)
+        self.QList_View.itemSelectionChanged.connect(self.update_ballooning)
         self.Qballooning_name.textChanged.connect(self.update_name)
         self.Qfit_button.clicked.connect(self.spline_edit)
 
@@ -131,6 +143,52 @@ class BallooningTool(BaseTool):
         a = self.QList_View.currentRow()
         self.QList_View.takeItem(a)
 
+    def export_ballooning(self):
+        if self.current_ballooning is None:
+            return
+        bal = self.current_ballooning
+        bal.apply_splines()
+        data = {
+            "name": bal.ballooning.name,
+            "upper": [p.tolist() for p in bal.ballooning.upper_spline.controlpoints],
+            "lower": [p.tolist() for p in bal.ballooning.lower_spline.controlpoints],
+        }
+        filename, _ = QtGui.QFileDialog.getSaveFileName(
+            self.base_widget,
+            "Export Ballooning",
+            bal.ballooning.name + ".json",
+            "JSON Files (*.json)",
+        )
+        if filename:
+            with open(filename, "w") as f:
+                json.dump(data, f, indent=2)
+
+    def import_ballooning(self):
+        filenames, _ = QtGui.QFileDialog.getOpenFileNames(
+            self.base_widget,
+            "Import Ballooning",
+            "",
+            "JSON Files (*.json)",
+        )
+        for filename in filenames:
+            try:
+                with open(filename, "r") as f:
+                    data = json.load(f)
+                upper = data.get("upper")
+                lower = data.get("lower")
+                if upper is None or lower is None:
+                    continue
+                ballooning = BallooningBezier(upper=upper, lower=lower)
+                ballooning.name = data.get(
+                    "name",
+                    os.path.splitext(os.path.basename(filename))[0],
+                )
+                new_item = QBalooning(ballooning, scale_y=self.scale_y)
+                self.QList_View.addItem(new_item)
+                self.QList_View.setCurrentItem(new_item)
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+
     def update_selection(self, *args):
         # if self.is_edit and self.previous_foil:
         #     self.previous_foil.apply_splines()
@@ -139,6 +197,18 @@ class BallooningTool(BaseTool):
             self.Qballooning_name.setText(self.QList_View.currentItem().text())
             self.previous_foil = self.current_ballooning
             self.update_ballooning()
+            self._apply_preview()
+
+    def _apply_preview(self):
+        """Apply the currently selected ballooning to all cells and refresh the 3D view."""
+        if self.current_ballooning is None:
+            return
+        self.current_ballooning.apply_splines()
+        bal = self.current_ballooning.ballooning
+        glider3d = self.obj.Proxy.getGliderInstance()
+        for cell in glider3d.cells:
+            cell.ballooning = bal.copy()
+        self.obj.Proxy.drawGlider()
 
     def update_name(self, *args):
         name = self.Qballooning_name.text()
@@ -147,10 +217,32 @@ class BallooningTool(BaseTool):
 
     def update_ballooning(self, *args):
         self.ballooning_sep.removeAllChildren()
-        self.draw_lower_spline(70)
-        self.draw_upper_spline(70)
-        self.ballooning_sep += [self.upper_spline]
-        self.ballooning_sep += [self.lower_spline]
+        selected_items = self.QList_View.selectedItems()
+        current = self.current_ballooning
+        # Draw non-current selected items first (background)
+        color_idx = 0
+        for item in selected_items:
+            if item is current:
+                continue
+            color = self.COMPARE_COLORS[color_idx % len(self.COMPARE_COLORS)]
+            color_idx += 1
+            upper_sep = coin.SoSeparator()
+            lower_sep = coin.SoSeparator()
+            upper_sep += [Line_old(
+                vector3D(item.get_expl_upper_spline(70)),
+                color=color, width=2,
+            ).object]
+            lower_sep += [Line_old(
+                vector3D(item.get_expl_lower_spline(70)),
+                color=color, width=2,
+            ).object]
+            self.ballooning_sep += [upper_sep, lower_sep]
+        # Draw current item on top in red
+        if current is not None:
+            self.draw_lower_spline(70)
+            self.draw_upper_spline(70)
+            self.ballooning_sep += [self.upper_spline]
+            self.ballooning_sep += [self.lower_spline]
 
     def spline_edit(self):
         if self.is_edit:

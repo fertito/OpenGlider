@@ -22,8 +22,6 @@ class GliderWorkbench(Gui.Workbench):
         "ImportGlider",
         "ShapeCommand",
         "ArcCommand",
-        "AirfoilCommand",
-        "AirfoilMergeCommand",
         "AirfoilControlCommand",
         "BallooningCommand",
         "BallooningMergeCommand",
@@ -69,7 +67,6 @@ class GliderWorkbench(Gui.Workbench):
 
         Gui.addCommand("CreateGlider", tools.CreateGlider())
         Gui.addCommand("ShapeCommand", tools.ShapeCommand())
-        Gui.addCommand("AirfoilCommand", tools.AirfoilCommand())
         Gui.addCommand("ArcCommand", tools.ArcCommand())
         Gui.addCommand("AoaCommand", tools.AoaCommand())
         Gui.addCommand("BallooningCommand", tools.BallooningCommand())
@@ -79,7 +76,6 @@ class GliderWorkbench(Gui.Workbench):
 
         Gui.addCommand("ImportGlider", tools.ImportGlider())
         Gui.addCommand("Gl2dExport", tools.Gl2dExport())
-        Gui.addCommand("AirfoilMergeCommand", tools.AirfoilMergeCommand())
         Gui.addCommand("AirfoilControlCommand", tools.AirfoilControlCommand())
         Gui.addCommand("BallooningMergeCommand", tools.BallooningMergCommand())
         Gui.addCommand("CellCommand", tools.CellCommand())

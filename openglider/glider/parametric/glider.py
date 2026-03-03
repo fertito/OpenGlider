@@ -241,6 +241,9 @@ class ParametricGlider(object):
         # Aerodynamic analysis results (stored for use by Lines Auto-placement tool)
         self.aerodynamics_results = kwargs.get('aerodynamics_results', None)
 
+        # Single Skin configuration
+        self.single_skin_config = kwargs.get('single_skin_config', None)
+
     def get_sleeve_exclusion_zones(self, rib, rib_idx, is_suspended):
         """
         Get chord ranges that should be excluded from hole placement due to rod sleeves.
@@ -395,6 +398,12 @@ class ParametricGlider(object):
         MIN_CHORD_FOR_HOLES = 0.15  # 15cm minimum chord (reduced from 30cm)
 
         for rib_idx, rib in enumerate(glider.ribs):
+            # Skip SingleSkinRib — their profiles are truncated (bows replace
+            # intrados), so standard hole geometry would overflow
+            from openglider.glider.rib.rib import SingleSkinRib
+            if isinstance(rib, SingleSkinRib):
+                continue
+
             # Skip the last rib if last_profile_enabled (should be solid, no holes)
             if getattr(self, 'last_profile_enabled', False) and rib_idx == len(glider.ribs) - 1:
                 continue
@@ -1162,6 +1171,114 @@ class ParametricGlider(object):
             
             rib.rod_sleeves = rod_sleeves
 
+    def apply_single_skin(self, glider):
+        """Apply single skin configuration to glider ribs."""
+        ss_config = getattr(self, 'single_skin_config', None)
+        if not ss_config:
+            return
+
+        from openglider.glider.rib.rib import SingleSkinRib
+
+        selected_cells = ss_config.get("cells", [])
+        if not selected_cells:
+            return
+
+        # Convert cell indices to rib indices — only include ribs where
+        # ALL adjacent cells are in the selected set
+        cells_set = set(selected_cells)
+        num_cells = self.shape.half_cell_num
+        num_ribs = len(glider.ribs)
+        rib_indices = set()
+        for rib_idx in range(num_ribs):
+            adjacent_cells = []
+            if rib_idx > 0:
+                adjacent_cells.append(rib_idx - 1)
+            if rib_idx < num_cells:
+                adjacent_cells.append(rib_idx)
+            if all(c in cells_set for c in adjacent_cells):
+                rib_indices.add(rib_idx)
+
+        single_skin_par = {
+            "att_dist": ss_config.get("att_dist", 0.02),
+            "height": ss_config.get("height", 0.5),
+            "num_points": ss_config.get("num_points", 20),
+            "le_gap": ss_config.get("le_gap", True),
+            "te_gap": ss_config.get("te_gap", True),
+            "double_first": ss_config.get("double_first", False),
+            "straight_te": ss_config.get("straight_te", True),
+            "continued_min": ss_config.get("continued_min", False),
+            "continued_min_end": ss_config.get("continued_min_end", 0.9),
+            "continued_min_angle": ss_config.get("continued_min_angle", 0.0),
+            "continued_min_delta_y": ss_config.get("continued_min_delta_y", 0.0),
+            "continued_min_x": ss_config.get("continued_min_x", 0.0),
+        }
+
+        # Replace ribs with SingleSkinRib
+        new_ribs = []
+        for i, rib in enumerate(glider.ribs):
+            if i in rib_indices:
+                if not isinstance(rib, SingleSkinRib):
+                    new_ribs.append(SingleSkinRib.from_rib(rib, single_skin_par))
+                else:
+                    rib.single_skin_par = single_skin_par
+                    new_ribs.append(rib)
+            else:
+                new_ribs.append(rib)
+
+        # Handle mirrored ribs
+        for rib, ss_rib in zip(glider.ribs, new_ribs):
+            if hasattr(rib, "mirrored_rib") and rib.mirrored_rib:
+                nr = glider.ribs.index(rib.mirrored_rib)
+                ss_rib.mirrored_rib = new_ribs[nr]
+
+        glider.replace_ribs(new_ribs)
+
+        # Clear existing holes from SS ribs (hole design holes overflow
+        # truncated profiles)
+        for rib in glider.ribs:
+            if isinstance(rib, SingleSkinRib):
+                rib.holes = []
+
+        # Add SS-specific holes if configured
+        if ss_config.get("holes", False):
+            hole_size = np.array([
+                ss_config.get("hole_width", 0.3),
+                ss_config.get("hole_height", 0.7),
+            ])
+            min_pos = ss_config.get("min_hole_pos", 0.2)
+            max_pos = ss_config.get("max_hole_pos", 1.0)
+            v_shift = ss_config.get("vertical_shift", 0.2)
+
+            for att_pnt in glider.lineset.attachment_points:
+                if (isinstance(att_pnt.rib, SingleSkinRib)
+                        and att_pnt.rib_pos > min_pos
+                        and att_pnt.rib_pos < max_pos):
+                    att_pnt.rib.holes.append(
+                        RibHole(
+                            att_pnt.rib_pos,
+                            size=hole_size,
+                            vertical_shift=v_shift,
+                        )
+                    )
+
+        # Apply hull modification: replace profile_2d with bow-modified version
+        for rib in glider.ribs:
+            if isinstance(rib, SingleSkinRib):
+                hull_profile = rib.get_hull(glider)
+                rib.profile_2d = hull_profile
+
+        # Remove intrados panels from single-skin cells
+        double_first = ss_config.get("double_first", False)
+        for cell in glider.cells:
+            if isinstance(cell.rib1, SingleSkinRib) and isinstance(cell.rib2, SingleSkinRib):
+                if double_first:
+                    extrados = [p for p in cell.panels if not p.is_lower()]
+                    intrados = [p for p in cell.panels if p.is_lower()]
+                    intrados.sort(key=lambda p: p.mean_x())
+                    cell.panels = extrados + intrados[:1]
+                else:
+                    cell.panels = [p for p in cell.panels if not p.is_lower()]
+
     def remap_cell_indices(self, old_cell_num):
         """
         Remap all cell/rib indices proportionally after cell count change.
@@ -1404,6 +1521,8 @@ class ParametricGlider(object):
             "last_profile_custom": getattr(self, "last_profile_custom", None),
             # Aerodynamic analysis results
             "aerodynamics_results": getattr(self, "aerodynamics_results", None),
+            # Single Skin configuration
+            "single_skin_config": getattr(self, "single_skin_config", None),
         }
 
 
@@ -1416,6 +1535,7 @@ class ParametricGlider(object):
         # Initialize default values for missing attributes (e.g. from schema updates)
         # Using the same defaults as in __init__
         self.hole_free_angle_s = getattr(self, 'hole_free_angle_s', 30.0)
+        self.single_skin_config = getattr(self, 'single_skin_config', None)
 
 
     @classmethod
@@ -2193,6 +2313,7 @@ class ParametricGlider(object):
         glider.rename_parts()
 
         glider.lineset = self.lineset.return_lineset(glider, self.v_inf)
+        self.apply_single_skin(glider)
         self.apply_holes(glider)
         self.apply_reinforcements(glider)
         self.apply_rod_sleeves(glider)

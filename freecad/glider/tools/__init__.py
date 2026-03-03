@@ -9,7 +9,6 @@ from PySide import QtGui
 from . import glider
 from . import tools
 from . import (
-    airfoil_tool,
     airfoilstructure_tool,
     arc_tool,
     ballooning_tool,
@@ -21,6 +20,7 @@ from . import (
     holedesign_tool,
     miniribs_tool,
     le_panel_split_tool,
+    singleskin_tool,
 )
 from . import panel_method as pm
 from . import shape_tool, span_mapping
@@ -295,25 +295,6 @@ class ZrotCommand(BaseCommand):
         return span_mapping.ZrotTool(obj)
 
 
-class AirfoilCommand(BaseCommand):
-    def GetResources(self):
-        return {
-            "Pixmap": "airfoil_command.svg",
-            "MenuText": "airfoils",
-            "ToolTip": "create/modify airfoil (deprecated, use airfoil-workbench instead)",
-        }
-
-    def tool(self, obj):
-        return airfoil_tool.AirfoilTool(obj)
-
-    def IsActive(self):
-        if FreeCAD.ActiveDocument is not None and self.glider_obj:
-            parent_obj = self.glider_obj.Proxy.getParent()
-            print(parent_obj)
-            if hasattr(parent_obj, "airfoils"):
-                if len(parent_obj.airfoils) != 0:
-                    return False
-            return True
 
 
 class AirfoilMergeCommand(BaseCommand):
@@ -571,22 +552,16 @@ class GliderSharkFeatureCommand(GliderFeatureCommand):
         vp.updateData()
 
 
-class GliderSingleSkinRibFeatureCommand(GliderFeatureCommand):
+class GliderSingleSkinRibFeatureCommand(BaseCommand):
     def GetResources(self):
         return {
             "Pixmap": "singleskin_feature.svg",
-            "MenuText": "SingleskinFeature",
-            "ToolTip": "create single-skin ribs (bows between attachment-points)",
+            "MenuText": "Single Skin",
+            "ToolTip": "Interactive single-skin configuration (bows between attachment-points)",
         }
 
-    def Activated(self):
-        feature = FreeCAD.ActiveDocument.addObject(
-            "App::FeaturePython", "singleSkinRib"
-        )
-        self.glider_obj.ViewObject.Visibility = False
-        features.SingleSkinRibFeature(feature, self.glider_obj)
-        vp = features.VSingleSkinRibFeature(feature.ViewObject)
-        vp.updateData()
+    def tool(self, obj):
+        return singleskin_tool.SingleSkinTool(obj)
 
 
 class GliderFlapFeatureCommand(GliderFeatureCommand):
