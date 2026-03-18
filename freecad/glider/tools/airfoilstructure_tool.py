@@ -432,18 +432,14 @@ class AirfoilStructureTool(BaseTool):
         return glider_instance.ribs[0] if glider_instance.ribs else None
 
     def get_first_suspended_rib(self):
-        """Get the first suspended rib that has valid attachment points (< 90% chord)."""
+        """Get the first rib that has valid attachment points (< 90% chord).
+        Works with both Rib and SingleSkinRib thanks to name-based matching in glider.py."""
         glider_instance = self.obj.Proxy.getGliderInstance()
-        suspended_ribs = {att.rib for att in glider_instance.attachment_points if hasattr(att, 'rib')}
-        
         for rib in glider_instance.ribs:
-            if rib in suspended_ribs:
-                # Check if this rib has valid attachment points (< 90%)
-                all_aps = glider_instance.get_rib_attachment_points(rib)
-                valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
-                if valid_aps:
-                    return rib
-        
+            all_aps = glider_instance.get_rib_attachment_points(rib)
+            valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
+            if valid_aps:
+                return rib
         return glider_instance.ribs[0] if glider_instance.ribs else None
     
     def get_valid_attachment_points(self, rib):
@@ -457,17 +453,14 @@ class AirfoilStructureTool(BaseTool):
         return valid_aps
 
     def get_first_suspended_rib_index(self):
-        """Get the index of the first suspended rib with valid attachment points."""
+        """Get the index of the first rib with valid attachment points.
+        Works with both Rib and SingleSkinRib thanks to name-based matching in glider.py."""
         glider_instance = self.obj.Proxy.getGliderInstance()
-        suspended_ribs = {att.rib for att in glider_instance.attachment_points if hasattr(att, 'rib')}
-        
         for idx, rib in enumerate(glider_instance.ribs):
-            if rib in suspended_ribs:
-                # Check if this rib has valid attachment points (< 90%)
-                all_aps = glider_instance.get_rib_attachment_points(rib)
-                valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
-                if valid_aps:
-                    return idx
+            all_aps = glider_instance.get_rib_attachment_points(rib)
+            valid_aps = [ap for ap in all_aps if ap.rib_pos <= 0.90]
+            if valid_aps:
+                return idx
         return 0
 
     def on_rib_type_change(self, new_index):
@@ -514,12 +507,29 @@ class AirfoilStructureTool(BaseTool):
         if not rib:
             return
 
-        # Draw profile outline - scaled by chord
-        profile_points = [p * rib.chord for p in rib.profile_2d.data]
+        # Récupérer le glider instance pour get_hull (nécessaire pour SingleSkinRib)
+        try:
+            glider_instance = self.obj.Proxy.getGliderInstance()
+        except Exception:
+            glider_instance = None
+
+        # Draw profile outline - utiliser get_hull() pour avoir le vrai profil SingleSkin
+        try:
+            if glider_instance is not None:
+                hull = rib.get_hull(glider_instance)
+            else:
+                hull = rib.get_hull()
+            profile_points = [p * rib.chord for p in hull.data]
+        except Exception:
+            # Fallback sur profile_2d brut si get_hull échoue
+            profile_points = [p * rib.chord for p in rib.profile_2d.data]
+
         profile_3d = [[p[0], p[1], 0] for p in profile_points]
         self.preview_root.addChild(Line_old(profile_3d + [profile_3d[0]], width=2).object)
-        
+
         # Visualizing attachment points (red dots) if suspended
+        # La correction de get_rib_attachment_points dans glider.py gère la correspondance
+        # par nom pour les SingleSkinRib, donc get_valid_attachment_points fonctionne correctement
         valid_aps = []
         if is_suspended:
             valid_aps = self.get_valid_attachment_points(rib)
@@ -528,11 +538,11 @@ class AirfoilStructureTool(BaseTool):
 
         # Draw extrados sleeves
         for sleeve in self.extradosGroup.get_rod_sleeves():
-            self._draw_sleeve(sleeve, rib, color='blue')
+            self._draw_sleeve(sleeve, rib, color='blue', glider=glider_instance)
 
         # Draw intrados sleeves
         for sleeve in self.intradosGroup.get_rod_sleeves():
-            self._draw_sleeve(sleeve, rib, color='green')
+            self._draw_sleeve(sleeve, rib, color='green', glider=glider_instance)
 
         # Draw attachment reinforcements if enabled and suspended
         if is_suspended and self.reinforcementEnabledCheckBox.isChecked():
@@ -551,7 +561,7 @@ class AirfoilStructureTool(BaseTool):
                 
                 if config['enabled']:
                     reinforcement = self._create_reinforcement(ap.rib_pos, config)
-                    self._draw_reinforcement(reinforcement, rib)
+                    self._draw_reinforcement(reinforcement, rib, glider=glider_instance)
 
     def _create_reinforcement(self, position, config, name=""):
         """Create an AttachmentReinforcement from config values."""
@@ -567,46 +577,15 @@ class AirfoilStructureTool(BaseTool):
         )
 
 
-    def _draw_sleeve(self, sleeve, rib, color='blue'):
-        """Draw a rod sleeve preview with terminations."""
-        try:
-            # Get full sleeve with terminations
-            inner_points, outer_points = sleeve.get_full_sleeve_points(rib)
-            
-            if inner_points and outer_points:
-                # Draw inner edge
-                inner_3d = [[p[0], p[1], 0] for p in inner_points]
-                self.preview_root.addChild(Line_old(inner_3d, color=color, width=2).object)
-                
-                # Draw outer edge
-                outer_3d = [[p[0], p[1], 0] for p in outer_points]
-                self.preview_root.addChild(Line_old(outer_3d, color=color, width=2).object)
-                
-                # Draw end caps connecting inner and outer
-                if len(inner_points) > 0 and len(outer_points) > 0:
-                    # Start cap
-                    start_cap = [[inner_points[0][0], inner_points[0][1], 0],
-                                 [outer_points[0][0], outer_points[0][1], 0]]
-                    self.preview_root.addChild(Line_old(start_cap, color=color, width=1).object)
-                    
-                    # End cap
-                    end_cap = [[inner_points[-1][0], inner_points[-1][1], 0],
-                               [outer_points[-1][0], outer_points[-1][1], 0]]
-                    self.preview_root.addChild(Line_old(end_cap, color=color, width=1).object)
-        except Exception as e:
-            print(f"Error drawing sleeve: {e}")
-
     def _draw_attachment_point_marker(self, rib, position):
         """Draw a red marker at the attachment point position."""
         profile = rib.profile_2d
-        # Get point from profile coordinate system
         idx = profile(position)
         center_point = profile[idx] * rib.chord
-        
-        # Create a small diamond marker
+
         size = 0.005  # 5mm visual size
         center_3d = np.array([center_point[0], center_point[1], 0])
-        
+
         marker_points = [
             center_3d + np.array([size, 0, 0]),
             center_3d + np.array([0, size, 0]),
@@ -614,20 +593,41 @@ class AirfoilStructureTool(BaseTool):
             center_3d + np.array([0, -size, 0]),
             center_3d + np.array([size, 0, 0])
         ]
-        
+
         self.preview_root.addChild(Line_old(marker_points, color='red', width=3).object)
 
-    def _draw_reinforcement(self, reinforcement, rib):
+    def _draw_sleeve(self, sleeve, rib, color='blue', glider=None):
+        """Draw a rod sleeve preview with terminations."""
+        try:
+            inner_points, outer_points = sleeve.get_full_sleeve_points(rib, glider=glider)
+            
+            if inner_points and outer_points:
+                inner_3d = [[p[0], p[1], 0] for p in inner_points]
+                self.preview_root.addChild(Line_old(inner_3d, color=color, width=2).object)
+                
+                outer_3d = [[p[0], p[1], 0] for p in outer_points]
+                self.preview_root.addChild(Line_old(outer_3d, color=color, width=2).object)
+                
+                if len(inner_points) > 0 and len(outer_points) > 0:
+                    start_cap = [[inner_points[0][0], inner_points[0][1], 0],
+                                 [outer_points[0][0], outer_points[0][1], 0]]
+                    self.preview_root.addChild(Line_old(start_cap, color=color, width=1).object)
+                    
+                    end_cap = [[inner_points[-1][0], inner_points[-1][1], 0],
+                               [outer_points[-1][0], outer_points[-1][1], 0]]
+                    self.preview_root.addChild(Line_old(end_cap, color=color, width=1).object)
+        except Exception as e:
+            print(f"Error drawing sleeve: {e}")
+
+    def _draw_reinforcement(self, reinforcement, rib, glider=None):
         """Draw an attachment reinforcement preview."""
         try:
-            flat = reinforcement.get_flattened(rib)
+            flat = reinforcement.get_flattened(rib, glider=glider)
             
-            # Draw half-moon fabric reinforcement in yellow
             halfmoon_points = [[p[0], p[1], 0] for p in flat['halfmoon'].data]
             if halfmoon_points:
                 self.preview_root.addChild(Line_old(halfmoon_points, color='yellow', width=2).object)
             
-            # Draw rod sleeve in red
             rod_points = [[p[0], p[1], 0] for p in flat['rod_sleeve'].data]
             if rod_points:
                 self.preview_root.addChild(Line_old(rod_points, color='red', width=2).object)
@@ -761,7 +761,6 @@ class AirfoilStructureTool(BaseTool):
         
         # Only apply if reinforcements are enabled for suspended ribs
         if not getattr(pg, 'reinforcement_enabled_s', False):
-            # Clear reinforcements from all ribs
             for rib in glider_instance.ribs:
                 rib.reinforcements = []
             return
@@ -771,38 +770,32 @@ class AirfoilStructureTool(BaseTool):
         configs = getattr(pg, 'reinforcement_configs_s', [])
         excluded_ribs = getattr(pg, 'reinforcement_excluded_ribs_s', [])
         
-        # Identify suspended ribs and build rib index map
-        suspended_ribs = {att.rib for att in glider_instance.attachment_points if hasattr(att, 'rib')}
-        
         for rib_idx, rib in enumerate(glider_instance.ribs):
-            if rib in suspended_ribs:
-                # Check if this rib is excluded from reinforcements
+            # get_rib_attachment_points gère la correspondance par nom (Rib et SingleSkinRib)
+            valid_aps = [
+                ap for ap in glider_instance.get_rib_attachment_points(rib)
+                if ap.rib_pos <= 0.90
+            ]
+            
+            if valid_aps:
                 if rib_idx in excluded_ribs:
                     rib.reinforcements = []
                     continue
                 
-                # Get valid attachment points for this rib
-                valid_aps = self.get_valid_attachment_points(rib)
-                
                 reinforcements = []
                 for i, ap in enumerate(valid_aps):
-                    # Get config
                     if apply_all:
                         config = master_config
                     else:
                         config = configs[i] if i < len(configs) else master_config
                     
                     if config.get('enabled', True):
-                        # Generate name: rib index + attachment point name (contains line letter)
-                        # ap.name typically contains the line letter (A, B, C, D, etc.)
                         name = f"{rib_idx + 1}{ap.name}" if ap.name else f"{rib_idx + 1}_{i + 1}"
-                        
                         reinforcement = self._create_reinforcement(ap.rib_pos, config, name)
                         reinforcements.append(reinforcement)
                 
                 rib.reinforcements = reinforcements
             else:
-                # Non-suspended ribs don't get reinforcements
                 rib.reinforcements = []
 
     def apply_rod_sleeves_to_ribs(self):
@@ -812,11 +805,13 @@ class AirfoilStructureTool(BaseTool):
         pg = self.parametric_glider
         glider_instance = self.obj.Proxy.getGliderInstance()
         
-        # Identify suspended ribs
-        suspended_ribs = {att.rib for att in glider_instance.lineset.attachment_points if hasattr(att, 'rib')}
-        
+        # Identifier les nervures suspendues par présence de points d'accroche (robuste SingleSkinRib)
         for rib_idx, rib in enumerate(glider_instance.ribs):
-            is_suspended = rib in suspended_ribs
+            valid_aps = [
+                ap for ap in glider_instance.get_rib_attachment_points(rib)
+                if ap.rib_pos <= 0.90
+            ]
+            is_suspended = len(valid_aps) > 0
             suffix = '_s' if is_suspended else '_ns'
             
             rod_sleeves = []

@@ -243,16 +243,28 @@ class HoleDesignTool(BaseTool):
         rib = self.get_representative_rib(suspended=is_suspended)
         if not rib: return
 
+        # Toujours récupérer glider_instance pour pouvoir appeler get_hull sur SingleSkinRib
+        glider_instance = self.obj.Proxy.getGliderInstance()
+
+        # Pour SingleSkinRib, utiliser get_hull() qui retourne le vrai profil avec les bows
+        from openglider.glider.rib.rib import SingleSkinRib
+        if isinstance(rib, SingleSkinRib):
+            try:
+                hull_profile = rib.get_hull(glider_instance)
+            except Exception:
+                hull_profile = rib.profile_2d
+        else:
+            hull_profile = rib.profile_2d
+
         # Draw profile outline - scaled by chord (like airfoil structure)
         scale = rib.chord  # All preview elements should be scaled by this
-        profile_points = [p * scale for p in rib.profile_2d.data]
+        profile_points = [p * scale for p in hull_profile.data]
         profile_3d = [[p[0], p[1], 0] for p in profile_points]
         self.preview_root.addChild(Line_old(profile_3d + [profile_3d[0]], width=2).object)
 
         no_hole_zones = []
         halfmoon_circles = []  # List of (center, radius) for each halfmoon - used for exclusion
         if is_suspended:
-            glider_instance = self.obj.Proxy.getGliderInstance()
             all_attachment_points = glider_instance.get_rib_attachment_points(rib)
             # Filter to exclude brake tabs (>90% chord) - only true suspension attachments
             attachment_points = [ap for ap in all_attachment_points if hasattr(ap, 'rib_pos') and ap.rib_pos <= 0.9]
@@ -656,8 +668,8 @@ class HoleDesignTool(BaseTool):
                 potential_positions = np.linspace(start, end, num_holes_in_range)
 
             for pos_x in potential_positions:
-                upper_point = rib.profile_2d.profilepoint(-pos_x)
-                lower_point = rib.profile_2d.profilepoint(pos_x)
+                upper_point = hull_profile.profilepoint(-pos_x)
+                lower_point = hull_profile.profilepoint(pos_x)
                 local_thickness = upper_point[1] - lower_point[1]
                 if local_thickness < 1e-6:
                     continue

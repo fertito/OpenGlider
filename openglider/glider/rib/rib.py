@@ -258,6 +258,8 @@ class SingleSkinRib(Rib):
         holes=None,
         material_code=None,
         single_skin_par=None,
+        reinforcements=None,   # ajout pour compatibilité avec Rib
+        rod_sleeves=None,      # ajout pour compatibilité avec Rib
     ):
         super(SingleSkinRib, self).__init__(
             profile_2d=profile_2d,
@@ -273,6 +275,8 @@ class SingleSkinRib(Rib):
             rigidfoils=rigidfoils,
             holes=holes,
             material_code=material_code,
+            reinforcements=reinforcements,
+            rod_sleeves=rod_sleeves,
         )
         self.single_skin_par = single_skin_par or {}
 
@@ -305,8 +309,12 @@ class SingleSkinRib(Rib):
 
     @classmethod
     def from_rib(cls, rib, single_skin_par):
+        import inspect
         json_dict = rib.__json__()
         json_dict["single_skin_par"] = single_skin_par
+        # Filtrer les clés non reconnues par SingleSkinRib.__init__
+        valid_params = inspect.signature(cls.__init__).parameters
+        json_dict = {k: v for k, v in json_dict.items() if k in valid_params}
         single_skin_rib = cls(**json_dict)
         return single_skin_rib
 
