@@ -241,24 +241,31 @@ class RibHole(object):
         self.custom_points = custom_points
         self.corner_radius = corner_radius  # Corner radius for rounded rectangles
 
-    def get_3d(self, rib, num=20):
-        hole = self.get_points(rib, num=num, available_height=self.available_height)
+    def get_3d(self, rib, num=20, glider=None):
+        hole = self.get_points(rib, num=num, available_height=self.available_height, glider=glider)
         return rib.align_all(set_dimension(hole, 3))
 
-    def get_flattened(self, rib, num=80, scale=True):
-        points = self.get_points(rib, num, available_height=self.available_height).data
+    def get_flattened(self, rib, num=80, scale=True, glider=None):
+        points = self.get_points(rib, num, available_height=self.available_height, glider=glider).data
         if scale:
             points *= rib.chord
         return PolyLine2D(points)
 
-    def get_points(self, rib, num=80, available_height=None):
+    def get_points(self, rib, num=80, available_height=None, glider=None):
         if self.custom_points is not None:
              # If custom_points are provided, return them directly.
              # They are assumed to be in the rib's local coordinate system (normalized if scale=False context, but RibHole usually handles normalized)
              # Based on apply_holes logic, we will pass normalized coordinates.
              return PolyLine2D(self.custom_points, name=f"{rib.name}-hole")
 
-        prof = rib.profile_2d
+        from openglider.glider.rib.rib import SingleSkinRib
+        if isinstance(rib, SingleSkinRib) and glider is not None:
+            try:
+                prof = rib.get_hull(glider)
+            except Exception:
+                prof = rib.profile_2d
+        else:
+            prof = rib.profile_2d
         p1 = prof[prof(self.pos)]  # Lower surface point
         p2 = prof[prof(-self.pos)] # Upper surface point
 
@@ -351,7 +358,7 @@ class RibHole(object):
 
         return np.array(points)
 
-    def get_center(self, rib, scale=True):
+    def get_center(self, rib, scale=True, glider=None):
         if self.custom_points is not None:
              # Calculate centroid of custom points
              # custom_points is list of [x, y] or numpy arrays
@@ -368,7 +375,14 @@ class RibHole(object):
                  center = center * rib.chord
              return center
 
-        prof = rib.profile_2d
+        from openglider.glider.rib.rib import SingleSkinRib
+        if isinstance(rib, SingleSkinRib) and glider is not None:
+            try:
+                prof = rib.get_hull(glider)
+            except Exception:
+                prof = rib.profile_2d
+        else:
+            prof = rib.profile_2d
         p1 = prof[prof(self.pos)]
         p2 = prof[prof(-self.pos)]
         
@@ -422,8 +436,6 @@ class RodSleeve(object):
         offset=0.005,
         start_chord=0.0,
         end_chord=0.85,
-        start_chord_intrados=0.05,  # Pour surface='leading_edge' : départ intrados
-        end_chord_extrados=0.05,    # Pour surface='leading_edge' : fin extrados
         le_angle=0.0,        # Leading edge angle (degrees)
         te_angle=315.0,      # Trailing edge angle (degrees) - default for extrados
         le_length=0.03,      # Leading edge escape length (m)
@@ -435,8 +447,6 @@ class RodSleeve(object):
         self.offset = offset
         self.start_chord = start_chord
         self.end_chord = end_chord
-        self.start_chord_intrados = start_chord_intrados
-        self.end_chord_extrados = end_chord_extrados
         self.le_angle = le_angle
         self.te_angle = te_angle
         self.le_length = le_length
@@ -450,8 +460,6 @@ class RodSleeve(object):
             "offset": self.offset,
             "start_chord": self.start_chord,
             "end_chord": self.end_chord,
-            "start_chord_intrados": self.start_chord_intrados,
-            "end_chord_extrados": self.end_chord_extrados,
             "le_angle": self.le_angle,
             "te_angle": self.te_angle,
             "le_length": self.le_length,
@@ -463,17 +471,10 @@ class RodSleeve(object):
         """
         Get the x-value range for the sleeve based on chord percentages.
         Returns (start_x, end_x) in profile coordinates.
-        For leading_edge, returns two ranges: intrados→LE and LE→extrados.
         """
         if self.surface == 'extrados':
             start_x = -self.start_chord
             end_x = -self.end_chord
-        elif self.surface == 'leading_edge':
-            # Retourne un tuple de deux ranges : (intrados_range, extrados_range)
-            return (
-                (self.start_chord_intrados, 0.0),   # intrados → LE
-                (-0.0, -self.end_chord_extrados),    # LE → extrados
-            )
         else:
             start_x = self.start_chord
             end_x = self.end_chord
@@ -608,197 +609,147 @@ class RodSleeve(object):
         
         return inner_curve, outer_curve
     
-    def get_sleeve_points(self, rib, num_points=50, glider=None):
+    def get_sleeve_points(self, rib, num_points=50):
         """
         Get the sleeve outline points for visualization.
         Returns inner and outer polylines representing the sleeve pocket.
-        Uses get_hull() for SingleSkinRib to follow the actual transformed profile.
-        For leading_edge surface, concatenates intrados→LE and LE→extrados segments.
         """
-        from openglider.glider.rib.rib import SingleSkinRib
+        profile = rib.profile_2d
         chord = rib.chord
-
-        # Pour SingleSkinRib, utiliser le profil transformé (bows inclus)
-        if isinstance(rib, SingleSkinRib) and glider is not None:
-            try:
-                profile = rib.get_hull(glider)
-            except Exception:
-                profile = rib.profile_2d
-        else:
-            profile = rib.profile_2d
-
-        offset_norm = self.offset / chord
-        width_norm = self.width / chord
-
-        if self.surface == 'leading_edge':
-            # Jonc traversant : intrados → LE → extrados
-            # Convention profil : data[0]=TE extrados, data[noseindex]=LE, data[-1]=TE intrados
-            # intrados : xval > 0, extrados : xval < 0
-
-            # Index start sur intrados (xval positif)
-            s_idx = int(round(profile(self.start_chord_intrados)))
-            # Index nez (LE)
-            nose_idx = profile.noseindex
-            # Index end sur extrados (xval négatif)
-            e_idx = int(round(profile(-self.end_chord_extrados)))
-
-            # Segment intrados → LE : indices décroissants de s_idx vers nose_idx
-            seg_intrados = list(profile.data[nose_idx:s_idx + 1])[::-1]
-            # Segment LE → extrados : indices décroissants de nose_idx vers e_idx
-            seg_extrados = list(profile.data[e_idx:nose_idx + 1])[::-1]
-
-            # Concatener : intrados (sans le nez) + extrados (depuis le nez)
-            profile_segment = seg_intrados[:-1] + seg_extrados
-            surfaces = (['intrados'] * len(seg_intrados[:-1]) +
-                        ['extrados'] * len(seg_extrados))
-        else:
-            start_x, end_x = self.get_profile_range(profile)
-            start_idx = profile(start_x)
-            end_idx = profile(end_x)
-            profile_segment = list(profile[start_idx:end_idx])
-            surfaces = [self.surface] * len(profile_segment)
-
+        
+        start_x, end_x = self.get_profile_range(profile)
+        start_idx = profile(start_x)
+        end_idx = profile(end_x)
+        
+        profile_segment = list(profile[start_idx:end_idx])
+        
         if len(profile_segment) < 2:
             return [], []
-
+        
+        offset_norm = self.offset / chord
+        width_norm = self.width / chord
+        
         inner_points = []
         outer_points = []
-
-        # Pour leading_edge : calculer le centroïde du profil pour orienter les normales vers l'intérieur
-        if self.surface == 'leading_edge':
-            centroid = np.mean(profile_segment, axis=0)
-
-        for i, (point, surf) in enumerate(zip(profile_segment, surfaces)):
-            if self.surface == 'leading_edge':
-                # Normale calculée depuis la tangente, orientée vers l'intérieur du profil
-                if i == 0:
-                    tangent = np.array(profile_segment[1]) - np.array(profile_segment[0])
-                elif i == len(profile_segment) - 1:
-                    tangent = np.array(profile_segment[-1]) - np.array(profile_segment[-2])
-                else:
-                    tangent = np.array(profile_segment[i + 1]) - np.array(profile_segment[i - 1])
-                tlen = np.linalg.norm(tangent)
-                if tlen > 1e-10:
-                    tangent = tangent / tlen
-                # Deux candidates normales
-                n1 = np.array([-tangent[1], tangent[0]])
-                n2 = np.array([tangent[1], -tangent[0]])
-                # Choisir celle qui pointe vers le centroïde (intérieur)
-                to_center = centroid - np.array(point)
-                normal = n1 if np.dot(n1, to_center) > 0 else n2
-            else:
-                normal = self._calculate_normal(profile_segment, i, surf)
-
+        
+        for i, point in enumerate(profile_segment):
+            normal = self._calculate_normal(profile_segment, i, self.surface)
+            
             inner_pt = point + normal * offset_norm
             outer_pt = point + normal * (offset_norm + width_norm)
-
+            
             inner_points.append(inner_pt * chord)
             outer_points.append(outer_pt * chord)
-
+        
         return inner_points, outer_points
     
-    def get_leading_edge_termination(self, rib, glider=None):
+    def get_leading_edge_termination(self, rib):
         """
         Get the leading edge termination curve.
         Uses the actual sleeve direction for smooth connection.
         """
-        inner_main, outer_main = self.get_sleeve_points(rib, glider=glider)
-
+        inner_main, outer_main = self.get_sleeve_points(rib)
+        
         if not inner_main or len(inner_main) < 2:
             return [], []
-
+        
         inner_start = np.array(inner_main[0])
         outer_start = np.array(outer_main[0])
-
+        
+        # Calculate actual sleeve direction from first two points
         sleeve_dir = np.array(inner_main[0]) - np.array(inner_main[1])
         dir_len = np.linalg.norm(sleeve_dir)
         if dir_len > 1e-10:
             start_tangent = sleeve_dir / dir_len
         else:
             start_tangent = None
-
+        
         return self._create_smooth_termination_with_width(
             inner_start, outer_start, self.le_angle, self.le_length,
             start_tangent_vec=start_tangent
         )
-
-    def get_trailing_edge_termination(self, rib, glider=None):
+    
+    def get_trailing_edge_termination(self, rib):
         """
         Get the trailing edge termination curve.
         Uses the actual sleeve direction for smooth connection.
         """
-        inner_main, outer_main = self.get_sleeve_points(rib, glider=glider)
-
+        inner_main, outer_main = self.get_sleeve_points(rib)
+        
         if not inner_main or len(inner_main) < 2:
             return [], []
-
+        
         inner_start = np.array(inner_main[-1])
         outer_start = np.array(outer_main[-1])
-
+        
+        # Calculate actual sleeve direction from last two points
         sleeve_dir = np.array(inner_main[-1]) - np.array(inner_main[-2])
         dir_len = np.linalg.norm(sleeve_dir)
         if dir_len > 1e-10:
             start_tangent = sleeve_dir / dir_len
         else:
             start_tangent = None
-
+        
         return self._create_smooth_termination_with_width(
             inner_start, outer_start, self.te_angle, self.te_length,
             start_tangent_vec=start_tangent
         )
-
-    def get_full_sleeve_points(self, rib, glider=None):
+    
+    def get_full_sleeve_points(self, rib):
         """
         Get the complete sleeve with leading and trailing edge terminations.
         """
-        inner_main, outer_main = self.get_sleeve_points(rib, glider=glider)
-        inner_le, outer_le = self.get_leading_edge_termination(rib, glider=glider)
-        inner_te, outer_te = self.get_trailing_edge_termination(rib, glider=glider)
-
+        inner_main, outer_main = self.get_sleeve_points(rib)
+        inner_le, outer_le = self.get_leading_edge_termination(rib)
+        inner_te, outer_te = self.get_trailing_edge_termination(rib)
+        
+        # Combine: LE termination (reversed) + main sleeve + TE termination
+        # Reverse LE so it connects properly (curves outward from main sleeve)
+        # Slice to avoid duplicate points at junctions
         if inner_le:
             inner_start = list(reversed(inner_le))[:-1] if len(inner_le) > 0 else []
         else:
             inner_start = []
-
+            
         if outer_le:
             outer_start = list(reversed(outer_le))[:-1] if len(outer_le) > 0 else []
         else:
             outer_start = []
-
+            
         inner_end = inner_te[1:] if len(inner_te) > 1 else []
         outer_end = outer_te[1:] if len(outer_te) > 1 else []
-
+        
         inner_full = inner_start + inner_main + inner_end
         outer_full = outer_start + outer_main + outer_end
-
+        
         return inner_full, outer_full
-
-    def get_flattened(self, rib, num_points=50, glider=None):
+    
+    def get_flattened(self, rib, num_points=50):
         """
         Get the flattened 2D representation of the sleeve.
         Returns a closed polygon representing the sleeve pocket.
         """
-        inner_points, outer_points = self.get_full_sleeve_points(rib, glider=glider)
-
+        inner_points, outer_points = self.get_full_sleeve_points(rib)
+        
         if not inner_points or not outer_points:
             return PolyLine2D([])
-
+        
         polygon_points = []
         polygon_points.extend(inner_points)
-
+        
         if len(inner_points) > 0 and len(outer_points) > 0:
             polygon_points.append(outer_points[-1])
-
+        
         polygon_points.extend(reversed(outer_points))
-
+        
         if len(inner_points) > 0:
             polygon_points.append(inner_points[0])
-
+        
         return PolyLine2D(polygon_points)
-
-    def get_3d(self, rib, num_points=50, glider=None):
+    
+    def get_3d(self, rib, num_points=50):
         """Get 3D representation of the sleeve."""
-        flat = self.get_flattened(rib, num_points, glider=glider)
+        flat = self.get_flattened(rib, num_points)
         return [rib.align([p[0], p[1], 0], scale=False) for p in flat.data]
 
 
@@ -856,225 +807,189 @@ class AttachmentReinforcement(object):
             "material_code": self.material_code,
         }
     
-    def _get_profile_section(self, rib, num_points=30, glider=None):
-        """
-        Retourne une section du profil délimitée par l'intersection du cercle
-        de rayon halfmoon_radius centré sur le point d'accroche avec le profil hull.
-        
-        Pour une nervure classique, on utilise profile_2d.
-        Pour une SingleSkinRib, on utilise get_hull() (profil avec bows).
-        """
-        from openglider.glider.rib.rib import SingleSkinRib
-
-        if isinstance(rib, SingleSkinRib) and glider is not None:
-            try:
-                profile = rib.get_hull(glider)
-            except Exception:
-                profile = rib.profile_2d
-        else:
-            profile = rib.profile_2d
-
+    def _get_profile_section(self, rib, num_points=30):
+        """Get a section of the profile around the attachment point."""
+        profile = rib.profile_2d
         chord = rib.chord
-
-        # Point d'accroche = centre de l'arc
-        center_idx = profile(self.position)
-        arc_center = np.array(profile[center_idx]) * chord
-
-        # --- Trouver les bornes par intersection cercle/profil ---
-        # On cherche les indices où la distance au arc_center = halfmoon_radius
-        # en parcourant le profil de part et d'autre du point d'accroche.
         
-        all_pts = np.array(profile.data) * chord  # tous les points du profil en mètres
-
-        def find_intersection_idx(pts, center, radius, from_idx, direction):
-            """
-            Parcourt pts depuis from_idx dans 'direction' (+1 ou -1),
-            retourne l'index interpolé où dist(pt, center) = radius.
-            """
-            n = len(pts)
-            i = from_idx
-            while 0 < i < n - 1:
-                i += direction
-                d = np.linalg.norm(pts[i] - center)
-                if d >= radius:
-                    # Interpoler entre i-direction et i
-                    d_prev = np.linalg.norm(pts[i - direction] - center)
-                    t = (radius - d_prev) / (d - d_prev) if abs(d - d_prev) > 1e-12 else 0.5
-                    return (i - direction) + t * direction
-            return float(i)  # bord du profil
-
-        start_idx = find_intersection_idx(all_pts, arc_center, self.halfmoon_radius,
-                                          int(center_idx), -1)
-        end_idx   = find_intersection_idx(all_pts, arc_center, self.halfmoon_radius,
-                                          int(center_idx), +1)
-
+        # Calculate position range based on radius (width = 2 * radius approximately)
+        half_width_normalized = self.halfmoon_radius / chord
+        start_pos = self.position - half_width_normalized
+        end_pos = self.position + half_width_normalized
+        
+        # Get indices
+        start_idx = profile(start_pos)
+        end_idx = profile(end_pos)
+        
+        # Sample points along profile
         if start_idx > end_idx:
             start_idx, end_idx = end_idx, start_idx
-
+        
         indices = np.linspace(start_idx, end_idx, num_points)
-
+        
         points = []
         normals = []
         profile_normvectors = PolyLine2D(profile.normvectors)
-
+        
         for idx in indices:
+            # Get point on profile
             pt = profile[idx] * chord
             points.append(np.array(pt))
-
+            
+            # Get normal at this point
             int_idx = int(min(idx, len(profile_normvectors.data) - 1))
             norm = np.array(profile_normvectors.data[int_idx])
             norm_len = np.linalg.norm(norm)
             if norm_len > 1e-10:
                 norm = norm / norm_len
             normals.append(norm)
-
+        
         return points, normals
     
-    def get_halfmoon_points(self, rib, num_points=30, glider=None):
+    def get_halfmoon_points(self, rib, num_points=30):
         """
         Get the half-moon (crescent) fabric reinforcement outline.
+        
         - Outer edge: follows profile curve (with surface_offset)
         - Inner edge: circular ARC centered on attachment point
         """
-        points, normals = self._get_profile_section(rib, num_points, glider=glider)
-
+        points, normals = self._get_profile_section(rib, num_points)
+        
         if not points:
             return []
-
-        # Profil de référence (transformé si SingleSkin)
-        from openglider.glider.rib.rib import SingleSkinRib
-        if isinstance(rib, SingleSkinRib) and glider is not None:
-            try:
-                profile = rib.get_hull(glider)
-            except Exception:
-                profile = rib.profile_2d
-        else:
-            profile = rib.profile_2d
-
+        
+        # Get attachment point (center of the circular arc)
+        profile = rib.profile_2d
         center_idx = profile(self.position)
         arc_center = np.array(profile[center_idx]) * rib.chord
-
+        
         # Outer edge: follows profile with surface offset
         outer_points = []
         for pt, norm in zip(points, normals):
             outer_pt = pt - norm * self.surface_offset
             outer_points.append(outer_pt)
-
+        
         # Calculate angular range from arc_center to outer edge endpoints
         start_vec = outer_points[0] - arc_center
         end_vec = outer_points[-1] - arc_center
-
+        
         start_angle = np.arctan2(start_vec[1], start_vec[0])
         end_angle = np.arctan2(end_vec[1], end_vec[0])
-
+        
+        # Ensure we go the right way (shorter arc)
         angle_diff = end_angle - start_angle
         if angle_diff > np.pi:
             angle_diff -= 2 * np.pi
         elif angle_diff < -np.pi:
             angle_diff += 2 * np.pi
-
-        # Inner edge: circular arc centered at attachment point
+        
+        # Inner edge: circular arc centered at attachment point, radius = halfmoon_radius
         inner_points = []
         for i in range(num_points):
             t = i / (num_points - 1)
             angle = start_angle + t * angle_diff
+            
             inner_pt = arc_center + np.array([
                 self.halfmoon_radius * np.cos(angle),
                 self.halfmoon_radius * np.sin(angle)
             ])
             inner_points.append(inner_pt)
-
+        
+        # Combine: outer edge + reversed inner edge + close
         halfmoon = outer_points + list(reversed(inner_points)) + [outer_points[0]]
+        
         return halfmoon
-
-    def get_rod_sleeve_points(self, rib, num_points=30, glider=None):
+    
+    def get_rod_sleeve_points(self, rib, num_points=30):
         """
         Get the rod sleeve that sits INSIDE the half-moon arc.
+        Uses relative offsets from the half-moon arc and end offset to avoid touching edges.
         """
         if not self.rod_enabled:
             return [], []
-
-        points, normals = self._get_profile_section(rib, num_points, glider=glider)
-
+        
+        points, normals = self._get_profile_section(rib, num_points)
+        
         if not points:
             return [], []
-
-        from openglider.glider.rib.rib import SingleSkinRib
-        if isinstance(rib, SingleSkinRib) and glider is not None:
-            try:
-                profile = rib.get_hull(glider)
-            except Exception:
-                profile = rib.profile_2d
-        else:
-            profile = rib.profile_2d
-
+        
+        # Get attachment point (center of arcs)
+        profile = rib.profile_2d
         center_idx = profile(self.position)
         arc_center = np.array(profile[center_idx]) * rib.chord
-
+        
+        # Calculate angular range (same as half-moon)
         outer_points = []
         for pt, norm in zip(points, normals):
             outer_pt = pt - norm * self.surface_offset
             outer_points.append(outer_pt)
-
+        
         start_vec = outer_points[0] - arc_center
         end_vec = outer_points[-1] - arc_center
-
+        
         start_angle = np.arctan2(start_vec[1], start_vec[0])
         end_angle = np.arctan2(end_vec[1], end_vec[0])
-
+        
         angle_diff = end_angle - start_angle
         if angle_diff > np.pi:
             angle_diff -= 2 * np.pi
         elif angle_diff < -np.pi:
             angle_diff += 2 * np.pi
-
+        
+        # Apply end offset (convert degrees to radians)
         end_offset_rad = np.deg2rad(self.rod_end_offset)
         rod_start_angle = start_angle + end_offset_rad * np.sign(angle_diff)
         rod_angle_diff = angle_diff - 2 * end_offset_rad * np.sign(angle_diff)
-
+        
+        # Rod sleeve: INSIDE the half-moon arc (closer to center)
         rod_outer_radius = self.halfmoon_radius - self.rod_offset
         rod_inner_radius = rod_outer_radius - self.rod_width
+        
+        # Ensure positive radii
         rod_outer_radius = max(0.001, rod_outer_radius)
         rod_inner_radius = max(0.001, rod_inner_radius)
-
+        
         inner_curve = []
         outer_curve = []
-
+        
         for i in range(num_points):
             t = i / (num_points - 1)
             angle = rod_start_angle + t * rod_angle_diff
-
+            
+            # Inner edge of rod sleeve (closer to center)
             inner_pt = arc_center + np.array([
                 rod_inner_radius * np.cos(angle),
                 rod_inner_radius * np.sin(angle)
             ])
             inner_curve.append(inner_pt)
-
+            
+            # Outer edge of rod sleeve (closer to half-moon arc)
             outer_pt = arc_center + np.array([
                 rod_outer_radius * np.cos(angle),
                 rod_outer_radius * np.sin(angle)
             ])
             outer_curve.append(outer_pt)
-
+        
         return inner_curve, outer_curve
-
-    def get_flattened(self, rib, num_points=30, glider=None):
+    
+    def get_flattened(self, rib, num_points=30):
         """Get the flattened 2D representation."""
-        halfmoon_points = self.get_halfmoon_points(rib, num_points, glider=glider)
-        inner_rod, outer_rod = self.get_rod_sleeve_points(rib, num_points, glider=glider)
-
+        halfmoon_points = self.get_halfmoon_points(rib, num_points)
+        inner_rod, outer_rod = self.get_rod_sleeve_points(rib, num_points)
+        
+        # Create closed polygon for rod sleeve
         rod_points = []
         if inner_rod and outer_rod:
             rod_points = outer_rod + list(reversed(inner_rod)) + [outer_rod[0]]
-
+        
         return {
             'halfmoon': PolyLine2D(halfmoon_points),
             'rod_sleeve': PolyLine2D(rod_points),
         }
-
-    def get_3d(self, rib, num_points=30, glider=None):
+    
+    def get_3d(self, rib, num_points=30):
         """Get 3D representation."""
-        flat = self.get_flattened(rib, num_points, glider=glider)
+        flat = self.get_flattened(rib, num_points)
         return {
             'halfmoon': [rib.align([p[0], p[1], 0], scale=False) for p in flat['halfmoon'].data],
             'rod_sleeve': [rib.align([p[0], p[1], 0], scale=False) for p in flat['rod_sleeve'].data],

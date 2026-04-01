@@ -83,21 +83,26 @@ class ArcTool(BaseTool):
         self._setup_readonly_spinbox(self.Qflattening, " %", 1)
         self.Qflattening.setMaximum(100.0)
 
-        self.layout.setWidget(3, text_field, QtGui.QLabel("Arc length"))
-        self.layout.setWidget(3, input_field, self.Qarc_length)
-        self.layout.setWidget(4, text_field, QtGui.QLabel("Projected span"))
-        self.layout.setWidget(4, input_field, self.Qprojected_span)
-        self.layout.setWidget(5, text_field, QtGui.QLabel("Arc height"))
-        self.layout.setWidget(5, input_field, self.Qarc_height)
-        self.layout.setWidget(6, text_field, QtGui.QLabel("Flattening"))
-        self.layout.setWidget(6, input_field, self.Qflattening)
+        # Légende lecture seule
+        legend = QtGui.QLabel("ℹ️  Valeurs calculées (lecture seule)")
+        legend.setStyleSheet("color: #7ab3e0; font-style: italic; font-size: 10px;")
+        self.layout.setWidget(3, text_field, legend)
+
+        self.layout.setWidget(4, text_field, QtGui.QLabel("Arc length"))
+        self.layout.setWidget(4, input_field, self.Qarc_length)
+        self.layout.setWidget(5, text_field, QtGui.QLabel("Projected span"))
+        self.layout.setWidget(5, input_field, self.Qprojected_span)
+        self.layout.setWidget(6, text_field, QtGui.QLabel("Arc height"))
+        self.layout.setWidget(6, input_field, self.Qarc_height)
+        self.layout.setWidget(7, text_field, QtGui.QLabel("Flattening"))
+        self.layout.setWidget(7, input_field, self.Qflattening)
 
         # Separator - Control Points
         separator2 = QtGui.QFrame()
         separator2.setFrameShape(QtGui.QFrame.HLine)
         separator2.setFrameShadow(QtGui.QFrame.Sunken)
-        self.layout.setWidget(7, text_field, separator2)
-        self.layout.setWidget(7, input_field, QtGui.QLabel("Control Points (%)"))
+        self.layout.setWidget(8, text_field, separator2)
+        self.layout.setWidget(8, input_field, QtGui.QLabel("Control Points (%)"))
 
         # Control points table (normalized)
         self.Qpoints_table.setColumnCount(3)
@@ -107,8 +112,8 @@ class ArcTool(BaseTool):
         self.Qpoints_table.setMaximumHeight(180)
         self.Qpoints_table.setEditTriggers(QtGui.QAbstractItemView.DoubleClicked)
 
-        self.layout.setWidget(8, text_field, self.Qpoints_table)
-        self.layout.setWidget(9, input_field, self.Qapply_points)
+        self.layout.setWidget(9, text_field, self.Qpoints_table)
+        self.layout.setWidget(10, input_field, self.Qapply_points)
 
         # Connections
         self.Qnum_arc.valueChanged.connect(self.update_num)
@@ -122,7 +127,7 @@ class ArcTool(BaseTool):
         spinbox.setDecimals(decimals)
         spinbox.setMaximum(9999.0)
         spinbox.setMinimum(-9999.0)
-        spinbox.setStyleSheet("QDoubleSpinBox { background-color: #f0f0f0; }")
+        spinbox.setStyleSheet("QDoubleSpinBox { background-color: #1a3a5c; color: #ffffff; border: 1px solid #2a5a8c; }")
 
     def setup_pivy(self):
         self.arc_cpc.on_drag.append(self.update_spline)
@@ -218,6 +223,8 @@ class ArcTool(BaseTool):
             num_item = QtGui.QTableWidgetItem(str(i + 1))
             num_item.setFlags(num_item.flags() & ~QtCore.Qt.ItemIsEditable)
             num_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            num_item.setBackground(QtGui.QColor(26, 58, 92))  # bleu read-only
+            num_item.setForeground(QtGui.QColor(255, 255, 255))
             self.Qpoints_table.setItem(i, 0, num_item)
 
             # Y % (normalized)
@@ -226,7 +233,8 @@ class ArcTool(BaseTool):
             # First point Y is fixed at 0%, last point Y is fixed at 100%
             if i == 0 or i == len(controlpoints) - 1:
                 y_item.setFlags(y_item.flags() & ~QtCore.Qt.ItemIsEditable)
-                y_item.setBackground(QtGui.QColor(240, 240, 240))
+                y_item.setBackground(QtGui.QColor(26, 58, 92))  # bleu read-only
+                y_item.setForeground(QtGui.QColor(255, 255, 255))
             self.Qpoints_table.setItem(i, 1, y_item)
 
             # Z % (normalized - negative values are below)

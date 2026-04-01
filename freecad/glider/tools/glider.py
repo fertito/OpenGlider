@@ -304,22 +304,9 @@ class OGGlider(OGBaseObject):
 
     def loads(self, state):
         # seld.obj is not yet available!
-        import traceback
         obj = App.ActiveDocument.getObject(state["name"])
         obj.ParametricGlider = jsonify.loads(state["ParametricGlider"])["data"]
-        try:
-            obj.GliderInstance = obj.ParametricGlider.get_glider_3d()
-        except Exception as e:
-            App.Console.PrintWarning(
-                f"Warning: Could not fully generate 3D glider: {e}\n"
-                "The parametric glider was loaded but the 3D model could not "
-                "be generated. Please fix the line plan or cell count, then "
-                "use a tool to regenerate.\n"
-            )
-            App.Console.PrintWarning(
-                "Full traceback:\n" + traceback.format_exc() + "\n"
-            )
-            obj.GliderInstance = None
+        obj.GliderInstance = obj.ParametricGlider.get_glider_3d()
         return None
 
     #########################################  gui!!! ################################

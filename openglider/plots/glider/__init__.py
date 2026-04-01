@@ -125,7 +125,7 @@ class PlotMaker(object):
         self.ribs = []
         for rib in self.glider_3d.ribs:
             if isinstance(rib, SingleSkinRib):
-                rib_plot = SingleSkinRibPlot(rib)
+                rib_plot = SingleSkinRibPlot(rib, self.config)
             else:
                 rib_plot = self.RibPlot(rib, self.config)
 
@@ -185,7 +185,7 @@ class PlotMaker(object):
             if hasattr(rib, "reinforcements") and rib.reinforcements:
                 for reinf_idx, reinforcement in enumerate(rib.reinforcements):
                     try:
-                        flat = reinforcement.get_flattened(rib)
+                        flat = reinforcement.get_flattened(rib, glider=self.glider_3d)
                         unique_name = reinforcement.name or f"R{rib_idx+1}_{reinf_idx+1}"
                         
                         # Halfmoon part

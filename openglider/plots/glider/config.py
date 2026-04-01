@@ -57,6 +57,7 @@ class PatternConfig(Config):
     strap_num_folds = 1
 
     insert_attachment_point_text = True
+    include_buerzl = True
 
     layout_seperate_panels = True
 

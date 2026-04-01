@@ -8,7 +8,7 @@ from PySide import QtCore, QtGui
 
 from .tools import BaseTool, coin, input_field, text_field, vector3D
 from pivy.graphics import InteractionSeparator, Line, Marker
-from .design_path import DesignPath, BezierPath, LinePath, PolylinePath
+from .design_path import DesignPath, BezierPath, LinePath
 
 
 def refresh():
@@ -98,46 +98,24 @@ class DesignTool(BaseTool):
         # Design Path section
         self.Qadd_line = QtGui.QPushButton("+ Line")
         self.Qadd_line.setToolTip("Add a straight line path")
-        self.Qadd_polyline = QtGui.QPushButton("+ Polyline")
-        self.Qadd_polyline.setToolTip("Add a multi-segment straight line path")
         self.Qadd_bezier = QtGui.QPushButton("+ Bezier")
         self.Qadd_bezier.setToolTip("Add a cubic Bezier curve path")
-        
         path_buttons = QtGui.QHBoxLayout()
         path_buttons.addWidget(self.Qadd_line)
-        path_buttons.addWidget(self.Qadd_polyline)
         path_buttons.addWidget(self.Qadd_bezier)
         path_widget = QtGui.QWidget()
         path_widget.setLayout(path_buttons)
         self.tool_layout.setWidget(2, text_field, QtGui.QLabel("add path"))
         self.tool_layout.setWidget(2, input_field, path_widget)
         self.Qadd_line.clicked.connect(self.add_line_path)
-        self.Qadd_polyline.clicked.connect(self.add_polyline_path)
         self.Qadd_bezier.clicked.connect(self.add_bezier_path)
-        
-        # Add/Remove Point for Polyline
-        self.Qadd_point = QtGui.QPushButton("+ Pt")
-        self.Qadd_point.setToolTip("Add a point to the end of the selected path (Polyline mode)")
-        self.Qremove_point = QtGui.QPushButton("- Pt")
-        self.Qremove_point.setToolTip("Remove the last point from the selected path (Polyline mode)")
-        point_buttons = QtGui.QHBoxLayout()
-        point_buttons.addWidget(self.Qadd_point)
-        point_buttons.addWidget(self.Qremove_point)
-        point_widget = QtGui.QWidget()
-        point_widget.setLayout(point_buttons)
-        self.tool_layout.setWidget(3, text_field, QtGui.QLabel("modify path"))
-        self.tool_layout.setWidget(3, input_field, point_widget)
-        self.Qadd_point.clicked.connect(self.add_point_to_path)
-        self.Qremove_point.clicked.connect(self.remove_point_from_path)
-        
-        self._update_point_buttons_state()
 
         # Path cut type
         self.Qpath_cut_type = QtGui.QComboBox(self.tool_widget)
         for _, cut_type in Panel.CUT_TYPES():
             self.Qpath_cut_type.addItem(cut_type)
-        self.tool_layout.setWidget(4, text_field, QtGui.QLabel("path cut type"))
-        self.tool_layout.setWidget(4, input_field, self.Qpath_cut_type)
+        self.tool_layout.setWidget(3, text_field, QtGui.QLabel("path cut type"))
+        self.tool_layout.setWidget(3, input_field, self.Qpath_cut_type)
         self.Qpath_cut_type.currentIndexChanged.connect(self.path_cut_type_changed)
 
         # Add cuts at percentage - quick tool
@@ -153,8 +131,8 @@ class DesignTool(BaseTool):
         percent_layout.addWidget(self.Qadd_at_percent)
         percent_widget = QtGui.QWidget()
         percent_widget.setLayout(percent_layout)
-        self.tool_layout.setWidget(5, text_field, QtGui.QLabel("add at %"))
-        self.tool_layout.setWidget(5, input_field, percent_widget)
+        self.tool_layout.setWidget(4, text_field, QtGui.QLabel("add at %"))
+        self.tool_layout.setWidget(4, input_field, percent_widget)
         self.Qadd_at_percent.clicked.connect(self.add_cuts_at_percentage)
 
         # Apply and Delete buttons
@@ -167,8 +145,8 @@ class DesignTool(BaseTool):
         action_buttons.addWidget(self.Qdelete_path)
         action_widget = QtGui.QWidget()
         action_widget.setLayout(action_buttons)
-        self.tool_layout.setWidget(6, text_field, QtGui.QLabel("actions"))
-        self.tool_layout.setWidget(6, input_field, action_widget)
+        self.tool_layout.setWidget(5, text_field, QtGui.QLabel("actions"))
+        self.tool_layout.setWidget(5, input_field, action_widget)
         self.Qapply_paths.clicked.connect(self.apply_paths_to_cuts)
         self.Qdelete_path.clicked.connect(self.delete_selected_path)
 
@@ -182,8 +160,8 @@ class DesignTool(BaseTool):
         selection_buttons.addWidget(self.Qdelete_selected)
         selection_widget = QtGui.QWidget()
         selection_widget.setLayout(selection_buttons)
-        self.tool_layout.setWidget(7, text_field, QtGui.QLabel("selection"))
-        self.tool_layout.setWidget(7, input_field, selection_widget)
+        self.tool_layout.setWidget(6, text_field, QtGui.QLabel("selection"))
+        self.tool_layout.setWidget(6, input_field, selection_widget)
         self.Qselect_connected.clicked.connect(self.select_connected)
         self.Qdelete_selected.clicked.connect(self.delete_selected_cuts)
 
@@ -319,93 +297,6 @@ class DesignTool(BaseTool):
         path.setup_visuals(self.path_separator)
         self.design_paths.append(path)
         self._select_path(path)
-        
-    def add_polyline_path(self):
-        """Add a new polyline path."""
-        # Create polyline across current visible shape
-        if self.x_values and len(self.x_values) >= 2:
-            x_start = self.x_values[0]
-            x_end = self.x_values[-1]
-            x_mid = (x_start + x_end) / 2.0
-            # Default position at 20% chord
-            y_start = self.parametric_glider.shape[0, 0.2][1]
-            y_end = self.parametric_glider.shape[-1, 0.2][1]
-            y_mid = (y_start + y_end) / 2.0
-            
-            # Create a 3-point polyline by default
-            pts = [[x_start, y_start], [x_mid, y_mid], [x_end, y_end]]
-        else:
-            pts = [[0, 0], [2.5, 0], [5, 0]]
-            
-        path_id = f"path_{self._path_counter}"
-        self._path_counter += 1
-        
-        cut_type = self.Qpath_cut_type.currentText()
-        path = PolylinePath(
-            path_id,
-            cut_type,
-            self.side,
-            pts
-        )
-        path.setup_visuals(self.path_separator)
-        self.design_paths.append(path)
-        self._select_path(path)
-    
-    def add_point_to_path(self):
-        """Add a point to the end of the selected path."""
-        if not self._selected_path or len(self._selected_path.control_points) == 0:
-            return
-            
-        pts = self._selected_path.control_points
-        if len(pts) >= 2:
-            # Extrapolate from last two points
-            p1 = pts[-2]
-            p2 = pts[-1]
-            new_pt = [p2[0] + (p2[0] - p1[0]) * 0.5, p2[1] + (p2[1] - p1[1]) * 0.5]
-        else:
-            # Just copy the last point with an offset
-            p1 = pts[-1]
-            new_pt = [p1[0] + 0.5, p1[1]]
-            
-        self._selected_path.control_points.append(new_pt)
-        # Re-create visuals
-        self._refresh_path_visuals()
-        self._selected_path.select()
-        self._update_point_buttons_state()
-        
-    def remove_point_from_path(self):
-        """Remove the last point from the selected path."""
-        if not self._selected_path:
-            return
-            
-        # For Polyline, keep at least 2 points
-        min_pts = 2
-        # For Bezier, it's more complex, requiring specific amount of points, but we'll allow it generally,
-        # but really this is meant for Polyline which is why we enforce 2 point minimum
-        if isinstance(self._selected_path, BezierPath):
-            min_pts = 4 # Keep at least 4 for Bezier
-            
-        if len(self._selected_path.control_points) > min_pts:
-            self._selected_path.control_points.pop()
-            # Re-create visuals
-            self._refresh_path_visuals()
-            self._selected_path.select()
-            self._update_point_buttons_state()
-            
-    def _update_point_buttons_state(self):
-        """Update enabled state of add/remove point buttons."""
-        has_path = self._selected_path is not None
-        can_remove = False
-        
-        if has_path:
-            pts_count = len(self._selected_path.control_points)
-            if isinstance(self._selected_path, PolylinePath):
-                can_remove = pts_count > 2
-            elif isinstance(self._selected_path, BezierPath):
-                can_remove = pts_count > 4
-                
-        self.Qadd_point.setEnabled(has_path)
-        self.Qremove_point.setEnabled(can_remove)
     
     def add_bezier_path(self):
         """Add a new cubic Bezier path."""
@@ -455,7 +346,6 @@ class DesignTool(BaseTool):
                 self.Qpath_cut_type.blockSignals(True)
                 self.Qpath_cut_type.setCurrentIndex(idx)
                 self.Qpath_cut_type.blockSignals(False)
-        self._update_point_buttons_state()
     
     def path_cut_type_changed(self):
         """Handle path cut type change."""

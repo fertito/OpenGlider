@@ -1222,27 +1222,6 @@ quit
         # Min sink
         min_sink_idx = np.argmin(sink_rate)
         
-        # Store results for other tools (e.g., Lines Auto-placement)
-        if hasattr(self, 'cop_x_per_alpha') and len(self.cop_x_per_alpha) > 0:
-            try:
-                glider_3d = self.parametric_glider.get_glider_3d()
-                central_rib = glider_3d.ribs[0] if glider_3d.has_center_cell else glider_3d.ribs[len(glider_3d.ribs)//2]
-                le_x = central_rib.pos[0]
-                chord = central_rib.chord
-                
-                # CoP as percentage of central chord (positive backwards from LE)
-                cop_central_pct = ((self.cop_x_per_alpha[best_idx] - le_x) / chord) * 100
-                cop_global_pct = ((self.cop_x_global[best_idx] - le_x) / chord) * 100 if hasattr(self, 'cop_x_global') else cop_central_pct
-                
-                self.parametric_glider.aerodynamics_results = {
-                    'best_ld_alpha': np.rad2deg(self.alpha[best_idx]),
-                    'cop_central_pct': cop_central_pct,
-                    'cop_global_pct': cop_global_pct
-                }
-            except Exception as e:
-                import FreeCAD
-                FreeCAD.Console.PrintWarning(f"Failed to store aerodynamic CoP results: {e}\n")
-
         text = f"""<h3>Analysis Results</h3>
 <b>Configuration:</b>
 • Weight: {mass} kg
@@ -1376,23 +1355,17 @@ quit
                 glider_3d = self.parametric_glider.get_glider_3d()
                 central_rib = glider_3d.ribs[0] if glider_3d.has_center_cell else glider_3d.ribs[len(glider_3d.ribs)//2]
                 le_x = central_rib.pos[0]  # Leading edge X position
-                chord = central_rib.chord
                 
-                # Distance from leading edge as % of central chord
-                cop_central = ((self.cop_x_per_alpha - le_x) / chord) * 100  # %
-                cop_global = ((self.cop_x_global - le_x) / chord) * 100 if hasattr(self, 'cop_x_global') else cop_central
+                # Distance from leading edge (positive = behind LE)
+                cop_central = (self.cop_x_per_alpha - le_x) * 100  # cm
+                cop_global = (self.cop_x_global - le_x) * 100 if hasattr(self, 'cop_x_global') else cop_central
                 
                 # Plot both
-                ax4.plot(alpha_deg, cop_global, 'b-', linewidth=2, label='Average (full wing)')
+                ax4.plot(alpha_deg, cop_global, 'b-', linewidth=2, label='Global (full wing)')
                 ax4.plot(alpha_deg, cop_central, 'r-', linewidth=2, label='Central (y≈0)')
                 
-                # Mark best glide point
-                ax4.plot(alpha_deg[best_idx], cop_central[best_idx], 'go',
-                    markersize=10,
-                    label=f"Best L/D: {cop_central[best_idx]:.1f}% (α={alpha_deg[best_idx]:.1f}°)")
-                
                 ax4.set_xlabel("Angle of Attack α [°]")
-                ax4.set_ylabel("Position from LE [% chord]")
+                ax4.set_ylabel("Distance from LE [cm]")
                 ax4.set_title("Center of Pressure Position")
                 ax4.grid(True, alpha=0.3)
                 ax4.legend()
@@ -1611,9 +1584,7 @@ quit
         return [[p.x, p.y, p.z] for p in flow_path]
 
     def accept(self):
-        """Accept and close dialog - persist aerodynamic results."""
-        # Save aerodynamic results to the parametric glider
-        self.obj.Proxy.setParametricGlider(self.parametric_glider)
+        """Accept and close dialog."""
         self.cleanup()
         Gui.Control.closeDialog()
 

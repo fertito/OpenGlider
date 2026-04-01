@@ -496,9 +496,15 @@ class Glider(object):
         if include_mirrored:
             if hasattr(rib, "mirrored_rib") and rib.mirrored_rib:
                 rib = rib.mirrored_rib
+        rib_name = getattr(rib, "name", None)
         for att in self.attachment_points:
             if hasattr(att, "rib"):
-                if att.rib == rib:
+                # Comparaison par identité OU par nom (robuste avec SingleSkinRib)
+                match = (att.rib is rib) or (
+                    rib_name is not None and
+                    getattr(att.rib, "name", None) == rib_name
+                )
+                if match:
                     if not ((not brake) and att.rib_pos == 1.0):
                         attach_pts.append(att)
         return attach_pts
@@ -523,8 +529,6 @@ class Glider(object):
 
     @property
     def has_center_cell(self):
-        if not self.ribs:
-            return False
         return abs(self.ribs[0].pos[1]) > 1.0e-5
 
     @property

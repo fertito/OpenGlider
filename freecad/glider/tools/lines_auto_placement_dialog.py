@@ -102,6 +102,7 @@ class LineTypeConfigRow(QtGui.QWidget):
         self.position_spinbox.setDecimals(1)
         self.position_spinbox.setSuffix("%")
         self.position_spinbox.setFixedWidth(65)
+        self.position_spinbox.setToolTip("Position en % de la demi-envergure\nEx: 50% = milieu de l'aile")
         layout.addWidget(self.position_spinbox)
         
         # Interval
@@ -110,6 +111,7 @@ class LineTypeConfigRow(QtGui.QWidget):
         self.interval_spinbox.setValue(1)
         self.interval_spinbox.setPrefix("/")
         self.interval_spinbox.setFixedWidth(45)
+        self.interval_spinbox.setToolTip("Intervalle de nervures entre chaque point d'attache\nEx: /2 = une attache toutes les 2 nervures")
         layout.addWidget(self.interval_spinbox)
         
         # Start cell
@@ -118,6 +120,7 @@ class LineTypeConfigRow(QtGui.QWidget):
         self.start_spinbox.setValue(0)
         self.start_spinbox.setPrefix("@")
         self.start_spinbox.setFixedWidth(45)
+        self.start_spinbox.setToolTip("Cellule de départ (0 = bord d'attaque)\nEx: @2 = commence à la 3ème cellule")
         layout.addWidget(self.start_spinbox)
         
         # Group patterns (text input)
@@ -125,6 +128,12 @@ class LineTypeConfigRow(QtGui.QWidget):
         self.patterns_edit.setPlaceholderText("2:1, 3:1, ...")
         self.patterns_edit.setText(default_pattern)
         self.patterns_edit.setFixedWidth(120)
+        self.patterns_edit.setToolTip(
+            "Architecture de ramification des lignes.\n"
+            "Format : niveau1:niveau2:... séparés par des virgules\n"
+            "Ex: '2:1' = 1 élévateur → 2 suspentes principales → 1 attache/nervure\n"
+            "Ex: '3:1, 2:1' = 2 groupes avec architectures différentes"
+        )
         layout.addWidget(self.patterns_edit)
         
         # Connect signals
@@ -223,7 +232,25 @@ class LinesAutoPlacementDialog(QtGui.QDialog):
         
     def setup_ui(self):
         outer_layout = QtGui.QVBoxLayout(self)
-        
+
+        # ── Bandeau d'introduction ───────────────────────────────────────
+        intro = QtGui.QLabel(
+            "<b>Générateur automatique de plan de suspension</b><br>"
+            "Configure les paramètres ci-dessous puis clique sur <b>Generate</b> "
+            "pour créer automatiquement le plan de suspension complet.<br>"
+            "<br>"
+            "<b>Main Point</b> : position du point d'accroche pilote (élévateurs).<br>"
+            "<b>Riser length</b> : longueur des élévateurs.<br>"
+            "<b>Line types</b> : active les types A/B/C/D/F et leur position en envergure.<br>"
+            "<b>Pattern</b> : architecture de ramification ex. <i>2:1</i> = 1 ligne → 2 branches."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(
+            "background-color: #1a3a5c; color: #ffffff; "
+            "padding: 8px; border-radius: 4px; font-size: 9px;"
+        )
+        outer_layout.addWidget(intro)
+
         # Scroll area for all content
         scroll = QtGui.QScrollArea()
         scroll.setWidgetResizable(True)

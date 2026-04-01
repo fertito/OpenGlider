@@ -86,7 +86,7 @@ class RibPlot(object):
 
         # reinforcements (half-moon and rod sleeve)
         for reinforcement in self.rib.reinforcements:
-            flat = reinforcement.get_flattened(self.rib)
+            flat = reinforcement.get_flattened(self.rib, glider=glider)
             
             # Draw halfmoon outline
             if flat.get('halfmoon') and len(flat['halfmoon'].data) > 0:
@@ -110,33 +110,35 @@ class RibPlot(object):
             # Add profile mark at reinforcement position
             self.insert_mark(reinforcement.position, self.config.marks_attachment_point)
 
-        # Rod sleeves (profile extrados/intrados fourreaux) - add position marks
+        # Rod sleeves (profile extrados/intrados fourreaux) - géométrie + marques
         if hasattr(self.rib, 'rod_sleeves') and self.rib.rod_sleeves:
             for sleeve in self.rib.rod_sleeves:
                 try:
-                    # Get start and end chord positions
-                    start_chord = sleeve.start_chord
-                    end_chord = sleeve.end_chord
+                    print(f"[DEBUG ribs] sleeve surface={sleeve.surface}, rib={self.rib.name}")
+                    # Exporter la géométrie du fourreau
+                    flat = sleeve.get_flattened(self.rib, glider=glider)
+                    print(f"[DEBUG ribs] flat len={len(flat.data) if flat else -1}")
+                    if flat and len(flat.data) > 0:
+                        self.plotpart.layers["marks"].append(flat)
                     
-                    if sleeve.surface == 'extrados':
-                        # Extrados uses negative x values in profile coordinate system
-                        start_x = -start_chord
-                        end_x = -end_chord
+                    # Marques de position
+                    if sleeve.surface == 'leading_edge':
+                        # Jonc LE : marque sur intrados et extrados
+                        start_x = sleeve.start_chord_intrados
+                        end_x = -sleeve.end_chord_extrados
+                    elif sleeve.surface == 'extrados':
+                        start_x = -sleeve.start_chord
+                        end_x = -sleeve.end_chord
                     else:
-                        # Intrados uses positive x values
-                        start_x = start_chord
-                        end_x = end_chord
+                        start_x = sleeve.start_chord
+                        end_x = sleeve.end_chord
                     
-                    # Insert marks at start and end positions
-                    # Use diagonal_front for start, diagonal_back for end
                     self.insert_mark(start_x, self.config.marks_diagonal_front)
                     self.insert_mark(end_x, self.config.marks_diagonal_back)
-                    
-                    # Also add laser marks
                     self.insert_mark(start_x, self.config.marks_laser_diagonal, "L0")
                     self.insert_mark(end_x, self.config.marks_laser_diagonal, "L0")
                 except Exception as e:
-                    print(f"Failed to add rod sleeve marks: {e}")
+                    print(f"Failed to add rod sleeve: {e}")
 
         self._insert_text(self.rib.name)
         self.insert_controlpoints()
@@ -293,13 +295,7 @@ class RibPlot(object):
 
     def insert_holes(self):
         for hole in self.rib.holes:
-            poly = hole.get_flattened(self.rib)
-            self.plotpart.layers["cuts"].append(poly)
-        # Cone holes are stored separately to avoid Triangle meshing issues
-        cone_holes = getattr(self.rib, 'cone_holes', [])
-        for hole in cone_holes:
-            poly = hole.get_flattened(self.rib)
-            self.plotpart.layers["cuts"].append(poly)
+            self.plotpart.layers["cuts"].append(hole.get_flattened(self.rib))
 
     def draw_rib(self, glider):
         """
@@ -391,6 +387,16 @@ class SingleSkinRibPlot(RibPlot):
 
         return self.skin_cut
 
+    def insert_mark(self, position, mark_function, layer="marks"):
+        """Override pour ignorer toute marque dont la position dépasse te_end."""
+        te_end = self.rib.single_skin_par.get("te_end", 1.0)
+        if abs(position) > te_end:
+            return
+        try:
+            super(SingleSkinRibPlot, self).insert_mark(position, mark_function, layer)
+        except (IndexError, Exception):
+            pass  # Ignorer les marques dont l'index est hors limites du profil tronqué
+
     def flatten(self, glider):
         self._get_singleskin_cut(glider)
         return super(SingleSkinRibPlot, self).flatten(glider)
@@ -415,7 +421,10 @@ class SingleSkinRibPlot(RibPlot):
             # outer is going from the back back until the singleskin cut
 
             singleskin_cut_left = self._get_singleskin_cut(glider)
-            single_skin_cut = self.rib.profile_2d(singleskin_cut_left)
+            # Utiliser get_hull() au lieu de profile_2d pour avoir
+            # un index cohérent avec inner/outer (basés sur get_hull)
+            hull_profile = self.rib.get_hull(glider)
+            single_skin_cut = hull_profile(singleskin_cut_left)
 
             buerzl = PolyLine2D(
                 [
@@ -425,9 +434,36 @@ class SingleSkinRibPlot(RibPlot):
                     outer_rib[start],
                 ]
             )
-            contour += PolyLine2D(outer_rib[start:single_skin_cut])
+            import numpy as np
+            # A = point sur outer_rib au singleskin_cut
+            pt_A = np.array(outer_rib[int(single_skin_cut)])
+            pt_inner_cut = np.array(inner_rib[int(single_skin_cut)])
+            # Direction du segment perp : de outer vers inner (direction normale)
+            direction = pt_inner_cut - pt_A
+            direction_len = np.linalg.norm(direction)
+            if direction_len > 1e-10:
+                direction = direction / direction_len
+            # B = A + direction * allowance
+            pt_B = pt_A + direction * self.config.allowance_general
+            contour += PolyLine2D(outer_rib[start:int(single_skin_cut)])
+            contour += PolyLine2D([pt_A, pt_B])
             contour += PolyLine2D(inner_rib[single_skin_cut:stop])
-            contour += buerzl
+            if getattr(self.config, "include_buerzl", True):
+                contour += buerzl
+            else:
+                # Fermer sans buerzl : segment perpendiculaire au TE de inner_rib
+                import numpy as np
+                pt_te_inner = np.array(inner_rib[stop])
+                # Tangente de inner_rib au TE (dernier segment)
+                i_before_te = max(0, int(stop) - 1)
+                tang_te = pt_te_inner - np.array(inner_rib[i_before_te])
+                tang_te_len = np.linalg.norm(tang_te)
+                if tang_te_len > 1e-10:
+                    tang_te = tang_te / tang_te_len
+                # Perpendiculaire vers l'extérieur
+                perp_te = np.array([tang_te[1], -tang_te[0]])
+                pt_te_outer = pt_te_inner + perp_te * self.config.allowance_trailing_edge
+                contour += PolyLine2D([inner_rib[stop], pt_te_outer, outer_rib[start]])
 
         else:
             buerzl = PolyLine2D(
@@ -440,6 +476,7 @@ class SingleSkinRibPlot(RibPlot):
             )
 
             contour += PolyLine2D(outer_rib[start:stop])
-            contour += buerzl
+            if getattr(self.config, "include_buerzl", True):
+                contour += buerzl
 
         self.plotpart.layers["cuts"] += [contour]

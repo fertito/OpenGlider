@@ -137,56 +137,43 @@ class DesignPath:
         curve_points = self.get_curve_points(num_samples=200)
         intersections = []
         
-        # We must iterate along the curve to preserve the sequence of cuts 
-        # for folded paths (polylines that zigzag across cells).
-        last_rib = -1
-        for i in range(len(curve_points) - 1):
-            p1 = curve_points[i]
-            p2 = curve_points[i + 1]
+        for list_idx, x in enumerate(x_values):
+            # list_idx is the rib number in the x_values list
+            rib_nr = list_idx
             
-            # Check all ribs to see if this segment crosses them
-            min_x = min(p1[0], p2[0])
-            max_x = max(p1[0], p2[0])
-            
-            crossings = []
-            for list_idx, x in enumerate(x_values):
-                if min_x <= x <= max_x:
-                    crossings.append((list_idx, x))
-                    
-            # Sort crossings so they occur in the order p1 -> p2
-            if p1[0] > p2[0]:
-                crossings.sort(key=lambda item: item[1], reverse=True)
-            else:
-                crossings.sort(key=lambda item: item[1])
+            # Find where curve crosses this x value
+            for i in range(len(curve_points) - 1):
+                p1 = curve_points[i]
+                p2 = curve_points[i + 1]
                 
-            for list_idx, x in crossings:
-                if abs(p2[0] - p1[0]) > 0.001:
-                    t = (x - p1[0]) / (p2[0] - p1[0])
-                    y_intersect = p1[1] + t * (p2[1] - p1[1])
-                    
-                    # Check if within rib bounds
-                    try:
-                        if rib_bounds is not None and list_idx < len(rib_bounds):
-                            front_y, back_y = rib_bounds[list_idx]
-                            min_y = min(front_y, back_y)
-                            max_y = max(front_y, back_y)
-                        elif shape is not None:
-                            # list_idx is the rib_nr if no center cell is handled differently here,
-                            # but older code used shape[list_idx] which is correct for get_rib_intersections
-                            # context since list_idx matches the original implementation.
-                            min_y = shape[list_idx, 1.0][1]
-                            max_y = shape[list_idx, 0.0][1]
-                        else:
-                            min_y = float('-inf')
-                            max_y = float('inf')
+                # Check if x is between p1 and p2
+                if (p1[0] <= x <= p2[0]) or (p2[0] <= x <= p1[0]):
+                    if abs(p2[0] - p1[0]) > 0.001:
+                        t = (x - p1[0]) / (p2[0] - p1[0])
+                        y_intersect = p1[1] + t * (p2[1] - p1[1])
                         
-                        if min_y <= y_intersect <= max_y:
-                            if last_rib != list_idx:
-                                intersections.append((list_idx, y_intersect))
-                                last_rib = list_idx
-                    except (IndexError, TypeError):
-                        pass
-
+                        # Check if within rib bounds
+                        try:
+                            if rib_bounds is not None and list_idx < len(rib_bounds):
+                                # Use provided bounds
+                                front_y, back_y = rib_bounds[list_idx]
+                                min_y = min(front_y, back_y)
+                                max_y = max(front_y, back_y)
+                            elif shape is not None:
+                                # Fall back to shape for bounds
+                                min_y = shape[rib_nr, 1.0][1]
+                                max_y = shape[rib_nr, 0.0][1]
+                            else:
+                                # No bounds checking, accept all
+                                min_y = float('-inf')
+                                max_y = float('inf')
+                            
+                            if min_y <= y_intersect <= max_y:
+                                intersections.append((rib_nr, y_intersect))
+                        except (IndexError, TypeError):
+                            pass
+                        break  # Only one intersection per rib
+        
         return intersections
     
     def to_dict(self):
@@ -205,13 +192,6 @@ class DesignPath:
         path_type = data.get("type", "bezier")
         if path_type == "line":
             return LinePath(
-                data["id"],
-                data["cut_type"],
-                data["side"],
-                data["control_points"]
-            )
-        elif path_type == "polyline":
-            return PolylinePath(
                 data["id"],
                 data["cut_type"],
                 data["side"],
@@ -306,53 +286,4 @@ class LinePath(DesignPath):
             y = p0[1] + t * (p1[1] - p0[1])
             points.append([x, y, -0.005])
         
-        return points
-
-
-class PolylinePath(DesignPath):
-    """Path made of multiple connected straight line segments."""
-    
-    def __init__(self, path_id, cut_type, side, control_points):
-        super().__init__(path_id, "polyline", cut_type, side, control_points)
-    
-    def get_curve_points(self, num_samples=50):
-        """Get points along the polyline segments."""
-        if len(self.control_points) < 2:
-            return [[p[0], p[1], -0.005] for p in self.control_points]
-            
-        points = []
-        num_segments = len(self.control_points) - 1
-        
-        # Calculate total length to distribute samples somewhat evenly
-        segment_lengths = []
-        total_length = 0
-        for i in range(num_segments):
-            p0 = self.control_points[i]
-            p1 = self.control_points[i+1]
-            length = ((p1[0] - p0[0])**2 + (p1[1] - p0[1])**2)**0.5
-            segment_lengths.append(length)
-            total_length += length
-            
-        if total_length == 0:
-            return [[p[0], p[1], -0.005] for p in self.control_points]
-            
-        # Generate points for each segment
-        for i in range(num_segments):
-            p0 = self.control_points[i]
-            p1 = self.control_points[i+1]
-            
-            # Number of samples for this segment
-            seg_samples = max(2, int(num_samples * (segment_lengths[i] / total_length)))
-            
-            for j in range(seg_samples):
-                # Skip the last point of every segment except the very last segment
-                # to avoid duplicating points at the joints
-                if j == seg_samples - 1 and i < num_segments - 1:
-                    continue
-                    
-                t = j / (seg_samples - 1) if seg_samples > 1 else 0
-                x = p0[0] + t * (p1[0] - p0[0])
-                y = p0[1] + t * (p1[1] - p0[1])
-                points.append([x, y, -0.005])
-                
         return points

@@ -333,26 +333,37 @@ class SingleSkinTool(BaseTool):
     def _get_rib_indices_from_cells(self, cells):
         """Convert cell indices to rib indices.
         
-        A rib is only converted to SingleSkinRib if ALL its adjacent cells
-        are in the selected set. This prevents contaminating normal cells
-        that share a transition rib.
+        Only ribs where ALL adjacent cells are SS become SingleSkinRib.
+        Sealed ribs include transition ribs AND both ribs of boundary
+        full cells (the full cell adjacent to SS zone).
         
-        Rib i is adjacent to cell i-1 (if i > 0) and cell i (if i < num_cells).
+        Returns (rib_indices, sealed_rib_indices).
         """
         cells_set = set(cells)
         total_ribs = self.num_ribs
         total_cells = self.num_cells
         ribs = []
+        sealed_ribs = set()
+        boundary_full_cells = set()
         for rib_idx in range(total_ribs):
             adjacent_cells = []
             if rib_idx > 0:
                 adjacent_cells.append(rib_idx - 1)
             if rib_idx < total_cells:
                 adjacent_cells.append(rib_idx)
-            # Only include if ALL adjacent cells are selected
-            if all(c in cells_set for c in adjacent_cells):
+            ss_adjacent = [c for c in adjacent_cells if c in cells_set]
+            non_ss_adjacent = [c for c in adjacent_cells if c not in cells_set]
+            if ss_adjacent and not non_ss_adjacent:
                 ribs.append(rib_idx)
-        return ribs
+            elif ss_adjacent and non_ss_adjacent:
+                sealed_ribs.add(rib_idx)
+                for c in non_ss_adjacent:
+                    boundary_full_cells.add(c)
+        # Seal BOTH ribs of each boundary full cell
+        for cell_idx in boundary_full_cells:
+            sealed_ribs.add(cell_idx)
+            sealed_ribs.add(cell_idx + 1)
+        return ribs, sealed_ribs
 
     def _get_single_skin_par(self):
         """Gather all single_skin_par from the UI widgets."""
@@ -392,7 +403,8 @@ class SingleSkinTool(BaseTool):
         if not selected_cells:
             return glider
 
-        rib_indices = self._get_rib_indices_from_cells(selected_cells)
+        cells_set = set(selected_cells)
+        rib_indices, sealed_rib_indices = self._get_rib_indices_from_cells(selected_cells)
         rib_indices_set = set(rib_indices)
         single_skin_par = self._get_single_skin_par()
 
@@ -416,11 +428,11 @@ class SingleSkinTool(BaseTool):
 
         glider.replace_ribs(new_ribs)
 
-        # Clear existing holes from SS ribs — hole design holes are
-        # placed on the full airfoil profile, but SS profiles are truncated
-        # (bows replace intrados), so these holes would overflow the geometry
-        for rib in glider.ribs:
+        # Clear holes from SS ribs AND sealed ribs (boundary full cell walls)
+        for i, rib in enumerate(glider.ribs):
             if isinstance(rib, SingleSkinRib):
+                rib.holes = []
+            elif i in sealed_rib_indices:
                 rib.holes = []
 
         # Add SS-specific holes if enabled
@@ -449,11 +461,10 @@ class SingleSkinTool(BaseTool):
                 hull_profile = rib.get_hull(glider)
                 rib.profile_2d = hull_profile
 
-        # Remove intrados panels from single-skin cells
-        # A cell is single-skin only if BOTH its ribs are SingleSkinRib
+        # Remove intrados panels from single-skin cells (by cell index)
         double_first = self.double_first_cb.isChecked()
-        for cell in glider.cells:
-            if isinstance(cell.rib1, SingleSkinRib) and isinstance(cell.rib2, SingleSkinRib):
+        for cell_idx, cell in enumerate(glider.cells):
+            if cell_idx in cells_set:
                 if double_first:
                     extrados = [p for p in cell.panels if not p.is_lower()]
                     intrados = [p for p in cell.panels if p.is_lower()]
@@ -461,6 +472,43 @@ class SingleSkinTool(BaseTool):
                     cell.panels = extrados + intrados[:1]
                 else:
                     cell.panels = [p for p in cell.panels if not p.is_lower()]
+
+        # Align SS rib profiles with line pull direction
+        for rib in glider.ribs:
+            if not isinstance(rib, SingleSkinRib):
+                continue
+            connected_lines = []
+            for line in glider.lineset.uppermost_lines:
+                if hasattr(line.upper_node, 'rib') and (
+                        line.upper_node.rib is rib or
+                        (hasattr(line.upper_node.rib, 'name') and
+                         line.upper_node.rib.name == rib.name)):
+                    connected_lines.append(line)
+            if not connected_lines:
+                continue
+            resultant = np.zeros(3)
+            for line in connected_lines:
+                if line.force is not None and line.force > 0:
+                    pull_dir = line.lower_node.vec - line.upper_node.vec
+                    pull_dir_norm = pull_dir / np.linalg.norm(pull_dir)
+                    resultant += line.force * pull_dir_norm
+            res_norm = np.linalg.norm(resultant)
+            if res_norm < 1e-9:
+                continue
+            resultant /= res_norm
+            rot = rib.rotation_matrix
+            chord_3d = np.array(rot([1, 0, 0]))
+            current_normal = np.array(rot([0, 0, 1]))
+            desired_normal = np.cross(chord_3d, resultant)
+            dn_norm = np.linalg.norm(desired_normal)
+            if dn_norm < 1e-9:
+                continue
+            desired_normal /= dn_norm
+            if np.dot(desired_normal, current_normal) < 0:
+                desired_normal = -desired_normal
+            cos_angle = np.clip(np.dot(current_normal, desired_normal), -1, 1)
+            sin_angle = np.dot(np.cross(desired_normal, current_normal), chord_3d)
+            rib.xrot = np.arctan2(sin_angle, cos_angle)
 
         return glider
 

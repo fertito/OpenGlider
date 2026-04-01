@@ -222,9 +222,9 @@ class SingleSkinRibFeature(BaseFeature):
         glider = copy.deepcopy(self.obj.parent.Proxy.getGliderInstance())
         new_ribs = []
 
-        single_skin_par = {
+        single_skin_par_base = {
             "att_dist": self.obj.att_dist,
-            "height": self.obj.height,
+            "height": list(self.obj.height) if hasattr(self.obj.height, "__iter__") else [self.obj.height],
             "num_points": self.obj.num_points,
             "le_gap": self.obj.le_gap,
             "te_gap": self.obj.te_gap,
@@ -235,10 +235,14 @@ class SingleSkinRibFeature(BaseFeature):
             "continued_min_angle": self.obj.continued_min_angle,
             "continued_min_delta_y": self.obj.continued_min_delta_y,
             "continued_min_x": self.obj.continued_min_x,
+            "camber": self.obj.camber,
         }
 
         for i, rib in enumerate(glider.ribs):
             if i in self.obj.ribs:
+                # Paramètres spécifiques à cette nervure
+                single_skin_par = dict(single_skin_par_base)
+                single_skin_par["te_end"] = self.obj.te_end[i] if i < len(self.obj.te_end) else 1.0
                 if not isinstance(rib, SingleSkinRib):
                     new_ribs.append(SingleSkinRib.from_rib(rib, single_skin_par))
                 else:
@@ -272,7 +276,7 @@ class SingleSkinRibFeature(BaseFeature):
         return glider
 
     def addProperties(self):
-        self.addProperty("height", 0.5, "bows", "docs")
+        self.addProperty("height", [0.5], "bows", "height per bow (list, last value repeated if shorter than bow count)")
         self.addProperty("att_dist", 0.1, "bows", "docs")
         self.addProperty("num_points", 20, "bows", "number of points")
         self.addProperty(
@@ -298,9 +302,12 @@ class SingleSkinRibFeature(BaseFeature):
         self.addProperty("continued_min_angle", 0.0, "bows", "no idea")
         self.addProperty("continued_min_delta_y", 0.0, "bows", "no idea")
         self.addProperty("continued_min_x", 0.0, "bows", "no idea")
+        self.addProperty("camber", 0.0, "bows", "closure curve camber (0=straight, >0=outward bulge)")
         glider = self.obj.parent.Proxy.getGliderInstance()
         angle_list = [0.0 for _ in glider.ribs]
         self.addProperty("xrot", angle_list, "not_yet", "set rib angles")
+        te_end_list = [1.0 for _ in glider.ribs]
+        self.addProperty("te_end", te_end_list, "bows", "extrados cutoff (1.0=TE, e.g. 0.7=70% chord)")
 
 
 class VSingleSkinRibFeature(OGGliderVP):
