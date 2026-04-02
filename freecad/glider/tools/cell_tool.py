@@ -7,6 +7,7 @@ from PySide import QtGui
 from .glider import draw_glider, draw_lines
 from .tools import BaseTool, input_field
 from .table import base_table_widget
+from .pull_axis_utils import compute_pull_axis_projection
 
 
 def refresh():
@@ -111,19 +112,16 @@ class CellTool(BaseTool):
         upper_nodes = lineset.get_upper_nodes()
         
         # Map rib_no to attachment positions
-        # For UpperNode2D: cell_no is the cell, cell_pos determines if on left (0) or right (1) rib
-        # rib_no = cell_no when cell_pos=0 (left rib of cell)
         rib_attachments = {}
         for node in upper_nodes:
-            # Skip brake/stabilo lines
             if exclude_brake:
-                layer = (node.layer or "").lower()
-                if layer in ("brake", "stabilo", "s", "frein", "f"):
+                name = (node.name or "").upper()
+                layer_attr = (node.layer or "").upper()
+                if any(kw in name for kw in ("BRAKE", "STABILO", "FREIN")):
+                    continue
+                if layer_attr in ("BRAKE", "STABILO", "S", "FREIN", "F"):
                     continue
             
-            # Calculate actual rib number
-            # cell_no is 0-indexed, cell_pos is usually 0
-            # Attachment on left rib of cell N means rib N
             rib_no = node.cell_no + int(node.cell_pos) + self.parametric_glider.shape.has_center_cell
             
             if rib_no not in rib_attachments:
@@ -140,22 +138,91 @@ class CellTool(BaseTool):
         """
         Get attachment points with their line layer (A, B, C, D, etc.).
         Returns dict mapping rib_no -> list of (rib_pos, layer) tuples.
+        
+        Layer is determined by position on chord:
+        1. All unique rib_pos values are grouped with tolerance
+        2. Only position groups appearing on ≥40% of ribs are kept (filters stabilo/brake)
+        3. Remaining groups are sorted front-to-back and assigned A, B, C, D labels
         """
         lineset = self.parametric_glider.lineset
         upper_nodes = lineset.get_upper_nodes()
         
-        rib_attachments = {}
+        layer_letters = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        
+        # First pass: collect all attachment points with their rib_no
+        raw_attachments = {}  # rib_no -> list of rib_pos
         for node in upper_nodes:
-            layer = (node.layer or "").upper()
-            # Skip brake/stabilo lines
-            if layer in ("BRAKE", "STABILO", "S", "FREIN", "F"):
+            # Skip obvious brake/stabilo from name or layer attributes
+            name = (node.name or "").upper()
+            layer_attr = (node.layer or "").upper()
+            if any(kw in name for kw in ("BRAKE", "STABILO", "FREIN")):
+                continue
+            if layer_attr in ("BRAKE", "STABILO", "S", "FREIN", "F"):
                 continue
             
             rib_no = node.cell_no + int(node.cell_pos) + self.parametric_glider.shape.has_center_cell
             
-            if rib_no not in rib_attachments:
-                rib_attachments[rib_no] = []
-            rib_attachments[rib_no].append((node.rib_pos, layer))
+            if rib_no not in raw_attachments:
+                raw_attachments[rib_no] = []
+            raw_attachments[rib_no].append(node.rib_pos)
+        
+        if not raw_attachments:
+            return {}
+        
+        total_ribs = len(raw_attachments)
+        
+        # Second pass: group positions with tolerance, tracking which ribs each group appears on
+        tolerance = 0.03
+        all_positions_with_rib = []  # (pos, rib_no) pairs
+        for rib_no, positions in raw_attachments.items():
+            for pos in positions:
+                all_positions_with_rib.append((pos, rib_no))
+        
+        all_positions_with_rib.sort(key=lambda x: x[0])
+        
+        # Group: (center_pos, set of rib_nos)
+        position_groups_raw = []
+        for pos, rib_no in all_positions_with_rib:
+            merged = False
+            for i, (center, ribs_set) in enumerate(position_groups_raw):
+                if abs(pos - center) < tolerance:
+                    ribs_set.add(rib_no)
+                    merged = True
+                    break
+            if not merged:
+                position_groups_raw.append((pos, {rib_no}))
+
+        
+        # Filter: keep only groups appearing on >= 40% of ribs (main line families)
+        min_ribs = max(2, int(total_ribs * 0.4))
+        main_groups = [(c, r) for c, r in position_groups_raw if len(r) >= min_ribs]
+        main_groups.sort(key=lambda x: x[0])  # Sort front-to-back
+        
+        # Assign A, B, C, D labels to main groups
+        position_groups = []  # (center, label)
+        for i, (center, ribs_set) in enumerate(main_groups):
+            label = layer_letters[i] if i < len(layer_letters) else f"L{i}"
+            position_groups.append((center, label))
+        
+
+        
+        # Third pass: assign layer to each point based on closest MAIN group
+        # Skip points that don't match any main group (tolerance * 3)
+        max_dist = tolerance * 5
+        rib_attachments = {}
+        for rib_no, positions in raw_attachments.items():
+            rib_attachments[rib_no] = []
+            for rib_pos in positions:
+                best_layer = None
+                best_dist = float('inf')
+                for center, label in position_groups:
+                    dist = abs(rib_pos - center)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_layer = label
+                # Only include if close enough to a main group
+                if best_layer and best_dist < max_dist:
+                    rib_attachments[rib_no].append((rib_pos, best_layer))
         
         return rib_attachments
 
@@ -164,80 +231,137 @@ class CellTool(BaseTool):
         """
         Auto-generate diagonal ribs from attachment points.
         Shows configuration dialog with per-line-type parameters.
+        Supports two modes: Percentage (% avant/arrière axe) and Angle (opening angle from pull axis).
         """
+        import math
+        
         # Configuration dialog
         dialog = QtGui.QDialog()
-        dialog.setWindowTitle("Configuration des diagonales")
-        dialog.setMinimumWidth(550)
+        dialog.setWindowTitle("Diagonal Auto-fill Configuration")
+        dialog.setMinimumWidth(600)
         layout = QtGui.QVBoxLayout(dialog)
         
+        # Mode selection
+        mode_layout = QtGui.QHBoxLayout()
+        mode_layout.addWidget(QtGui.QLabel("Mode:"))
+        mode_combo = QtGui.QComboBox()
+        mode_combo.addItems(["Percentage", "Angle"])
+        saved_mode = getattr(self.parametric_glider, 'diagonal_autofill_mode', 'percent')
+        mode_combo.setCurrentIndex(0 if saved_mode == 'percent' else 1)
+        mode_layout.addWidget(mode_combo)
+        mode_layout.addStretch()
+        layout.addLayout(mode_layout)
+        
+        # Help text (updates with mode)
+        help_label = QtGui.QLabel()
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet("color: #555; font-size: 11px; padding: 4px; background: #f8f8f8; border-radius: 3px;")
+        layout.addWidget(help_label)
+        
+        HELP_PERCENT = (
+            "<b>Percentage mode:</b> For each attachment point, the pull axis is projected "
+            "onto the extrados. The diagonal extends a fixed <i>% of chord</i> forward and backward "
+            "from this projection point. Adjust <i>% Fwd</i> and <i>% Aft</i> per line layer."
+        )
+        HELP_ANGLE = (
+            "<b>Angle mode:</b> For each attachment point, the pull axis is used as bisector. "
+            "Two rays are traced at ±<i>angle/2</i> from the pull axis, starting from the base edges "
+            "(intrados), until they meet the extrados of the adjacent cell. This produces diagonals "
+            "whose opening adapts naturally to the local profile geometry."
+        )
+        
         # Header
-        header = QtGui.QLabel("Paramètres par type de ligne")
+        header = QtGui.QLabel("Parameters per line layer")
         header.setStyleSheet("font-weight: bold; font-size: 12px;")
         layout.addWidget(header)
         
-        # Create table for line parameters
+        # Create table for line parameters - 5 columns, show/hide based on mode
         line_types = ["A", "B", "C", "D"]
-        param_table = QtGui.QTableWidget(len(line_types), 4)
+        param_table = QtGui.QTableWidget(len(line_types), 5)
         param_table.setHorizontalHeaderLabels([
-            "Largeur intrados (cm)",
-            "Extrados début (%)",
-            "Extrados fin (%)",
-            "Nb bandes"
+            "Intrados width (cm)",    # col 0 - always visible
+            "% Fwd of axis",          # col 1 - percent mode only
+            "% Aft of axis",          # col 2 - percent mode only
+            "Angle (°)",              # col 3 - angle mode only
+            "Num. bands"              # col 4 - always visible
         ])
         param_table.setVerticalHeaderLabels(line_types)
         param_table.horizontalHeader().setStretchLastSection(True)
         
-        # Default values for each line type - read from ParametricGlider for persistence
-        # (intrados_cm, extrados_start_%, extrados_end_%, num_bands)
+        # Default values - read from ParametricGlider for persistence
         saved_params = getattr(self.parametric_glider, 'diagonal_autofill_params', None)
+        saved_angles = getattr(self.parametric_glider, 'diagonal_autofill_angles', None)
         if saved_params:
-            defaults = dict(saved_params)  # Copy to avoid modifying the original
+            defaults = dict(saved_params)
         else:
             defaults = {
-                "A": (4.0, 5.0, 15.0, 1),
-                "B": (4.0, 15.0, 30.0, 1),
-                "C": (4.0, 30.0, 50.0, 1),
-                "D": (4.0, 50.0, 75.0, 1),
+                "A": (4.0, 5.0, 5.0, 1),
+                "B": (4.0, 7.0, 8.0, 1),
+                "C": (4.0, 8.0, 12.0, 1),
+                "D": (4.0, 10.0, 15.0, 1),
             }
+        if saved_angles:
+            angle_defaults = dict(saved_angles)
+        else:
+            angle_defaults = {"A": 45.0, "B": 45.0, "C": 45.0, "D": 45.0}
         
         line_spinboxes = {}
+        angle_spinboxes = {}
         for row, line_type in enumerate(line_types):
             intrados_spin = QtGui.QDoubleSpinBox()
             intrados_spin.setRange(1, 20)
             intrados_spin.setValue(defaults[line_type][0])
             intrados_spin.setSuffix(" cm")
             
-            extrados_start_spin = QtGui.QDoubleSpinBox()
-            extrados_start_spin.setRange(0, 100)
-            extrados_start_spin.setValue(defaults[line_type][1])
-            extrados_start_spin.setSuffix(" %")
+            before_axis_spin = QtGui.QDoubleSpinBox()
+            before_axis_spin.setRange(0, 50)
+            before_axis_spin.setValue(defaults[line_type][1])
+            before_axis_spin.setSuffix(" %")
             
-            extrados_end_spin = QtGui.QDoubleSpinBox()
-            extrados_end_spin.setRange(0, 100)
-            extrados_end_spin.setValue(defaults[line_type][2])
-            extrados_end_spin.setSuffix(" %")
+            after_axis_spin = QtGui.QDoubleSpinBox()
+            after_axis_spin.setRange(0, 50)
+            after_axis_spin.setValue(defaults[line_type][2])
+            after_axis_spin.setSuffix(" %")
+            
+            angle_spin = QtGui.QDoubleSpinBox()
+            angle_spin.setRange(5, 120)
+            angle_spin.setValue(angle_defaults.get(line_type, 45.0))
+            angle_spin.setSuffix(" °")
+            angle_spin.setSingleStep(5.0)
             
             num_bands_spin = QtGui.QSpinBox()
             num_bands_spin.setRange(1, 10)
             num_bands_spin.setValue(defaults[line_type][3])
             
             param_table.setCellWidget(row, 0, intrados_spin)
-            param_table.setCellWidget(row, 1, extrados_start_spin)
-            param_table.setCellWidget(row, 2, extrados_end_spin)
-            param_table.setCellWidget(row, 3, num_bands_spin)
+            param_table.setCellWidget(row, 1, before_axis_spin)
+            param_table.setCellWidget(row, 2, after_axis_spin)
+            param_table.setCellWidget(row, 3, angle_spin)
+            param_table.setCellWidget(row, 4, num_bands_spin)
             
-            line_spinboxes[line_type] = (intrados_spin, extrados_start_spin, extrados_end_spin, num_bands_spin)
+            line_spinboxes[line_type] = (intrados_spin, before_axis_spin, after_axis_spin, num_bands_spin)
+            angle_spinboxes[line_type] = angle_spin
+        
+        # Show/hide columns and help text based on mode
+        def update_columns():
+            is_angle = mode_combo.currentIndex() == 1
+            param_table.setColumnHidden(1, is_angle)   # % Fwd
+            param_table.setColumnHidden(2, is_angle)   # % Aft
+            param_table.setColumnHidden(3, not is_angle)  # Angle
+            help_label.setText(HELP_ANGLE if is_angle else HELP_PERCENT)
+        
+        mode_combo.currentIndexChanged.connect(update_columns)
+        update_columns()  # Apply initial state
         
         layout.addWidget(param_table)
         
         # Vertical offset for all diagonals (in mm)
         layout.addWidget(QtGui.QLabel(""))
         offset_layout = QtGui.QHBoxLayout()
-        offset_layout.addWidget(QtGui.QLabel("Décalage vertical (depuis extrados):"))
+        offset_layout.addWidget(QtGui.QLabel("Vertical offset (from extrados):"))
         offset_spin = QtGui.QSpinBox()
         offset_spin.setRange(0, 100)
-        offset_spin.setValue(getattr(self.parametric_glider, 'diagonal_autofill_offset', 0))  # Restore saved value
+        offset_spin.setValue(getattr(self.parametric_glider, 'diagonal_autofill_offset', 0))
         offset_spin.setSuffix(" mm")
         offset_layout.addWidget(offset_spin)
         offset_layout.addStretch()
@@ -254,15 +378,21 @@ class CellTool(BaseTool):
         if dialog.exec_() != QtGui.QDialog.Accepted:
             return
         
+        # Determine selected mode
+        use_angle_mode = mode_combo.currentIndex() == 1
+        
         # Save entered values to ParametricGlider for persistence
+        self.parametric_glider.diagonal_autofill_mode = 'angle' if use_angle_mode else 'percent'
         self.parametric_glider.diagonal_autofill_params = {}
-        for line_type, (intrados_spin, ext_start_spin, ext_end_spin, num_bands_spin) in line_spinboxes.items():
+        self.parametric_glider.diagonal_autofill_angles = {}
+        for line_type, (intrados_spin, before_spin, after_spin, num_bands_spin) in line_spinboxes.items():
             self.parametric_glider.diagonal_autofill_params[line_type] = (
                 intrados_spin.value(),
-                ext_start_spin.value(),
-                ext_end_spin.value(),
+                before_spin.value(),
+                after_spin.value(),
                 num_bands_spin.value()
             )
+            self.parametric_glider.diagonal_autofill_angles[line_type] = angle_spinboxes[line_type].value()
         self.parametric_glider.diagonal_autofill_offset = offset_spin.value()
         
         # Get vertical offset in mm - will be converted per position using real profile thickness
@@ -277,7 +407,7 @@ class CellTool(BaseTool):
         ref_rib = glider_3d.ribs[ref_rib_index]
         ref_chord = ref_rib.chord
         
-        print(f"DEBUG: Reference rib {ref_rib_index}, chord = {ref_chord*100:.1f} cm")
+
         
         # Function to calculate height value for a given x position with offset
         def get_extrados_height_with_offset(x_pos, offset_mm):
@@ -316,7 +446,7 @@ class CellTool(BaseTool):
         
         # Calculate extrados_height at a reference position (middle of chord)
         ref_extrados_height = get_extrados_height_with_offset(0.3, offset_mm)
-        print(f"DEBUG: offset_mm={offset_mm}, ref_extrados_height at x=0.3 = {ref_extrados_height:.4f}")
+
         
         # Function to split extrados range into multiple bands with gaps
         def split_range_into_bands(start, end, num_bands):
@@ -344,38 +474,133 @@ class CellTool(BaseTool):
         # Get per-line-type parameters
         chord_cm = ref_chord * 100  # Convert to cm
         line_params = {}
-        for line_type, (intrados_spin, ext_start_spin, ext_end_spin, num_bands_spin) in line_spinboxes.items():
+        for line_type, (intrados_spin, before_spin, after_spin, num_bands_spin) in line_spinboxes.items():
             # Convert cm to fraction of chord, % to fraction
             half_width_intrados = (intrados_spin.value() / 2) / chord_cm
-            extrados_start = ext_start_spin.value() / 100.0
-            extrados_end = ext_end_spin.value() / 100.0
+            before_axis = before_spin.value() / 100.0
+            after_axis = after_spin.value() / 100.0
             num_bands = num_bands_spin.value()
-            
-            # Calculate extrados height at the middle of the extrados range
-            mid_x = (extrados_start + extrados_end) / 2
-            ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
+            angle_deg = angle_spinboxes[line_type].value()
             
             line_params[line_type] = {
                 "half_intrados": half_width_intrados,
-                "extrados_start": extrados_start,
-                "extrados_end": extrados_end,
-                "extrados_height": ext_height,
+                "before_axis": before_axis,
+                "after_axis": after_axis,
                 "num_bands": num_bands,
+                "angle_deg": angle_deg,
             }
-        
-        print(f"DEBUG: line_params = {line_params}")
         
         # Default params for unknown line types
         default_params = line_params.get("A", {
             "half_intrados": 0.02,
-            "extrados_start": 0.05,
-            "extrados_end": 0.15,
-            "extrados_height": 1.0,
+            "before_axis": 0.05,
+            "after_axis": 0.05,
             "num_bands": 1,
+            "angle_deg": 45.0,
         })
+        
+        # Pre-compute pull axis projections for all ribs (keyed by rib index)
+        # Store full projection data for both % mode (extrados_intersection_x) and angle mode
+        rib_projections = {}  # rib_index -> {ap_rib_pos -> projection_dict}
+        rib_extrados_polys = {}  # rib_index -> extrados PolyLine2D
+        for rib_idx, rib in enumerate(glider_3d.ribs):
+            projections = compute_pull_axis_projection(rib, glider_3d)
+            if projections:
+                proj_map = {}
+                for proj in projections:
+                    proj_map[round(proj['ap'].rib_pos, 4)] = proj
+                rib_projections[rib_idx] = proj_map
+            # Cache extrados poly for angle intersection
+            try:
+                rib_extrados_polys[rib_idx] = rib.profile_2d.get_extrados_poly()
+            except Exception:
+                pass
+        
+        def _get_axis_x(projections, rib_idx, rib_pos, before, after):
+            """Look up pull axis extrados intersection for a given rib+AP."""
+            if rib_idx in projections:
+                proj_map = projections[rib_idx]
+                best_key = min(proj_map.keys(), key=lambda k: abs(k - round(rib_pos, 4)), default=None)
+                if best_key is not None and abs(best_key - round(rib_pos, 4)) < 0.05:
+                    return proj_map[best_key]['extrados_intersection_x']
+            return rib_pos
+        
+        def _get_full_proj(projections, rib_idx, rib_pos):
+            """Get full projection dict for a given rib+AP (for angle mode)."""
+            if rib_idx in projections:
+                proj_map = projections[rib_idx]
+                best_key = min(proj_map.keys(), key=lambda k: abs(k - round(rib_pos, 4)), default=None)
+                if best_key is not None and abs(best_key - round(rib_pos, 4)) < 0.05:
+                    return proj_map[best_key]
+            return None
+        
+        def _compute_angle_extrados(rib_idx, rib_pos, half_intrados, angle_deg):
+            """Compute extrados x-values using angle mode (trapezoid shape).
+            
+            The diagonal is a truncated triangle (trapezoid):
+            - Base: intrados width centered on AP (2 * half_intrados)
+            - Sides: at ±angle/2 from pull axis (bisector)
+            - Top: intersection with extrados
+            
+            Rays start from each base EDGE and go in the direction
+            at ±angle/2 from the pull axis until they hit the extrados.
+            """
+            proj = _get_full_proj(rib_projections, rib_idx, rib_pos)
+            if proj is None:
+                return None
+            
+            extrados_poly = rib_extrados_polys.get(rib_idx)
+            if extrados_poly is None:
+                return None
+            
+            import numpy as np
+            
+            # Pull axis direction (from pilot to AP, normalized 2D profile coords)
+            line_dir = proj['line_direction_2d']
+            
+            # Base edge positions (intrados, in profile coords)
+            rib = glider_3d.ribs[rib_idx]
+            base_front_x = rib_pos - half_intrados
+            base_back_x = rib_pos + half_intrados
+            base_front_pt = rib.profile_2d.align([base_front_x, -1.0])
+            base_back_pt = rib.profile_2d.align([base_back_x, -1.0])
+            
+            # Rotate pull axis by ±angle/2
+            half_angle = math.radians(angle_deg / 2.0)
+            cos_a = math.cos(half_angle)
+            sin_a = math.sin(half_angle)
+            
+            # Front side: rotate pull axis by +angle/2 (toward front/LE)
+            ray_front = np.array([
+                line_dir[0] * cos_a - line_dir[1] * sin_a,
+                line_dir[0] * sin_a + line_dir[1] * cos_a
+            ])
+            # Back side: rotate pull axis by -angle/2 (toward back/TE)
+            ray_back = np.array([
+                line_dir[0] * cos_a + line_dir[1] * sin_a,
+                -line_dir[0] * sin_a + line_dir[1] * cos_a
+            ])
+            
+            # Intersect: front ray from front base edge, back ray from back base edge
+            far_factor = rib.chord * 100
+            
+            ext_front_pt = extrados_poly.line_intersection(
+                base_front_pt, base_front_pt + ray_front * far_factor
+            )
+            ext_back_pt = extrados_poly.line_intersection(
+                base_back_pt, base_back_pt + ray_back * far_factor
+            )
+            
+            if ext_front_pt is not None and ext_back_pt is not None:
+                x1 = ext_front_pt[0]
+                x2 = ext_back_pt[0]
+                return (min(x1, x2), max(x1, x2))
+            
+            return None
         
         rib_attachments = self._get_suspended_ribs_with_layer()
         cell_count = self._get_cell_count()
+        
         
         # Track which cells have diagonals from which direction
         # cell_diagonals[cell_no] = {"from_left": [...], "from_right": [...]}
@@ -412,17 +637,37 @@ class CellTool(BaseTool):
             # Diagonals from left side of cell (attachment on left rib -> goes to right rib extrados)
             for rib_pos, layer, params in cell_data["from_left"]:
                 half_bottom = params["half_intrados"]
-                ext_start = params["extrados_start"]
-                ext_end = params["extrados_end"]
-                ext_height = params["extrados_height"]
+                before_axis = params["before_axis"]
+                after_axis = params["after_axis"]
                 num_bands = params.get("num_bands", 1)
+                
+                # Get the axis x for this AP on its rib (left rib of this cell = rib cell_no)
+                left_rib_idx = cell_no
+                
+                if use_angle_mode:
+                    angle_result = _compute_angle_extrados(
+                        left_rib_idx, rib_pos, half_bottom, params.get('angle_deg', 45))
+                    if angle_result:
+                        ext_start, ext_end = angle_result
+                    else:
+                        axis_x = _get_axis_x(rib_projections, left_rib_idx, rib_pos, before_axis, after_axis)
+                        ext_start = max(0, axis_x - before_axis)
+                        ext_end = min(1, axis_x + after_axis)
+                else:
+                    axis_x = _get_axis_x(rib_projections, left_rib_idx, rib_pos, before_axis, after_axis)
+                    ext_start = max(0, axis_x - before_axis)
+                    ext_end = min(1, axis_x + after_axis)
+                
+                # Calculate extrados height at the middle of the range
+                mid_x = (ext_start + ext_end) / 2
+                ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
                 
                 # Split extrados range into bands if num_bands > 1
                 bands = split_range_into_bands(ext_start, ext_end, num_bands)
                 
                 for band_start, band_end in bands:
                     # Intrados: centered on rib_pos
-                    # Extrados: from band_start to band_end (absolute positions on chord)
+                    # Extrados: from band_start to band_end (axis-relative positions)
                     key = (
                         round(band_start, 4), ext_height,          # right_front (extrados start)
                         round(band_end, 4), ext_height,            # right_back (extrados end)
@@ -436,17 +681,37 @@ class CellTool(BaseTool):
             # Diagonals from right side of cell (attachment on right rib -> goes to left rib extrados)
             for rib_pos, layer, params in cell_data["from_right"]:
                 half_bottom = params["half_intrados"]
-                ext_start = params["extrados_start"]
-                ext_end = params["extrados_end"]
-                ext_height = params["extrados_height"]
+                before_axis = params["before_axis"]
+                after_axis = params["after_axis"]
                 num_bands = params.get("num_bands", 1)
+                
+                # Get the axis x for this AP on its rib (right rib of this cell = rib cell_no + 1)
+                right_rib_idx = cell_no + 1
+                
+                if use_angle_mode:
+                    angle_result = _compute_angle_extrados(
+                        right_rib_idx, rib_pos, half_bottom, params.get('angle_deg', 45))
+                    if angle_result:
+                        ext_start, ext_end = angle_result
+                    else:
+                        axis_x = _get_axis_x(rib_projections, right_rib_idx, rib_pos, before_axis, after_axis)
+                        ext_start = max(0, axis_x - before_axis)
+                        ext_end = min(1, axis_x + after_axis)
+                else:
+                    axis_x = _get_axis_x(rib_projections, right_rib_idx, rib_pos, before_axis, after_axis)
+                    ext_start = max(0, axis_x - before_axis)
+                    ext_end = min(1, axis_x + after_axis)
+                
+                # Calculate extrados height at the middle of the range
+                mid_x = (ext_start + ext_end) / 2
+                ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
                 
                 # Split extrados range into bands if num_bands > 1
                 bands = split_range_into_bands(ext_start, ext_end, num_bands)
                 
                 for band_start, band_end in bands:
                     # Intrados: centered on rib_pos
-                    # Extrados: from band_start to band_end (absolute positions on chord)
+                    # Extrados: from band_start to band_end (axis-relative positions)
                     key = (
                         round(rib_pos - half_bottom, 4), -1.0,     # right_front (intrados)
                         round(rib_pos + half_bottom, 4), -1.0,     # right_back (intrados)
@@ -461,36 +726,54 @@ class CellTool(BaseTool):
         # Each line type (A, B, C, D) gets its own bands on cells that don't have diagonals of that type
         # Bands connect extrados to extrados (never to intrados)
         
-        print(f"DEBUG: Creating bands per line type")
-        
-        # Track which cells have diagonals of each line type
+        # Track which cells have diagonals of each line type AND their extrados ranges
         # cells_by_layer[layer] = set of cell numbers with diagonals of that layer
         cells_by_layer = {}
         layer_params = {}  # Store params for each layer
+        # layer_ext_ranges[(layer, cell_no)] = (ext_start, ext_end, ext_height)
+        layer_ext_ranges = {}
         
         for cell_no in range(cell_count):
             cell_data = cell_diagonals[cell_no]
-            for diag_list in [cell_data["from_left"], cell_data["from_right"]]:
-                for rib_pos, layer, params in diag_list:
+            for direction in ["from_left", "from_right"]:
+                for rib_pos, layer, params in cell_data[direction]:
                     if layer not in cells_by_layer:
                         cells_by_layer[layer] = set()
-                        layer_params[layer] = params  # Store params for this layer
+                        layer_params[layer] = params
                     cells_by_layer[layer].add(cell_no)
+                    
+                    # Compute the extrados range for this diagonal (same as above)
+                    before_axis = params["before_axis"]
+                    after_axis = params["after_axis"]
+                    half_intrados = params["half_intrados"]
+                    if direction == "from_left":
+                        rib_idx = cell_no
+                    else:
+                        rib_idx = cell_no + 1
+                    
+                    if use_angle_mode:
+                        angle_result = _compute_angle_extrados(
+                            rib_idx, rib_pos, half_intrados, params.get('angle_deg', 45))
+                        if angle_result:
+                            ext_start, ext_end = angle_result
+                        else:
+                            axis_x = _get_axis_x(rib_projections, rib_idx, rib_pos, before_axis, after_axis)
+                            ext_start = max(0, axis_x - before_axis)
+                            ext_end = min(1, axis_x + after_axis)
+                    else:
+                        axis_x = _get_axis_x(rib_projections, rib_idx, rib_pos, before_axis, after_axis)
+                        ext_start = max(0, axis_x - before_axis)
+                        ext_end = min(1, axis_x + after_axis)
+                    mid_x = (ext_start + ext_end) / 2
+                    ext_height = get_extrados_height_with_offset(mid_x, offset_mm)
+                    
+                    # Store (or update) the extrados range for this layer+cell
+                    layer_ext_ranges[(layer, cell_no)] = (ext_start, ext_end, ext_height)
         
-        print(f"DEBUG: Line types found: {list(cells_by_layer.keys())}")
-        for layer, cells in cells_by_layer.items():
-            print(f"DEBUG: Layer {layer}: cells with diagonals = {sorted(cells)}")
-        
-        # For each line type, find gaps and create bands
+        # For each line type, find gaps and create bands using neighbor ranges
         for layer, cells_with_diag in cells_by_layer.items():
             params = layer_params[layer]
-            ext_start = params["extrados_start"]
-            ext_end = params["extrados_end"]
-            ext_height = params["extrados_height"]
             num_bands = params.get("num_bands", 1)
-            
-            # Split the horizontal bands using the same logic as diagonals
-            bands = split_range_into_bands(ext_start, ext_end, num_bands)
             
             # Find cells that DON'T have diagonals of this layer
             for cell_no in range(cell_count):
@@ -498,14 +781,33 @@ class CellTool(BaseTool):
                     continue  # This cell has a diagonal of this layer, skip
                 
                 # Check if there are neighboring cells with this layer's diagonals
-                # (to know if we need a band here)
                 has_left_neighbor = (cell_no - 1) in cells_with_diag if cell_no > 0 else False
                 has_right_neighbor = (cell_no + 1) in cells_with_diag if cell_no < cell_count - 1 else False
                 
-                # Only create band if there are diagonals on both sides (gap to fill)
-                # OR if there's at least one neighbor with this layer
+                # Only create band if there are diagonals on at least one side
                 if has_left_neighbor or has_right_neighbor:
-                    print(f"DEBUG: Band on cell {cell_no} for layer {layer}: height={ext_height:.3f}, num_bands={num_bands}")
+                    # Look up the extrados range from the nearest neighbor diagonal
+                    ext_start = ext_end = ext_height = None
+                    
+                    if has_left_neighbor and (layer, cell_no - 1) in layer_ext_ranges:
+                        left_range = layer_ext_ranges[(layer, cell_no - 1)]
+                        ext_start, ext_end, ext_height = left_range
+                    
+                    if has_right_neighbor and (layer, cell_no + 1) in layer_ext_ranges:
+                        right_range = layer_ext_ranges[(layer, cell_no + 1)]
+                        if ext_start is None:
+                            ext_start, ext_end, ext_height = right_range
+                        else:
+                            # Average between left and right neighbor ranges
+                            ext_start = (ext_start + right_range[0]) / 2
+                            ext_end = (ext_end + right_range[1]) / 2
+                            ext_height = (ext_height + right_range[2]) / 2
+                    
+                    if ext_start is None:
+                        continue  # No valid range found
+                    
+                    # Split the horizontal bands using the same logic as diagonals
+                    bands = split_range_into_bands(ext_start, ext_end, num_bands)
                     
                     # Create a mini-band for each segment
                     for band_start, band_end in bands:
@@ -521,7 +823,7 @@ class CellTool(BaseTool):
                         if cell_no not in bands_grouped[band_key]:
                             bands_grouped[band_key].append(cell_no)
         
-        print(f"DEBUG: Total diagonals: {len(diagonals_grouped)}, bands: {len(bands_grouped)}")
+
         
         # Convert grouped diagonals to list format
         diagonals = []
@@ -546,7 +848,7 @@ class CellTool(BaseTool):
             }
             diagonals.append(band)
         
-        print(f"DEBUG: Total entries in table: {len(diagonals)}")
+
         
         # Sort by position
         diagonals.sort(key=lambda d: (d["cells"][0] if d["cells"] else 0, d["right_front"][0]))
@@ -562,7 +864,7 @@ class CellTool(BaseTool):
         """
         # Configuration dialog
         dialog = QtGui.QDialog()
-        dialog.setWindowTitle("Configuration des bandes de tension")
+        dialog.setWindowTitle("Vector Straps Configuration")
         layout = QtGui.QFormLayout(dialog)
         
         # Width in mm
@@ -570,7 +872,7 @@ class CellTool(BaseTool):
         width_spin.setRange(10, 1000)
         width_spin.setValue(40)
         width_spin.setSuffix(" mm")
-        layout.addRow("Largeur des bandes:", width_spin)
+        layout.addRow("Strap width:", width_spin)
         
         # Button box
         buttons = QtGui.QDialogButtonBox(
