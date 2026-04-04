@@ -266,31 +266,57 @@ class PanelPlot(object):
         return plotpart
 
     def _insert_text(self, plotpart):
+        import numpy as np
+        from openglider.vector.functions import normalize, norm
+
         if self.config.layout_seperate_panels and not self.panel.is_lower():
             left = get_x_value(self.x_values, self.panel.cut_back["left"])
             right = get_x_value(self.x_values, self.panel.cut_back["right"])
             p2 = self.ballooned[-1][right]  # Use last element instead of [1]
             p1 = self.ballooned[0][left]
             align = "left"
+            allowance = self.config.allowance_design
         else:
             left = get_x_value(self.x_values, self.panel.cut_front["left"])
             right = get_x_value(self.x_values, self.panel.cut_front["right"])
             p1 = self.ballooned[-1][right]  # Use last element instead of [1]
             p2 = self.ballooned[0][left]
             align = "right"
+            allowance = self.config.allowance_design
+
+        # Offset p1/p2 into the seam margin using the perpendicular direction
+        # For upper panels: text at back cut, perpendicular points UP (into margin)
+        # For lower panels: p1/p2 reversed, perpendicular points DOWN (into margin)
+        diff = np.array(p2) - np.array(p1)
+        diff_len = norm(diff)
+        if diff_len > 1e-10:
+            perp = np.array([-diff[1], diff[0]]) / diff_len
+        else:
+            perp = np.array([0, 1])
+
+        ratio = getattr(self.config, 'text_inset_ratio', 0.85)
         text = self.panel.name
         # Text size: 80% of allowance, but max 8mm to avoid huge text
-        text_size = min(self.config.allowance_design * 0.8, 0.008)
+        text_size = min(allowance * 0.8, 0.008)
+        text_height = text_size * 0.8  # letter height in meters
+        # Offset = position the TOP of letters at ratio*allowance from stitch line
+        offset = perp * (allowance * ratio - text_height)
+        p1 = np.array(p1) + offset
+        p2 = np.array(p2) + offset
+        use_dashed = getattr(self.config, 'laser_text_mode', False)
         part_text = Text(
             text,
             p1,
             p2,
             size=text_size,
             align=align,
-            valign=0.6,
+            valign=0.5,
             height=0.8,
+            dashed=use_dashed,
+            dot_spacing=getattr(self.config, 'dot_spacing', 0.15),
         ).get_vectors()
-        plotpart.layers["text"] += part_text
+        text_layer = "cuts" if use_dashed else "text"
+        plotpart.layers[text_layer] += part_text
 
     def _insert_controlpoints(self, plotpart):
         for x in self.config.distribution_controlpoints:
@@ -382,7 +408,7 @@ class PanelPlot(object):
 
                 # p1, p2 = self.get_p1_p2(attachment_point.rib_pos, which)
 
-                if self.config.insert_attachment_point_text:
+                if self.config.insert_attachment_point_text and not self.panel.is_lower():
                     text_align = "left" if cell_pos > 0.7 else "right"
 
                     if text_align == "right":
@@ -409,7 +435,7 @@ class PanelPlot(object):
                         left = bl[bl.walk(ik, -offset)]
                         right = br[br.walk(ik, -offset)]
 
-                    if self.config.layout_seperate_panels and self.panel.is_lower:
+                    if self.config.layout_seperate_panels and self.panel.is_lower():
                         # rotated later
                         p2 = left
                         p1 = right
@@ -418,14 +444,24 @@ class PanelPlot(object):
                         p1 = left
                         p2 = right
                         # text_align = text_align
-                    plotpart.layers["text"] += Text(
-                        " {} ".format(attachment_point.name),
+                    # Skip placeholder names (line_name_not_set, etc.)
+                    ap_name = attachment_point.name
+                    if ap_name is None or 'not_set' in ap_name.lower():
+                        continue
+                    use_dashed = getattr(self.config, 'laser_text_mode', False)
+                    text_layer = "cuts" if use_dashed else "text"
+                    # Text size: fit in seam margin
+                    ap_text_size = min(self.config.allowance_design * 0.8, 0.008)
+                    plotpart.layers[text_layer] += Text(
+                        " {} ".format(ap_name),
                         p1,
                         p2,
-                        size=0.01,  # 1cm
+                        size=ap_text_size,
                         align=text_align,
                         valign=0,
                         height=0.8,
+                        dashed=use_dashed,
+                        dot_spacing=getattr(self.config, 'dot_spacing', 0.15),
                     ).get_vectors()
 
     def _insert_rigidfoils(self, plotpart):
@@ -523,6 +559,17 @@ class DribPlot(object):
         self.left_out.add_stuff(-self.config.allowance_general)
         self.right_out.add_stuff(self.config.allowance_general)
 
+    def _get_ss_x_limit(self):
+        """Retourne la limite X (te_end) pour les nervures SingleSkin adjacentes.
+        Retourne (limit_rib1, limit_rib2) — None si pas de limite.
+        """
+        from openglider.glider.rib.rib import SingleSkinRib
+        def get_limit(rib):
+            if isinstance(rib, SingleSkinRib):
+                return rib.single_skin_par.get("te_end", 1.0)
+            return None
+        return get_limit(self.cell.rib1), get_limit(self.cell.rib2)
+
     def get_left(self, x):
         return self.get_p1_p2(x, side=0)
 
@@ -607,17 +654,41 @@ class DribPlot(object):
             plotpart.layers["L0"] += self.config.marks_laser_attachment_point(p1, p2)
 
     def _insert_text(self, plotpart):
-        # text_p1 = left_out[0] + self.config.drib_text_position * (right_out[0] - left_out[0])
-        text_p1 = self.left[0]
+        # Place text in the front fold area (seam margin below the front stitch line)
+        # Strategy: compute body direction (front→back), offset p1/p2 in the
+        # opposite direction (outward) by the fold depth, so letters extend
+        # upward from the bottom of the fold area toward the stitch line.
+        import numpy as np
+        from openglider.vector import normalize, norm
+
+        mid = len(self.left) // 2
+        body_dir = np.array(self.left[mid]) - np.array(self.left[0])
+        body_len = norm(body_dir)
+        if body_len > 1e-10:
+            body_dir = body_dir / body_len
+        else:
+            body_dir = np.array([0, 1])
+
+        # Outward at the front = opposite of body direction
+        outward = -body_dir
+        fold_depth = self.config.drib_allowance_folds * getattr(self.config, 'text_inset_ratio', 0.85)
+
+        p1 = np.array(self.left[0]) + outward * fold_depth
+        p2 = np.array(self.right[0]) + outward * fold_depth
+
         # Text size: 80% of allowance, but max 8mm to avoid huge text
         text_size = min(self.config.drib_allowance_folds * 0.8, 0.008)
-        plotpart.layers["text"] += Text(
+        use_dashed = getattr(self.config, 'laser_text_mode', False)
+        text_layer = "cuts" if use_dashed else "text"
+        plotpart.layers[text_layer] += Text(
             " {} ".format(self.drib.name),
-            text_p1,
-            self.right[0],
+            p1,
+            p2,
             size=text_size,
             height=0.8,
-            valign=0.6,
+            valign=0.5,
+            dashed=use_dashed,
+            dot_spacing=getattr(self.config, 'dot_spacing', 0.15),
         ).get_vectors()
 
     def flatten(self, attachment_points=None):
@@ -781,8 +852,489 @@ class DribPlot(object):
 
         self._insert_attachment_points(plotpart, attachment_points)
         self._insert_text(plotpart)
+        self._insert_diagonal_cone_holes(plotpart, attachment_points)
+        self._insert_band_ellipse_holes(plotpart, attachment_points)
 
         return plotpart
+
+    def _insert_band_ellipse_holes(self, plotpart, attachment_points=None):
+        """Insert elliptical holes into horizontal bands (both sides extrados).
+        
+        The band connects two diagonals. The diagonals have 2*num_zones holes
+        (num_zones per side). The band gets the same number of ellipses,
+        evenly distributed along its length. Ellipse width matches the max
+        width of the neighboring diagonal holes at the extrados edge.
+        """
+        config = getattr(self.drib, 'band_hole_config', None)
+        if not config:
+            return
+
+        # Skip si la cellule a une nervure SingleSkin adjacente
+        ss_limit_rib1, ss_limit_rib2 = self._get_ss_x_limit()
+        if ss_limit_rib1 is not None or ss_limit_rib2 is not None:
+            return
+        
+        from numpy.linalg import norm
+        
+        num_zones = config['num_zones']
+        margin_side = config['margin_side_m']
+        margin_top = config['margin_top_m']
+        
+        total_holes = 2 * num_zones  # num_zones per side of center axis
+        
+        # Flattened band curves
+        inner = self.left
+        outer = self.right
+        
+        inner_total = inner.get_length()
+        outer_total = outer.get_length()
+        if inner_total < 1e-9 or outer_total < 1e-9:
+            return
+        
+        # Band width (distance between the two curves at midpoint)
+        p_mid_inner = np.array(inner[inner.walk(0, 0.5 * inner_total)])
+        p_mid_outer = np.array(outer[outer.walk(0, 0.5 * outer_total)])
+        band_width = norm(p_mid_outer - p_mid_inner)
+        
+        if band_width < 2 * margin_top:
+            return  # Band too narrow for holes
+        
+        # Ellipse semi-height = (band_width - 2*margin_top) / 2
+        ellipse_h = (band_width - 2 * margin_top) / 2
+        
+        # Ellipse semi-width: match the max diagonal hole width at extrados
+        # The band length roughly equals the extrados edge of the diagonal
+        # Each zone gets an equal share of the band length
+        usable_length = inner_total - 2 * margin_side
+        if usable_length <= 0 or total_holes <= 0:
+            return
+        
+        zone_width = usable_length / total_holes
+        ellipse_w = max((zone_width - 2 * margin_side) / 2, 0.001)
+        
+        if ellipse_w < 0.001 or ellipse_h < 0.001:
+            return
+        
+        for i in range(total_holes):
+            # Center of this zone along the band (with margin at edges)
+            t_center = (margin_side + zone_width * (i + 0.5)) / inner_total
+            t_center = min(max(t_center, 0.01), 0.99)
+            
+            # Position on inner and outer curves
+            ik_inner = inner.walk(0, t_center * inner_total)
+            ik_outer = outer.walk(0, t_center * outer_total)
+            p_inner = np.array(inner[ik_inner])
+            p_outer = np.array(outer[ik_outer])
+            
+            center = (p_inner + p_outer) / 2
+            
+            # Tangent direction (along the band)
+            dt = 0.01
+            t_lo = max(0, t_center - dt)
+            t_hi = min(1, t_center + dt)
+            p_lo = np.array(inner[inner.walk(0, t_lo * inner_total)])
+            p_hi = np.array(inner[inner.walk(0, t_hi * inner_total)])
+            tangent = p_hi - p_lo
+            tang_len = norm(tangent)
+            if tang_len < 1e-9:
+                continue
+            tangent = tangent / tang_len
+            
+            # Normal (across the band width)
+            normal = p_outer - p_inner
+            norm_len = norm(normal)
+            if norm_len < 1e-9:
+                continue
+            normal = normal / norm_len
+            
+            # Generate ellipse points
+            n_pts = 30
+            pts = []
+            for j in range(n_pts + 1):
+                angle = 2 * np.pi * j / n_pts
+                pt = center + ellipse_w * np.cos(angle) * tangent + ellipse_h * np.sin(angle) * normal
+                pts.append(pt.tolist() if isinstance(pt, np.ndarray) else list(pt))
+            
+            plotpart.layers["cuts"].append(PolyLine2D(pts))
+
+    def _insert_diagonal_cone_holes(self, plotpart, attachment_points=None):
+        """Insert cone-shaped holes into full (non-split) diagonals."""
+        config = getattr(self.drib, 'cone_hole_config', None)
+        if not config:
+            return
+        
+        attachment_points = attachment_points or []
+        
+        num_zones = config['num_zones']
+        margin_side = config['margin_side_m']
+        margin_top = config['margin_top_m']
+        margin_bottom = config['margin_bottom_m']
+        corner_pct = config['corner_radius_pct']
+        
+        # Limites SS pour éviter les trous hors profil tronqué
+        ss_limit_rib1, ss_limit_rib2 = self._get_ss_x_limit()
+
+        
+        # Process each side: 0=left(rib1), 1=right(rib2)
+        for side_idx in (0, 1):
+            if side_idx == 0:
+                front = self.drib.left_front
+                back = self.drib.left_back
+                rib = self.cell.rib1
+                inner = self.left
+                other_inner = self.right
+                ss_limit = ss_limit_rib1
+            else:
+                front = self.drib.right_front
+                back = self.drib.right_back
+                rib = self.cell.rib2
+                inner = self.right
+                other_inner = self.left
+                ss_limit = ss_limit_rib2
+            
+            if front[1] != -1:
+                continue
+            
+            x_min = min(front[0], back[0])
+            x_max = max(front[0], back[0])
+
+            # Clipper x_max à te_end si nervure SingleSkin
+            if ss_limit is not None:
+                x_max = min(x_max, ss_limit)
+            
+            for ap in attachment_points:
+                if not hasattr(ap, 'rib') or ap.rib is not rib:
+                    continue
+                if not hasattr(ap, 'rib_pos') or ap.rib_pos > 0.9:
+                    continue
+                
+                if not (x_min <= ap.rib_pos <= x_max):
+                    continue
+                
+                try:
+                    self._create_diag_holes(
+                        plotpart, ap, inner, other_inner,
+                        front, back, rib, config
+                    )
+                except Exception as e:
+                    pass
+
+    def _create_diag_holes(self, plotpart, ap, inner, other_inner,
+                            front, back, rib, config):
+        """Create cone holes for one AP within the diagonal.
+        
+        Follows the SAME logic as rib cone holes:
+        - Zone boundaries are linear interpolations between center and edges
+        - Side edges of each hole are OFFSET from boundaries by margin_side
+          (making adjacent hole edges parallel)
+        - Inner boundary = circle at margin_bottom from AP
+        - Outer boundary = outer curve offset by margin_top inward
+        """
+        num_zones = config['num_zones']
+        margin_side = config['margin_side_m']
+        margin_top = config['margin_top_m']
+        margin_bottom = config['margin_bottom_m']
+        corner_pct = config['corner_radius_pct']
+        
+        # AP fraction
+        x_front, x_back = front[0], back[0]
+        t_ap = 0.5 if abs(x_back - x_front) < 1e-9 else (ap.rib_pos - x_front) / (x_back - x_front)
+        t_ap = min(max(t_ap, 0), 1)
+        
+        # Curve lengths
+        inner_total = inner.get_length()
+        other_total = other_inner.get_length()
+        if inner_total < 1e-9 or other_total < 1e-9:
+            return
+        
+        # AP position on inner curve
+        ik_ap_inner = inner.walk(0, t_ap * inner_total)
+        p_ap = np.array(inner[ik_ap_inner])
+        
+        # Center axis: AP → midpoint of outer curve at AP position
+        ik_ap_outer = other_inner.walk(0, t_ap * other_total)
+        p_center_outer = np.array(other_inner[ik_ap_outer])
+        
+        center_dir = p_center_outer - p_ap
+        center_len = norm(center_dir)
+        if center_len < 1e-9:
+            return
+        d_center = center_dir / center_len
+        
+        # Edge boundaries: front edge and back edge of the diagonal
+        A = np.array(inner[0])                             # inner front
+        B = np.array(other_inner[0])                       # outer front
+        C = np.array(inner[len(inner) - 1])                # inner back
+        D = np.array(other_inner[len(other_inner) - 1])    # outer back
+        
+        # Front edge direction (from AP toward front outer corner)
+        front_dir = B - p_ap
+        front_len = norm(front_dir)
+        if front_len < 1e-9:
+            return
+        d_front = front_dir / front_len
+        
+        # Back edge direction (from AP toward back outer corner)
+        back_dir = D - p_ap
+        back_len = norm(back_dir)
+        if back_len < 1e-9:
+            return
+        d_back = back_dir / back_len
+        
+        # Process each side (front and back of center axis)
+        # Following rib cone hole convention: for each side,
+        # "left" (t=0) is at center, "right" (t=1) is at edge.
+        # But for back side, we swap to match the angular direction.
+        for side_data in [
+            (d_center, d_front),   # front side: center → front edge
+            (d_center, d_back),    # back side: center → back edge
+        ]:
+            s_d_left_edge, s_d_right_edge = side_data
+            
+            for zone_i in range(num_zones):
+                t0 = zone_i / num_zones
+                t1 = (zone_i + 1) / num_zones
+                
+                # Zone boundary directions (interpolated between center and edge)
+                d_left = (1 - t0) * s_d_left_edge + t0 * s_d_right_edge
+                d_left = d_left / max(norm(d_left), 1e-9)
+                d_right = (1 - t1) * s_d_left_edge + t1 * s_d_right_edge
+                d_right = d_right / max(norm(d_right), 1e-9)
+                
+                # Use cross product to determine inward perpendicular direction
+                cross = d_left[0] * d_right[1] - d_left[1] * d_right[0]
+                
+                if cross >= 0:
+                    # d_left is CCW of d_right → zone interior is CCW
+                    perp_left = np.array([-d_left[1], d_left[0]])
+                    perp_right = np.array([d_right[1], -d_right[0]])
+                else:
+                    # d_left is CW of d_right → zone interior is CW
+                    perp_left = np.array([d_left[1], -d_left[0]])
+                    perp_right = np.array([-d_right[1], d_right[0]])
+                
+                # Offset the zone boundaries by margin_side perpendicular
+                off_left_base = p_ap + perp_left * margin_side
+                off_right_base = p_ap + perp_right * margin_side
+                
+                # Bottom corners: offset from AP by margin_bottom along each ray
+                p_bl = off_left_base + d_left * margin_bottom
+                p_br = off_right_base + d_right * margin_bottom
+                
+                # Check that bottom corners don't cross (V-shape detection)
+                # Use the perpendicular of the average direction as reference
+                d_avg = (d_left + d_right) / 2
+                ref_vec = np.array([-d_avg[1], d_avg[0]]) if cross >= 0 else np.array([d_avg[1], -d_avg[0]])
+                
+                if np.dot(p_br - p_bl, ref_vec) <= 0:
+                    # Crossed → compute single bottom point (V-shape)
+                    dx = off_right_base - off_left_base
+                    det_s = d_left[0]*(-d_right[1]) - d_left[1]*(-d_right[0])
+                    if abs(det_s) < 1e-12:
+                        continue
+                    t_cross = (dx[0]*(-d_right[1]) - dx[1]*(-d_right[0])) / det_s
+                    p_bottom = off_left_base + t_cross * d_left
+                    p_bl = p_bottom
+                    p_br = p_bottom
+                
+                # Top corners: find where offset rays hit the outer curve
+                # Use the outer curve as a polyline and find intersection
+                p_tl = self._ray_curve_intersect(
+                    off_left_base, d_left, other_inner)
+                p_tr = self._ray_curve_intersect(
+                    off_right_base, d_right, other_inner)
+                
+                if p_tl is None or p_tr is None:
+                    continue
+                
+                # Apply margin_top: pull inward along directon from AP
+                d_tl_r = p_tl - p_ap
+                d_tl_len = norm(d_tl_r)
+                if d_tl_len > 1e-9:
+                    p_tl = p_tl - (d_tl_r / d_tl_len) * margin_top
+                
+                d_tr_r = p_tr - p_ap
+                d_tr_len = norm(d_tr_r)
+                if d_tr_len > 1e-9:
+                    p_tr = p_tr - (d_tr_r / d_tr_len) * margin_top
+                
+                # Validate positive area
+                if np.dot(p_tr - p_tl, ref_vec) <= 0:
+                    continue
+                if np.dot(p_tl - p_bl, d_center) <= 0:
+                    continue
+                
+                # Build hole with corner rounding
+                is_v_shape = norm(p_bl - p_br) < 0.001
+                
+                if is_v_shape:
+                    # V-shape: bottom apex + two sides + two top corners
+                    p_bottom = p_bl
+                    side_r = norm(p_tr - p_bottom)
+                    side_l = norm(p_tl - p_bottom)
+                    top_side = norm(p_tl - p_tr)
+                    
+                    if corner_pct > 1e-6 and side_r > 1e-6 and side_l > 1e-6:
+                        dir_r = (p_tr - p_bottom) / max(side_r, 1e-9)
+                        dir_l = (p_tl - p_bottom) / max(side_l, 1e-9)
+                        
+                        # Bottom apex rounding
+                        cut_bot = min(side_r, side_l) * corner_pct * 0.5
+                        bot_r = p_bottom + dir_r * cut_bot
+                        bot_l = p_bottom + dir_l * cut_bot
+                        
+                        # Top-right corner rounding
+                        cut_tr = min(side_r * corner_pct * 0.5, top_side * 0.4)
+                        tr_from_bot = p_tr - dir_r * cut_tr
+                        dir_top = (p_tl - p_tr) / max(top_side, 1e-9)
+                        tr_to_top = p_tr + dir_top * cut_tr
+                        
+                        # Top-left corner rounding
+                        cut_tl = min(side_l * corner_pct * 0.5, top_side * 0.4)
+                        tl_from_top = p_tl - dir_top * cut_tl
+                        tl_to_bot = p_tl - dir_l * cut_tl  # dir_l goes bottom→tl, so -dir_l goes tl→bottom
+                        
+                        hole_pts = []
+                        # Bottom apex fillet
+                        for fi in range(6):
+                            t = fi / 5
+                            hole_pts.append((1-t)**2 * bot_l + 2*(1-t)*t * p_bottom + t**2 * bot_r)
+                        # Right side straight
+                        hole_pts.append(tr_from_bot)
+                        # Top-right corner fillet
+                        for fi in range(6):
+                            t = fi / 5
+                            hole_pts.append((1-t)**2 * tr_from_bot + 2*(1-t)*t * p_tr + t**2 * tr_to_top)
+                        # Top side straight
+                        hole_pts.append(tl_from_top)
+                        # Top-left corner fillet
+                        for fi in range(6):
+                            t = fi / 5
+                            hole_pts.append((1-t)**2 * tl_from_top + 2*(1-t)*t * p_tl + t**2 * tl_to_bot)
+                        # Left side straight back to start
+                        hole_pts.append(hole_pts[0])
+                    else:
+                        hole_pts = [p_bottom, p_tr, p_tl, p_bottom]
+                else:
+                    # Normal quad with rounding on all 4 corners
+                    hole_pts = self._round_quad_corners(
+                        p_bl, p_br, p_tr, p_tl, corner_pct
+                    )
+                    hole_pts = hole_pts + [hole_pts[0]]
+                
+                if len(hole_pts) >= 3:
+                    poly_pts = []
+                    for p in hole_pts:
+                        if isinstance(p, np.ndarray):
+                            poly_pts.append(p.tolist())
+                        else:
+                            poly_pts.append(list(p))
+                    plotpart.layers["cuts"].append(
+                        PolyLine2D(poly_pts)
+                    )
+    
+    def _ray_curve_intersect(self, ray_origin, ray_dir, curve):
+        """Find where a ray (origin + t*dir, t>0) intersects a PolyLine2D."""
+        normal = np.array([-ray_dir[1], ray_dir[0]])
+        ref_val = np.dot(ray_origin, normal)
+        
+        best = None
+        best_t = float('inf')
+        
+        for i in range(len(curve) - 1):
+            p0 = np.array(curve[i])
+            p1 = np.array(curve[i + 1])
+            v0 = np.dot(p0, normal) - ref_val
+            v1 = np.dot(p1, normal) - ref_val
+            
+            if v0 * v1 <= 0 and abs(v1 - v0) > 1e-12:
+                s = v0 / (v0 - v1)
+                if -1e-9 <= s <= 1 + 1e-9:
+                    pt = p0 + s * (p1 - p0)
+                    # Check that pt is in positive ray direction
+                    t_ray = np.dot(pt - ray_origin, ray_dir)
+                    if t_ray > -1e-9 and t_ray < best_t:
+                        best = pt
+                        best_t = t_ray
+        
+        return best
+    
+
+
+    
+    def _round_corners_at_indices(self, pts, corner_indices, radius_pct):
+        """Round specific corners of a polygon."""
+        pts = [np.array(p) for p in pts]
+        n = len(pts)
+        result = []
+        for i in range(n):
+            if i not in corner_indices:
+                result.append(pts[i])
+                continue
+            prev_pt = pts[(i - 1) % n]
+            curr_pt = pts[i]
+            next_pt = pts[(i + 1) % n]
+            d_in = curr_pt - prev_pt
+            d_out = next_pt - curr_pt
+            len_in, len_out = norm(d_in), norm(d_out)
+            if len_in < 1e-9 or len_out < 1e-9:
+                result.append(curr_pt)
+                continue
+            offset = min(len_in * radius_pct, len_out * radius_pct,
+                        len_in * 0.4, len_out * 0.4)
+            if offset < 1e-6:
+                result.append(curr_pt)
+                continue
+            p_start = curr_pt - d_in / len_in * offset
+            p_end = curr_pt + d_out / len_out * offset
+            for j in range(9):
+                t = j / 8
+                pt = (1-t)**2 * p_start + 2*(1-t)*t * curr_pt + t**2 * p_end
+                result.append(pt)
+        return result
+
+    def _round_quad_corners(self, p1, p2, p3, p4, radius_pct, pts_per_corner=8):
+        """Create a rounded quadrilateral from 4 corners.
+        
+        radius_pct: fraction applied to the AVERAGE of the two longest edges
+        for the corner radius, ensuring visible rounding even when one edge
+        is very short.
+        """
+        corners = [np.array(p1), np.array(p2), np.array(p3), np.array(p4)]
+        n = len(corners)
+        
+        edge_lengths = sorted([norm(corners[(i+1) % n] - corners[i]) for i in range(n)])
+        # Use average of two longest edges as reference (not min which may be tiny)
+        ref_len = (edge_lengths[-1] + edge_lengths[-2]) / 2
+        radius = ref_len * radius_pct
+        
+        if radius < 1e-6:
+            return list(corners)
+        
+        points = []
+        for i in range(n):
+            prev_pt = corners[(i - 1) % n]
+            curr_pt = corners[i]
+            next_pt = corners[(i + 1) % n]
+            
+            d_in = curr_pt - prev_pt
+            d_out = next_pt - curr_pt
+            len_in, len_out = norm(d_in), norm(d_out)
+            
+            if len_in < 1e-9 or len_out < 1e-9:
+                points.append(curr_pt)
+                continue
+            
+            offset = min(radius, len_in * 0.4, len_out * 0.4)
+            p_start = curr_pt - d_in / len_in * offset
+            p_end = curr_pt + d_out / len_out * offset
+            
+            for j in range(pts_per_corner + 1):
+                t = j / pts_per_corner
+                pt = (1-t)**2 * p_start + 2*(1-t)*t * curr_pt + t**2 * p_end
+                points.append(pt)
+        
+        return points
 
 
 class StrapPlot(DribPlot):

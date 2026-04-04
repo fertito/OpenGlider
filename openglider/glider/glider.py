@@ -499,7 +499,8 @@ class Glider(object):
         rib_name = getattr(rib, "name", None)
         for att in self.attachment_points:
             if hasattr(att, "rib"):
-                # Comparaison par identité OU par nom (robuste avec SingleSkinRib)
+                # Match by identity/equality, or fallback to name
+                # (robust with SingleSkinRib replacements)
                 match = (att.rib is rib) or (
                     rib_name is not None and
                     getattr(att.rib, "name", None) == rib_name
@@ -529,6 +530,8 @@ class Glider(object):
 
     @property
     def has_center_cell(self):
+        if not self.ribs:
+            return False
         return abs(self.ribs[0].pos[1]) > 1.0e-5
 
     @property

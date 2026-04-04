@@ -271,7 +271,8 @@ class SingleSkinRibFeature(BaseFeature):
                         )
                     )
         for i, rib in enumerate(glider.ribs):
-            rib.xrot = self.obj.xrot[i]
+            if i < len(self.obj.xrot):
+                rib.xrot = self.obj.xrot[i]
 
         return glider
 

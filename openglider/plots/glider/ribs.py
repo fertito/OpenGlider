@@ -100,8 +100,12 @@ class RibPlot(object):
                     if center_idx < len(halfmoon_data):
                         p1 = np.array(halfmoon_data[center_idx])
                         p2 = p1 + np.array([0.01, 0])  # Horizontal text
-                        _text = Text(reinforcement.name, p1, p2, size=0.008, valign=0)
-                        self.plotpart.layers["text"] += _text.get_vectors()
+                        use_dashed = getattr(self.config, 'laser_text_mode', False)
+                        _text = Text(reinforcement.name, p1, p2, size=0.008, valign=0,
+                                     dashed=use_dashed,
+                                     dot_spacing=getattr(self.config, 'dot_spacing', 0.15))
+                        text_layer = "cuts" if use_dashed else "text"
+                        self.plotpart.layers[text_layer] += _text.get_vectors()
             
             # Draw rod sleeve
             if flat.get('rod_sleeve') and len(flat['rod_sleeve'].data) > 0:
@@ -114,16 +118,13 @@ class RibPlot(object):
         if hasattr(self.rib, 'rod_sleeves') and self.rib.rod_sleeves:
             for sleeve in self.rib.rod_sleeves:
                 try:
-                    print(f"[DEBUG ribs] sleeve surface={sleeve.surface}, rib={self.rib.name}")
-                    # Exporter la géométrie du fourreau
+                    # Exporter la géométrie complète du fourreau
                     flat = sleeve.get_flattened(self.rib, glider=glider)
-                    print(f"[DEBUG ribs] flat len={len(flat.data) if flat else -1}")
                     if flat and len(flat.data) > 0:
                         self.plotpart.layers["marks"].append(flat)
-                    
-                    # Marques de position
+
+                    # Marques de position début/fin
                     if sleeve.surface == 'leading_edge':
-                        # Jonc LE : marque sur intrados et extrados
                         start_x = sleeve.start_chord_intrados
                         end_x = -sleeve.end_chord_extrados
                     elif sleeve.surface == 'extrados':
@@ -132,7 +133,7 @@ class RibPlot(object):
                     else:
                         start_x = sleeve.start_chord
                         end_x = sleeve.end_chord
-                    
+
                     self.insert_mark(start_x, self.config.marks_diagonal_front)
                     self.insert_mark(end_x, self.config.marks_diagonal_back)
                     self.insert_mark(start_x, self.config.marks_laser_diagonal, "L0")
@@ -295,7 +296,13 @@ class RibPlot(object):
 
     def insert_holes(self):
         for hole in self.rib.holes:
-            self.plotpart.layers["cuts"].append(hole.get_flattened(self.rib))
+            poly = hole.get_flattened(self.rib)
+            self.plotpart.layers["cuts"].append(poly)
+        # Cone holes are stored separately to avoid Triangle meshing issues
+        cone_holes = getattr(self.rib, 'cone_holes', [])
+        for hole in cone_holes:
+            poly = hole.get_flattened(self.rib)
+            self.plotpart.layers["cuts"].append(poly)
 
     def draw_rib(self, glider):
         """
@@ -343,13 +350,16 @@ class RibPlot(object):
         inner, outer = self._get_inner_outer(self.config.rib_text_pos)
         diff = outer - inner
 
+        use_dashed = getattr(self.config, 'laser_text_mode', False)
         p1 = inner + diff / 2
         p2 = p1 + rotation_2d(np.pi / 2).dot(diff)
 
         # Text size: 50% of allowance width, but max 8mm
         text_size = min(norm(outer - inner) * 0.5, 0.008)
-        _text = Text(text, p1, p2, size=text_size, valign=0)
-        self.plotpart.layers["text"] += _text.get_vectors()
+        _text = Text(text, p1, p2, size=text_size, valign=0, dashed=use_dashed,
+                    dot_spacing=getattr(self.config, 'dot_spacing', 0.15))
+        text_layer = "cuts" if use_dashed else "text"
+        self.plotpart.layers[text_layer] += _text.get_vectors()
 
 
 class SingleSkinRibPlot(RibPlot):
@@ -387,19 +397,19 @@ class SingleSkinRibPlot(RibPlot):
 
         return self.skin_cut
 
+    def flatten(self, glider):
+        self._get_singleskin_cut(glider)
+        return super(SingleSkinRibPlot, self).flatten(glider)
+
     def insert_mark(self, position, mark_function, layer="marks"):
-        """Override pour ignorer toute marque dont la position dépasse te_end."""
+        """Override pour gérer l'index hors limites sur profil SingleSkin tronqué."""
         te_end = self.rib.single_skin_par.get("te_end", 1.0)
         if abs(position) > te_end:
             return
         try:
             super(SingleSkinRibPlot, self).insert_mark(position, mark_function, layer)
         except (IndexError, Exception):
-            pass  # Ignorer les marques dont l'index est hors limites du profil tronqué
-
-    def flatten(self, glider):
-        self._get_singleskin_cut(glider)
-        return super(SingleSkinRibPlot, self).flatten(glider)
+            pass
 
     def draw_rib(self, glider):
         """

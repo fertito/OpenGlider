@@ -125,7 +125,7 @@ class PlotMaker(object):
         self.ribs = []
         for rib in self.glider_3d.ribs:
             if isinstance(rib, SingleSkinRib):
-                rib_plot = SingleSkinRibPlot(rib, self.config)
+                rib_plot = SingleSkinRibPlot(rib)
             else:
                 rib_plot = self.RibPlot(rib, self.config)
 
@@ -186,7 +186,9 @@ class PlotMaker(object):
                 for reinf_idx, reinforcement in enumerate(rib.reinforcements):
                     try:
                         flat = reinforcement.get_flattened(rib, glider=self.glider_3d)
-                        unique_name = reinforcement.name or f"R{rib_idx+1}_{reinf_idx+1}"
+                        # Short name: rib number + row letter (A, B, C...)
+                        row_letter = chr(ord('A') + reinf_idx)
+                        unique_name = f"{rib_idx+1}{row_letter}"
                         
                         # Halfmoon part
                         if flat.get('halfmoon') and len(flat['halfmoon'].data) > 0:
@@ -196,10 +198,48 @@ class PlotMaker(object):
                             )
                             halfmoon_part.layers["cuts"].append(flat['halfmoon'])
                             
-                            # Text label inside shape
-                            p1, p2 = self._get_text_position_inside(flat['halfmoon'].data, 0.25)
-                            text_obj = Text(unique_name, p1, p2, size=0.005, valign=0)
-                            halfmoon_part.layers["text"] += text_obj.get_vectors()
+                            # Text along the outer edge (bottom/intrados line)
+                            # Halfmoon polygon = outer_points + reversed(inner_points) + [close]
+                            # First half = outer_points = profile/intrados edge = BOTTOM
+                            pts = np.array(flat['halfmoon'].data)
+                            n = len(pts)
+                            outer_end = n // 2 - 1  # last index of outer points
+                            if outer_end > 3:
+                                # Corner = last outer point (where profile meets arc)
+                                corner = pts[outer_end]
+                                centroid = np.mean(pts[:-1], axis=0)
+                                
+                                # 20% from corner toward centroid (scales with shape size)
+                                p_base = corner + (centroid - corner) * 0.20
+                                
+                                # Tangent of outer edge (bottom curve) near the corner
+                                prev_idx = max(0, outer_end - 3)
+                                tangent = pts[outer_end] - pts[prev_idx]
+                                tlen = np.linalg.norm(tangent)
+                                if tlen > 1e-10:
+                                    tangent = tangent / tlen
+                                else:
+                                    tangent = np.array([1, 0])
+                                # Ensure text reads left-to-right (readable)
+                                if tangent[0] < 0:
+                                    tangent = -tangent
+                                
+                                # Text span proportional to shape (~10% of corner→centroid)
+                                span = np.linalg.norm(centroid - corner) * 0.10
+                                p1 = p_base - tangent * span
+                                p2 = p_base + tangent * span
+                            else:
+                                # Fallback: centroid
+                                centroid = np.mean(pts, axis=0)
+                                p1 = centroid
+                                p2 = centroid + np.array([0.02, 0])
+                            
+                            use_dashed = getattr(self.config, 'laser_text_mode', False)
+                            text_layer = "cuts" if use_dashed else "text"
+                            text_obj = Text(unique_name, p1, p2, size=0.005, valign=0.5,
+                                           dashed=use_dashed,
+                                           dot_spacing=getattr(self.config, 'dot_spacing', 0.15))
+                            halfmoon_part.layers[text_layer] += text_obj.get_vectors()
                             
                             self.reinforcements.append(halfmoon_part)
                         
@@ -211,10 +251,45 @@ class PlotMaker(object):
                             )
                             sleeve_part.layers["cuts"].append(flat['rod_sleeve'])
                             
-                            # Text label inside shape
-                            p1, p2 = self._get_text_position_inside(flat['rod_sleeve'].data, 0.3)
-                            text_obj = Text(unique_name, p1, p2, size=0.003, valign=0)
-                            sleeve_part.layers["text"] += text_obj.get_vectors()
+                            # Text perpendicular to the left extremity
+                            # Rod sleeve polygon = outer + reversed(inner) + [close]
+                            # First point = outer[0] = left end of outer curve
+                            pts = np.array(flat['rod_sleeve'].data)
+                            n = len(pts)
+                            
+                            # Find narrowest point = extremity (leftmost or rightmost)
+                            # Use first few points to get the tangent at the start
+                            p_start = pts[0]
+                            # Next point along the boundary
+                            p_next = pts[min(2, n-1)]
+                            tangent = p_next - p_start
+                            tlen = np.linalg.norm(tangent)
+                            if tlen > 1e-10:
+                                tangent = tangent / tlen
+                            else:
+                                tangent = np.array([0, 1])
+                            
+                            # At the extremity, tangent crosses the crescent width
+                            # = perpendicular to the crescent length = what user wants
+                            # Ensure tangent points inward (toward centroid)
+                            centroid = np.mean(pts[:-1], axis=0)
+                            if np.dot(tangent, centroid - p_start) < 0:
+                                tangent = -tangent
+                            
+                            # Center between inner and outer curves at the extremity
+                            # pts[0] = outer[0], pts[-2] = inner[0] (before close point)
+                            p_mid = (pts[0] + pts[-2]) / 2
+                            
+                            # Place text from midpoint, perpendicular to crescent
+                            p1 = p_mid + tangent * 0.001
+                            p2 = p1 + tangent * 0.02
+                            
+                            use_dashed = getattr(self.config, 'laser_text_mode', False)
+                            text_layer = "cuts" if use_dashed else "text"
+                            text_obj = Text(unique_name, p1, p2, size=0.003, valign=0.5,
+                                           dashed=use_dashed,
+                                           dot_spacing=getattr(self.config, 'dot_spacing', 0.15))
+                            sleeve_part.layers[text_layer] += text_obj.get_vectors()
                             
                             self.reinforcements.append(sleeve_part)
                             
@@ -255,7 +330,10 @@ class PlotMaker(object):
                         
                         # Outer = cut line, Inner = stitch line
                         part.layers["cuts"].append(outer)
-                        part.layers["stitches"].append(inner)
+                        # Strip name from inner line to avoid parasitic "line name" in exports
+                        inner_copy = inner.copy()
+                        inner_copy.name = None
+                        part.layers["stitches"].append(inner_copy)
                         
                         # Add hole contours to cuts layer
                         hole_contours = mr.get_hole_contours_2d(cell)
@@ -281,8 +359,12 @@ class PlotMaker(object):
                             
                             # Text size: 80% of allowance, max 8mm
                             text_size = min(norm(diff) * 0.8, 0.008)
-                            text_obj = Text(unique_name, p1, p2, size=text_size, valign=0)
-                            part.layers["text"] += text_obj.get_vectors()
+                            use_dashed = getattr(self.config, 'laser_text_mode', False)
+                            text_obj = Text(unique_name, p1, p2, size=text_size, valign=0,
+                                           dashed=use_dashed,
+                                           dot_spacing=getattr(self.config, 'dot_spacing', 0.15))
+                            text_layer = "cuts" if use_dashed else "text"
+                            part.layers[text_layer] += text_obj.get_vectors()
                         
                         self.miniribs.append(part)
                     except Exception as e:
@@ -302,7 +384,7 @@ class PlotMaker(object):
             if hasattr(rib, "rod_sleeves") and rib.rod_sleeves:
                 for sleeve_idx, sleeve in enumerate(rib.rod_sleeves):
                     try:
-                        flat = sleeve.get_flattened(rib)
+                        flat = sleeve.get_flattened(rib, glider=self.glider_3d)
                         surface_label = "E" if sleeve.surface == 'extrados' else "I"
                         unique_name = f"{rib.name}_{surface_label}{sleeve_idx+1}"
                         
@@ -313,10 +395,37 @@ class PlotMaker(object):
                             )
                             sleeve_part.layers["cuts"].append(flat)
                             
-                            # Text label inside shape
-                            p1, p2 = self._get_text_position_inside(flat.data, 0.3)
-                            text_obj = Text(unique_name, p1, p2, size=0.003, valign=0)
-                            sleeve_part.layers["text"] += text_obj.get_vectors()
+                            # Text perpendicular to the left extremity
+                            # RodSleeve polygon = inner + outer[-1] + reversed(outer) + inner[0]
+                            pts = np.array(flat.data)
+                            n = len(pts)
+                            
+                            p_start = pts[0]
+                            p_next = pts[min(2, n-1)]
+                            tangent = p_next - p_start
+                            tlen = np.linalg.norm(tangent)
+                            if tlen > 1e-10:
+                                tangent = tangent / tlen
+                            else:
+                                tangent = np.array([0, 1])
+                            
+                            # At extremity, tangent crosses the crescent width
+                            centroid = np.mean(pts[:-1], axis=0)
+                            if np.dot(tangent, centroid - p_start) < 0:
+                                tangent = -tangent
+                            
+                            # Center between the two curves at the extremity
+                            p_mid = (pts[0] + pts[-2]) / 2
+                            
+                            p1 = p_mid + tangent * 0.001
+                            p2 = p1 + tangent * 0.02
+                            
+                            use_dashed = getattr(self.config, 'laser_text_mode', False)
+                            text_layer = "cuts" if use_dashed else "text"
+                            text_obj = Text(unique_name, p1, p2, size=0.003, valign=0.5,
+                                           dashed=use_dashed,
+                                           dot_spacing=getattr(self.config, 'dot_spacing', 0.15))
+                            sleeve_part.layers[text_layer] += text_obj.get_vectors()
                             
                             self.rod_sleeves.append(sleeve_part)
                             

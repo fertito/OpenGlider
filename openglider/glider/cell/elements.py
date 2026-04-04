@@ -297,10 +297,206 @@ class DiagonalRib(object):
 
         return left, right
 
+    def _get_hole_polygons_parametric(self, cell):
+        """
+        Generate hole contours in parametric (x_pos, y_pos) space.
+        Returns list of (contour_2d_pts, center_2d) tuples.
+        
+        For cone_hole_config (full diagonals): trapezoidal holes near APs.
+        For band_hole_config (horizontal bands): elliptical holes.
+        """
+        holes = []
+        
+        cone_config = getattr(self, 'cone_hole_config', None)
+        band_config = getattr(self, 'band_hole_config', None)
+        
+        if cone_config:
+            holes += self._cone_holes_parametric(cell, cone_config)
+        
+        if band_config:
+            holes += self._band_holes_parametric(band_config)
+        
+        return holes
+    
+    def _cone_holes_parametric(self, cell, config):
+        """
+        Generate cone hole contours in parametric space using physical dimensions
+        from get_flattened(cell), matching the 2D DXF export exactly.
+        """
+        holes = []
+        num_zones = config.get('num_zones', 1)
+        margin_side = config.get('margin_side_m', 0.003)
+        margin_top = config.get('margin_top_m', 0.003)
+        margin_bottom = config.get('margin_bottom_m', 0.003)
+        corner_pct = config.get('corner_radius_pct', 0.25)
+        
+        # Which side is intrados (AP side)?
+        left_h = (self.left_front[1], self.left_back[1])
+        right_h = (self.right_front[1], self.right_back[1])
+        left_is_intrados = (left_h[0] == -1.0 and left_h[1] == -1.0)
+        right_is_intrados = (right_h[0] == -1.0 and right_h[1] == -1.0)
+        if not (left_is_intrados or right_is_intrados):
+            return holes
+        
+        if left_is_intrados:
+            ap_y = 0.0; far_y = 1.0
+        else:
+            ap_y = 1.0; far_y = 0.0
+        
+        # Get physical dimensions from flattened diagonal
+        try:
+            flat_left, flat_right = self.get_flattened(cell)
+            diag_height = flat_left.get_length()  # span direction
+            # Width at AP side and far side
+            from numpy.linalg import norm as _norm
+            width_ap = _norm(np.array(flat_right.data[0]) - np.array(flat_left.data[0]))
+            width_far = _norm(np.array(flat_right.data[-1]) - np.array(flat_left.data[-1]))
+            diag_width = (width_ap + width_far) / 2
+        except Exception:
+            diag_height = 0.2
+            diag_width = 0.3
+        
+        if diag_height < 0.01 or diag_width < 0.01:
+            return holes
+        
+        # Convert physical margins to parametric fractions
+        m_side = margin_side / diag_width   # fraction of x
+        m_top = margin_top / diag_height    # fraction of y near far edge
+        m_bot = margin_bottom / diag_height # fraction of y near AP
+        
+        t_ap = 0.5  # AP at center of chord range
+        y_sign = 1.0 if far_y > ap_y else -1.0
+        y_bot = ap_y + y_sign * m_bot
+        y_top = far_y - y_sign * m_top
+        
+        if abs(y_top - y_bot) < 0.05:
+            return holes
+        
+        # 2*num_zones holes total (num_zones per side of center)
+        for side in range(2):
+            x_edge = 0.0 if side == 0 else 1.0
+            
+            for zone_i in range(num_zones):
+                t0 = zone_i / num_zones
+                t1 = (zone_i + 1) / num_zones
+                
+                # Far side (wide end): zone boundaries
+                x_far_l = t_ap + (x_edge - t_ap) * t0
+                x_far_r = t_ap + (x_edge - t_ap) * t1
+                
+                # Margins at far end
+                sgn = 1.0 if x_far_r > x_far_l else -1.0
+                x_far_l += sgn * m_side
+                x_far_r -= sgn * m_side
+                if abs(x_far_r - x_far_l) < 0.01:
+                    continue
+                
+                # AP side (narrow end): V-shape converges toward AP center
+                # Each ray from AP has a perpendicular offset of margin_side
+                # At distance margin_bottom from AP, the offset creates width
+                convergence = m_bot / max(abs(y_top - y_bot), 0.01)
+                x_bot_l = t_ap + (x_far_l - t_ap) * convergence
+                x_bot_r = t_ap + (x_far_r - t_ap) * convergence
+                
+                # Build contour: simple triangle/trapezoid with rounded corners
+                # p_bot_l, p_bot_r at AP side; p_far_l, p_far_r at far side
+                corners = [
+                    [x_bot_l, y_bot], [x_bot_r, y_bot],
+                    [x_far_r, y_top], [x_far_l, y_top]
+                ]
+                
+                # Check if bottom collapses to V-shape
+                if abs(x_bot_r - x_bot_l) < 0.003:
+                    # V-shape: single bottom point
+                    p_bot = [(x_bot_l + x_bot_r) / 2, y_bot]
+                    corners = [p_bot, [x_far_r, y_top], [x_far_l, y_top]]
+                
+                # Generate contour with rounded corners (Bézier)
+                contour = []
+                n_c = len(corners)
+                for ci in range(n_c):
+                    p_prev = corners[(ci - 1) % n_c]
+                    p_curr = corners[ci]
+                    p_next = corners[(ci + 1) % n_c]
+                    d_prev = ((p_curr[0]-p_prev[0])**2 + (p_curr[1]-p_prev[1])**2)**0.5
+                    d_next = ((p_next[0]-p_curr[0])**2 + (p_next[1]-p_curr[1])**2)**0.5
+                    cut = min(d_prev, d_next) * corner_pct * 0.5
+                    pa = [p_curr[0] + (p_prev[0]-p_curr[0]) / max(d_prev, 1e-9) * cut,
+                          p_curr[1] + (p_prev[1]-p_curr[1]) / max(d_prev, 1e-9) * cut]
+                    pb = [p_curr[0] + (p_next[0]-p_curr[0]) / max(d_next, 1e-9) * cut,
+                          p_curr[1] + (p_next[1]-p_curr[1]) / max(d_next, 1e-9) * cut]
+                    for fi in range(6):
+                        t = fi / 5
+                        px = (1-t)**2 * pa[0] + 2*(1-t)*t * p_curr[0] + t**2 * pb[0]
+                        py = (1-t)**2 * pa[1] + 2*(1-t)*t * p_curr[1] + t**2 * pb[1]
+                        contour.append([px, py])
+                
+                if len(contour) < 3:
+                    continue
+                cx = sum(p[0] for p in contour) / len(contour)
+                cy = sum(p[1] for p in contour) / len(contour)
+                holes.append((contour, [cx, cy]))
+        
+        return holes
+    
+
+
+    def _band_holes_parametric(self, config):
+        """
+        Generate uniform elliptical holes in parametric space for bands.
+        Matches the 2D export: all ellipses have the SAME size,
+        evenly distributed along the band length.
+        
+        In parametric space:
+          x ∈ [0,1]: position along band (front→back on rib chord)
+          y ∈ [0,1]: position across band width (rib1→rib2)
+        """
+        holes = []
+        num_zones = config.get('num_zones', 1)
+        
+        total_holes = 2 * num_zones
+        if total_holes <= 0:
+            return holes
+        
+        # Margins in parametric space — use consistent fractions
+        margin_x_edge = 0.03     # margin at front/back edges
+        margin_y_edge = 0.12     # margin at rib1/rib2 edges
+        margin_between = 0.03    # gap between adjacent ellipses
+        
+        # Ellipse sizing: all ellipses identical
+        usable_x = 1.0 - 2 * margin_x_edge
+        zone_width = usable_x / total_holes
+        ellipse_w = max((zone_width - margin_between) / 2, 0.01)
+        ellipse_h = max((1.0 - 2 * margin_y_edge) / 2, 0.01)
+        
+        for i in range(total_holes):
+            cx = margin_x_edge + zone_width * (i + 0.5)
+            cy = 0.5
+            
+            # Generate ellipse (24 points)
+            n_pts = 24
+            contour = []
+            for j in range(n_pts):
+                angle = 2 * np.pi * j / n_pts
+                px = cx + ellipse_w * np.cos(angle)
+                py = cy + ellipse_h * np.sin(angle)
+                px = max(0.01, min(0.99, px))
+                py = max(0.01, min(0.99, py))
+                contour.append([px, py])
+            
+            holes.append((contour, [cx, cy]))
+        
+        return holes
+
     def get_mesh(self, cell, insert_points=4, project_3d=False):
         """
         get a mesh from a diagonal (2 poly lines)
         """
+        # Increase grid resolution when holes are present for accurate filtering
+        has_holes = getattr(self, 'cone_hole_config', None) or getattr(self, 'band_hole_config', None)
+        if has_holes and insert_points < 10:
+            insert_points = 10
+        
         left, right = self.get_3d(cell)
 
         if insert_points:
@@ -350,12 +546,100 @@ class DiagonalRib(object):
             if project_3d:
                 points2d = _mesh.map_to_2d(point_array)
 
+            # Generate hole contours in parametric space
+            hole_polygons = self._get_hole_polygons_parametric(cell)
+            
+            if hole_polygons:
+                # Build boundaries and hole data for PSLG triangulation
+                edge_closed = edge + [edge[0]]
+                boundaries = [edge_closed]
+                hole_centers = []
+                extra_points_2d = []
+                extra_points_3d = []
+                
+                for contour_2d, center_2d in hole_polygons:
+                    if len(contour_2d) < 3:
+                        continue
+                    
+                    hole_start = len(points2d) + len(extra_points_2d)
+                    hole_idx = []
+                    
+                    for pt_2d in contour_2d:
+                        x_p = max(0.002, min(0.998, pt_2d[0]))
+                        y_p = max(0.002, min(0.998, pt_2d[1]))
+                        pt_3d = (
+                            left[x_p * (num_left - 1)] * (1.0 - y_p)
+                            + right[x_p * (num_right - 1)] * y_p
+                        )
+                        extra_points_2d.append([x_p, y_p])
+                        extra_points_3d.append(pt_3d)
+                        hole_idx.append(hole_start + len(hole_idx))
+                    
+                    hole_idx.append(hole_idx[0])  # close loop
+                    boundaries.append(hole_idx)
+                    hole_centers.append(center_2d)
+                
+                if extra_points_2d:
+                    all_pts_2d = points2d + extra_points_2d
+                    
+                    # Sanitize: snap to grid + deduplicate to prevent PSLG segfault
+                    GRID = 1e-6
+                    snapped = [[round(p[0]/GRID)*GRID, round(p[1]/GRID)*GRID] for p in all_pts_2d]
+                    
+                    unique_map = {}
+                    remap = {}
+                    deduped_pts = []
+                    for i, p in enumerate(snapped):
+                        key = (p[0], p[1])
+                        if key in unique_map:
+                            remap[i] = unique_map[key]
+                        else:
+                            new_idx = len(deduped_pts)
+                            unique_map[key] = new_idx
+                            deduped_pts.append(p)
+                            remap[i] = new_idx
+                    
+                    # Remap boundaries and remove consecutive duplicate indices
+                    clean_bounds = []
+                    for b in boundaries:
+                        rb = [remap[i] for i in b]
+                        cleaned = [rb[0]]
+                        for j in range(1, len(rb)):
+                            if rb[j] != cleaned[-1]:
+                                cleaned.append(rb[j])
+                        if len(cleaned) > 2:
+                            clean_bounds.append(cleaned)
+                    
+                    try:
+                        tri = triangulate.Triangulation(
+                            deduped_pts, clean_bounds,
+                            holes=hole_centers if hole_centers else None
+                        )
+                        mesh = tri.triangulate(options="Qzp")
+                        
+                        if len(mesh.elements) > 0:
+                            # Compute 3D coordinates from all mesh.points (2D parametric)
+                            # This handles any Steiner points that Triangle may have added
+                            mesh_pts_3d = []
+                            for pt2d in mesh.points:
+                                x_p = max(0.0, min(1.0, pt2d[0]))
+                                y_p = max(0.0, min(1.0, pt2d[1]))
+                                pt_3d = (
+                                    left[x_p * (num_left - 1)] * (1.0 - y_p)
+                                    + right[x_p * (num_right - 1)] * y_p
+                                )
+                                mesh_pts_3d.append(pt_3d)
+                            
+                            return Mesh.from_indexed(
+                                np.array(mesh_pts_3d),
+                                {"diagonals": list(mesh.elements)},
+                            )
+                    except Exception:
+                        pass  # Fall through to standard triangulation
+            
+            # Standard triangulation (no holes or PSLG fallback)
             tri = triangulate.Triangulation(points2d, [edge])
             mesh = tri.triangulate(options="Qz")
-            # mesh_info = _mesh.mptriangle.MeshInfo()
-            # mesh_info.set_points(points2d)
-            # mesh_info.set_facets(segment)
-            # mesh = _mesh.custom_triangulation(mesh_info, "Qz")
 
             return Mesh.from_indexed(
                 point_array,

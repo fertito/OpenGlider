@@ -30,6 +30,9 @@ class ShapeTool(BaseTool):
     def __init__(self, obj):
         super(ShapeTool, self).__init__(obj)
 
+        # Remember initial cell count to detect changes
+        self._initial_cell_num = self.parametric_glider.shape.cell_num
+
         # scene components
         self.shape = coin.SoSeparator()
         points = list(
@@ -73,6 +76,48 @@ class ShapeTool(BaseTool):
 
     def accept(self):
         self.parametric_glider.rescale_curves()
+
+        # Check if cell count changed — remap cell-dependent data
+        new_cell_num = self.parametric_glider.shape.cell_num
+        if new_cell_num != self._initial_cell_num:
+            has_lineset = bool(self.parametric_glider.lineset.lines)
+            has_elements = bool(self.parametric_glider.elements)
+            if has_lineset or has_elements:
+                items = []
+                if has_lineset:
+                    items.append("line set (suspentes)")
+                if has_elements:
+                    items.append("cell elements (diagonals, straps, mini-ribs, panels, etc.)")
+                msg = (
+                    f"Cell count changed from {self._initial_cell_num} to "
+                    f"{new_cell_num}.\n\n"
+                    f"The following will be remapped proportionally:\n"
+                )
+                for item in items:
+                    msg += f"  • {item}\n"
+                msg += (
+                    "\nPlease verify the result after accepting.\n"
+                    "Continue?"
+                )
+                reply = QtGui.QMessageBox.information(
+                    None,
+                    "Cell count changed",
+                    msg,
+                    QtGui.QMessageBox.Yes | QtGui.QMessageBox.No,
+                    QtGui.QMessageBox.Yes,
+                )
+                if reply == QtGui.QMessageBox.No:
+                    # Revert cell count and abort
+                    self.parametric_glider.shape.cell_num = self._initial_cell_num
+                    self.Qnum_cells.setValue(self._initial_cell_num)
+                    return
+                # Remap cell-dependent data proportionally
+                self.parametric_glider.remap_cell_indices(self._initial_cell_num)
+                App.Console.PrintMessage(
+                    f"Cell count changed ({self._initial_cell_num} → "
+                    f"{new_cell_num}): remapped cell indices proportionally.\n"
+                )
+
         self.back_cpc.remove_callbacks()
         self.front_cpc.remove_callbacks()
         self.cell_dist_cpc.remove_callbacks()
