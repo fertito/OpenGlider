@@ -225,6 +225,7 @@ class ParametricGlider(object):
         self.last_profile_type = kwargs.get('last_profile_type', 'line')  # 'line', 'thin', 'custom'
         self.last_profile_thickness = kwargs.get('last_profile_thickness', 0.3)  # Relative thickness (0.3 = 30% of original)
         self.last_profile_custom = kwargs.get('last_profile_custom', None)  # Custom Profile2D
+        self.single_skin_config = kwargs.get('single_skin_config', None)  # Config du tool SingleSkin
 
     def get_sleeve_exclusion_zones(self, rib, rib_idx, is_suspended):
         """
@@ -317,6 +318,155 @@ class ParametricGlider(object):
                 result.append((current_start, end))
         
         return result
+
+    def apply_single_skin(self, glider):
+        """Apply single skin configuration to glider ribs.
+
+        Logic:
+        - All ribs adjacent to ANY selected SS cell are converted to SingleSkinRib
+        - Intrados panels are removed from cells whose INDEX is in selected_cells
+        - Transition ribs (adjacent to both SS and full cells) are kept full (no holes)
+        """
+        ss_config = getattr(self, 'single_skin_config', None)
+        if not ss_config:
+            return
+
+        from openglider.glider.rib.rib import SingleSkinRib
+
+        selected_cells = ss_config.get("cells", [])
+        if not selected_cells:
+            return
+
+        cells_set = set(selected_cells)
+        num_cells = self.shape.half_cell_num
+        num_ribs = len(glider.ribs)
+
+        # Determine which ribs to convert to SingleSkinRib:
+        # Only ribs where ALL adjacent cells are SS get the bow-modified profile.
+        # Transition ribs (touching both SS and full cells) stay as regular Rib.
+        # Additionally, ALL ribs of boundary full cells (the full cell adjacent
+        # to the SS zone) are sealed — no holes, no bows.
+        rib_indices = set()           # ribs to convert to SingleSkinRib
+        sealed_rib_indices = set()    # ribs that must be solid (no holes)
+        boundary_full_cells = set()   # full cells adjacent to SS zone
+        for rib_idx in range(num_ribs):
+            adjacent_cells = []
+            if rib_idx > 0:
+                adjacent_cells.append(rib_idx - 1)
+            if rib_idx < num_cells:
+                adjacent_cells.append(rib_idx)
+            ss_adjacent = [c for c in adjacent_cells if c in cells_set]
+            non_ss_adjacent = [c for c in adjacent_cells if c not in cells_set]
+
+            if ss_adjacent and not non_ss_adjacent:
+                # All adjacent cells are SS → convert to SingleSkinRib
+                rib_indices.add(rib_idx)
+            elif ss_adjacent and non_ss_adjacent:
+                # Transition rib: keep as regular Rib, sealed (no holes)
+                sealed_rib_indices.add(rib_idx)
+                # The full cells adjacent to this transition rib are boundary cells
+                for c in non_ss_adjacent:
+                    boundary_full_cells.add(c)
+
+        # Seal BOTH ribs of each boundary full cell
+        for cell_idx in boundary_full_cells:
+            sealed_rib_indices.add(cell_idx)      # rib on left side of cell
+            sealed_rib_indices.add(cell_idx + 1)  # rib on right side of cell
+
+        # Paramètres communs à toutes les nervures SS
+        single_skin_par_base = {
+            "att_dist": ss_config.get("att_dist", 0.02),
+            "height": ss_config.get("height", [0.5]),
+            "num_points": ss_config.get("num_points", 20),
+            "le_gap": ss_config.get("le_gap", True),
+            "te_gap": ss_config.get("te_gap", True),
+            "double_first": ss_config.get("double_first", False),
+            "straight_te": ss_config.get("straight_te", True),
+            "camber": ss_config.get("camber", 0.1),
+            "continued_min": ss_config.get("continued_min", False),
+            "continued_min_end": ss_config.get("continued_min_end", 0.9),
+            "continued_min_angle": ss_config.get("continued_min_angle", 0.0),
+            "continued_min_delta_y": ss_config.get("continued_min_delta_y", 0.0),
+            "continued_min_x": ss_config.get("continued_min_x", 0.0),
+        }
+        te_end_list = ss_config.get("te_end", [1.0] * num_ribs)
+        xrot_list = ss_config.get("xrot", [0.0] * num_ribs)
+
+        # Replace ribs with SingleSkinRib (only fully-SS ribs, not transition)
+        new_ribs = []
+        for i, rib in enumerate(glider.ribs):
+            if i in rib_indices:
+                par = dict(single_skin_par_base)
+                par["te_end"] = te_end_list[i] if i < len(te_end_list) else 1.0
+                if not isinstance(rib, SingleSkinRib):
+                    new_ribs.append(SingleSkinRib.from_rib(rib, par))
+                else:
+                    rib.single_skin_par = par
+                    new_ribs.append(rib)
+            else:
+                new_ribs.append(rib)
+
+        # Handle mirrored ribs
+        for rib, ss_rib in zip(glider.ribs, new_ribs):
+            if hasattr(rib, "mirrored_rib") and rib.mirrored_rib:
+                nr = glider.ribs.index(rib.mirrored_rib)
+                ss_rib.mirrored_rib = new_ribs[nr]
+
+        glider.replace_ribs(new_ribs)
+
+        # Clear holes from ALL SingleSkinRib (hole design overflow truncated profiles)
+        # Also clear holes from sealed ribs (boundary full cell walls)
+        for i, rib in enumerate(glider.ribs):
+            if isinstance(rib, SingleSkinRib):
+                rib.holes = []
+            elif i in sealed_rib_indices:
+                rib.holes = []
+
+        # Store sealed rib indices on glider so apply_holes() can skip them
+        glider._ss_sealed_rib_indices = sealed_rib_indices
+
+        # Add SS-specific holes if configured
+        if ss_config.get("holes", False):
+            hole_size = np.array([
+                ss_config.get("hole_width", 0.3),
+                ss_config.get("hole_height", 0.7),
+            ])
+            min_pos = ss_config.get("min_hole_pos", 0.2)
+            max_pos = ss_config.get("max_hole_pos", 1.0)
+            v_shift = ss_config.get("vertical_shift", 0.2)
+
+            for att_pnt in glider.lineset.attachment_points:
+                if (isinstance(att_pnt.rib, SingleSkinRib)
+                        and att_pnt.rib_pos > min_pos
+                        and att_pnt.rib_pos < max_pos):
+                    att_pnt.rib.holes.append(
+                        RibHole(
+                            att_pnt.rib_pos,
+                            size=hole_size,
+                            vertical_shift=v_shift,
+                        )
+                    )
+
+        # Note: get_hull() est utilisé seulement dans ribs.py pour l'export 2D.
+        # On ne modifie PAS profile_2d ici — cela déformerait les panneaux 3D.
+
+        # Appliquer xrot manuels par nervure
+        for i, rib in enumerate(glider.ribs):
+            if i < len(xrot_list):
+                rib.xrot = xrot_list[i]
+
+        # Remove intrados panels from single-skin cells (based on cell INDEX)
+        double_first = ss_config.get("double_first", False)
+        for cell_idx, cell in enumerate(glider.cells):
+            if cell_idx in cells_set:
+                if double_first:
+                    extrados = [p for p in cell.panels if not p.is_lower()]
+                    intrados = [p for p in cell.panels if p.is_lower()]
+                    intrados.sort(key=lambda p: p.mean_x())
+                    cell.panels = extrados + intrados[:1]
+                else:
+                    cell.panels = [p for p in cell.panels if not p.is_lower()]
+
 
     def remap_cell_indices(self, old_cell_num):
         """
@@ -1345,6 +1495,7 @@ class ParametricGlider(object):
             "sharknose_cells": getattr(self, "sharknose_cells", None),
             "profile_overrides": getattr(self, "profile_overrides", {}),
             "profile_overrides_enabled": getattr(self, "profile_overrides_enabled", False),
+            "single_skin_config": getattr(self, "single_skin_config", None),
             "last_profile_enabled": getattr(self, "last_profile_enabled", False),
             "last_profile_type": getattr(self, "last_profile_type", "line"),
             "last_profile_thickness": getattr(self, "last_profile_thickness", 0.3),
@@ -2064,6 +2215,7 @@ class ParametricGlider(object):
         glider.rename_parts()
 
         glider.lineset = self.lineset.return_lineset(glider, self.v_inf)
+        self.apply_single_skin(glider)
         self.apply_holes(glider)
         self.apply_reinforcements(glider)
         self.apply_rod_sleeves(glider)

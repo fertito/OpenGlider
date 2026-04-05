@@ -23,6 +23,7 @@ from . import (
     le_panel_split_tool,
 )
 from . import panel_method as pm
+from . import singleskin_tool
 from . import shape_tool, span_mapping
 from . import profile_control_tool
 
@@ -573,6 +574,18 @@ class GliderSharkFeatureCommand(GliderFeatureCommand):
         features.SharkFeature(feature, self.glider_obj)
         vp = features.VSharkFeature(feature.ViewObject)
         vp.updateData()
+
+
+class SingleSkinCommand(BaseCommand):
+    def GetResources(self):
+        return {
+            "Pixmap": "singleskin.svg",
+            "MenuText": "Single Skin",
+            "ToolTip": "Configure Single Skin cells",
+        }
+
+    def tool(self, obj):
+        return singleskin_tool.SingleSkinTool(obj)
 
 
 class GliderSingleSkinRibFeatureCommand(GliderFeatureCommand):

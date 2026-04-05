@@ -22,16 +22,17 @@ class GliderWorkbench(Gui.Workbench):
         "ImportGlider",
         "ShapeCommand",
         "ArcCommand",
-        # "AoaCommand",          # intégré dans AirfoilControlCommand
-        # "ZrotCommand",         # intégré dans AirfoilControlCommand
+        "AoaCommand",
+        "ZrotCommand",
         "AirfoilCommand",
-        # "AirfoilMergeCommand", # intégré dans AirfoilControlCommand
+        "AirfoilMergeCommand",
         "AirfoilControlCommand",
         "BallooningCommand",
         "BallooningMergeCommand",
         "LineCommand",
         "LineObserveCommand",
         "CellCommand",
+        "SingleSkinCommand",
         "MiniRibsCommand",
         "AirfoilStructureCommand",
         "HoleDesignCommand",
@@ -83,6 +84,7 @@ class GliderWorkbench(Gui.Workbench):
         Gui.addCommand("Gl2dExport", tools.Gl2dExport())
         Gui.addCommand("AirfoilMergeCommand", tools.AirfoilMergeCommand())
         Gui.addCommand("AirfoilControlCommand", tools.AirfoilControlCommand())
+        Gui.addCommand("SingleSkinCommand", tools.SingleSkinCommand())
         Gui.addCommand("BallooningMergeCommand", tools.BallooningMergCommand())
         Gui.addCommand("CellCommand", tools.CellCommand())
         Gui.addCommand("ZrotCommand", tools.ZrotCommand())
