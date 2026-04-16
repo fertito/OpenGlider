@@ -67,7 +67,7 @@ class LEPanelSplitTool(BaseTool):
         self.layout.setWidget(4, QtGui.QFormLayout.LabelRole, QtGui.QLabel("Type de coupe:"))
         self.cut_type = QtGui.QComboBox()
         # Valid types: folded, parallel, orthogonal, singleskin, cut_3d
-        self.cut_type.addItems(["cut_3d", "folded", "parallel", "orthogonal", "singleskin"])
+        self.cut_type.addItems(["cut_3d", "folded", "parallel", "orthogonal", "singleskin","hybrid_top"])
         self.cut_type.setCurrentIndex(0)  # Default to "cut_3d"
         self.layout.setWidget(4, input_field, self.cut_type)
         
