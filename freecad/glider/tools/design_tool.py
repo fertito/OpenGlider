@@ -10,6 +10,11 @@ from .tools import BaseTool, coin, input_field, text_field, vector3D
 from pivy.graphics import InteractionSeparator, Line, Marker
 from .design_path import DesignPath, BezierPath, LinePath, PolylinePath
 
+# import ptvsd
+# print("Waiting for debugger attach")
+# # 5678 is the default attach port in the VS Code debug configurations
+# ptvsd.enable_attach(address=('localhost', 5678), redirect_output=True)
+# ptvsd.wait_for_attach()
 
 def refresh():
     pass
@@ -46,7 +51,7 @@ class DesignTool(BaseTool):
         self.x_values = None
         self._shape_lines = []  # Track shape lines for redraw
         
-        CutLine.cuts_to_lines(self.parametric_glider, symmetric_only=True)
+        CutLine.cuts_to_lines(self.parametric_glider, symmetric_only=False)
 
         self._add_mode = False
         
@@ -1010,6 +1015,7 @@ class DesignTool(BaseTool):
         self._save_design_paths()
         # Get cuts and handle symmetric mirroring if needed
         cuts = CutLine.get_cut_dict()
+        #TODO # need to add cuts in symmetric or it is removing the first point
         self.parametric_glider.elements["cuts"] = cuts
         super(DesignTool, self).accept()
         self.update_view_glider()
@@ -1027,7 +1033,7 @@ class CutPoint(Marker):
         super(CutPoint, self).__init__([[0, 0, 0]], True)
         self.marker.markerIndex = coin.SoMarkerSet.CROSS_7_7
         self.parametric_glider = parametric_glider
-        self.rib_nr = rib_nr - parametric_glider.shape.has_center_cell
+        self.rib_nr = rib_nr #- parametric_glider.shape.has_center_cell
         self.rib_pos = rib_pos
         self.lines = []
         
@@ -1220,11 +1226,18 @@ class CutLine(Line):
                 if symmetric_only and cell_nr < 0:
                     continue  # Skip negative (left wing) cells in symmetric mode
                 try:
-                    CutLine(
-                        CutPoint(cell_nr, cut["left"], parametric_glider),
-                        CutPoint(cell_nr + 1, cut["right"], parametric_glider),
-                        cut["type"],
-                    )
+                    if parametric_glider.shape.has_center_cell==True:
+                        CutLine(
+                            CutPoint(cell_nr - 1, cut["left"], parametric_glider),
+                            CutPoint(cell_nr, cut["right"], parametric_glider),
+                            cut["type"],
+                        )
+                    else :
+                        CutLine(
+                            CutPoint(cell_nr, cut["left"], parametric_glider),
+                            CutPoint(cell_nr + 1, cut["right"], parametric_glider),
+                            cut["type"],
+                        )
                 except (TypeError, IndexError):
                     # Skip if cell_nr is out of range
                     pass
