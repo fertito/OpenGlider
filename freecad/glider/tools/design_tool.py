@@ -608,7 +608,9 @@ class DesignTool(BaseTool):
         
         # CutPoint expects rib_nr to be: list_idx + has_center_cell (then subtracts has_center_cell)
         # After subtraction, rib_nr becomes list_idx, which is correct
-        rib_nr_for_cutpoint = list_idx + has_center
+
+        # self.parametric_glider.shape.has_center_cell
+        rib_nr_for_cutpoint = list_idx #+ has_center
         
         # Pass x_value, min_y, max_y explicitly to handle center rib correctly
         return CutPoint(
@@ -1015,6 +1017,10 @@ class DesignTool(BaseTool):
         self._save_design_paths()
         # Get cuts and handle symmetric mirroring if needed
         cuts = CutLine.get_cut_dict()
+        if self.parametric_glider.shape.has_center_cell:
+            if cuts[0]["cells"][0]==-1:
+                for cut in cuts :
+                    cut["cells"][0]=cut["cells"][0]+1
         #TODO # need to add cuts in symmetric or it is removing the first point
         self.parametric_glider.elements["cuts"] = cuts
         super(DesignTool, self).accept()
@@ -1274,18 +1280,19 @@ class CutLine(Line):
     @classmethod
     def get_cut_dict(cls):
         cuts = [line.get_dict() for line in cls.upper_line_list + cls.lower_line_list]
-        cuts = sorted(cuts, key=lambda x: x["right"])
+        # cuts = sorted(cuts, key=lambda x: x["right"])
         if not cuts:
             return []
-        sorted_cuts = [cuts[0]]
-        for cut in cuts[1:]:
-            for key in ["type", "left", "right"]:
-                if cut[key] != sorted_cuts[-1][key]:
-                    sorted_cuts.append(cut)
-                    break
-            else:
-                sorted_cuts[-1]["cells"].append(cut["cells"][0])
-        return sorted_cuts
+        # sorted_cuts = [cuts[0]]
+        # for cut in cuts[1:]:
+        #     for key in ["type", "left", "right"]:
+        #         if cut[key] != sorted_cuts[-1][key]:
+        #             sorted_cuts.append(cut)
+        #             break
+        #     else:
+        #         sorted_cuts[-1]["cells"].append(cut["cells"][0])
+        # return sorted_cuts
+        return cuts
 
     def check_dependency(self):
         if (not self._delete) and (self.point1._delete or self.point2._delete):
