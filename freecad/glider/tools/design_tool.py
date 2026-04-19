@@ -10,6 +10,11 @@ from .tools import BaseTool, coin, input_field, text_field, vector3D
 from pivy.graphics import InteractionSeparator, Line, Marker
 from .design_path import DesignPath, BezierPath, LinePath, PolylinePath
 
+# import ptvsd
+# print("Waiting for debugger attach")
+# # 5678 is the default attach port in the VS Code debug configurations
+# ptvsd.enable_attach(address=('localhost', 5678), redirect_output=True)
+# ptvsd.wait_for_attach()
 
 def refresh():
     pass
@@ -46,7 +51,7 @@ class DesignTool(BaseTool):
         self.x_values = None
         self._shape_lines = []  # Track shape lines for redraw
         
-        CutLine.cuts_to_lines(self.parametric_glider, symmetric_only=True)
+        CutLine.cuts_to_lines(self.parametric_glider, symmetric_only=False)
 
         self._add_mode = False
         
@@ -603,7 +608,9 @@ class DesignTool(BaseTool):
         
         # CutPoint expects rib_nr to be: list_idx + has_center_cell (then subtracts has_center_cell)
         # After subtraction, rib_nr becomes list_idx, which is correct
-        rib_nr_for_cutpoint = list_idx + has_center
+
+        # self.parametric_glider.shape.has_center_cell
+        rib_nr_for_cutpoint = list_idx #+ has_center
         
         # Pass x_value, min_y, max_y explicitly to handle center rib correctly
         return CutPoint(
@@ -1010,6 +1017,11 @@ class DesignTool(BaseTool):
         self._save_design_paths()
         # Get cuts and handle symmetric mirroring if needed
         cuts = CutLine.get_cut_dict()
+        if self.parametric_glider.shape.has_center_cell:
+            if cuts[0]["cells"][0]==-1:
+                for cut in cuts :
+                    cut["cells"][0]=cut["cells"][0]+1
+        #TODO # need to add cuts in symmetric or it is removing the first point
         self.parametric_glider.elements["cuts"] = cuts
         super(DesignTool, self).accept()
         self.update_view_glider()
@@ -1027,7 +1039,7 @@ class CutPoint(Marker):
         super(CutPoint, self).__init__([[0, 0, 0]], True)
         self.marker.markerIndex = coin.SoMarkerSet.CROSS_7_7
         self.parametric_glider = parametric_glider
-        self.rib_nr = rib_nr - parametric_glider.shape.has_center_cell
+        self.rib_nr = rib_nr #- parametric_glider.shape.has_center_cell
         self.rib_pos = rib_pos
         self.lines = []
         
@@ -1220,11 +1232,18 @@ class CutLine(Line):
                 if symmetric_only and cell_nr < 0:
                     continue  # Skip negative (left wing) cells in symmetric mode
                 try:
-                    CutLine(
-                        CutPoint(cell_nr, cut["left"], parametric_glider),
-                        CutPoint(cell_nr + 1, cut["right"], parametric_glider),
-                        cut["type"],
-                    )
+                    if parametric_glider.shape.has_center_cell==True:
+                        CutLine(
+                            CutPoint(cell_nr - 1, cut["left"], parametric_glider),
+                            CutPoint(cell_nr, cut["right"], parametric_glider),
+                            cut["type"],
+                        )
+                    else :
+                        CutLine(
+                            CutPoint(cell_nr, cut["left"], parametric_glider),
+                            CutPoint(cell_nr + 1, cut["right"], parametric_glider),
+                            cut["type"],
+                        )
                 except (TypeError, IndexError):
                     # Skip if cell_nr is out of range
                     pass
@@ -1261,18 +1280,19 @@ class CutLine(Line):
     @classmethod
     def get_cut_dict(cls):
         cuts = [line.get_dict() for line in cls.upper_line_list + cls.lower_line_list]
-        cuts = sorted(cuts, key=lambda x: x["right"])
+        # cuts = sorted(cuts, key=lambda x: x["right"])
         if not cuts:
             return []
-        sorted_cuts = [cuts[0]]
-        for cut in cuts[1:]:
-            for key in ["type", "left", "right"]:
-                if cut[key] != sorted_cuts[-1][key]:
-                    sorted_cuts.append(cut)
-                    break
-            else:
-                sorted_cuts[-1]["cells"].append(cut["cells"][0])
-        return sorted_cuts
+        # sorted_cuts = [cuts[0]]
+        # for cut in cuts[1:]:
+        #     for key in ["type", "left", "right"]:
+        #         if cut[key] != sorted_cuts[-1][key]:
+        #             sorted_cuts.append(cut)
+        #             break
+        #     else:
+        #         sorted_cuts[-1]["cells"].append(cut["cells"][0])
+        # return sorted_cuts
+        return cuts
 
     def check_dependency(self):
         if (not self._delete) and (self.point1._delete or self.point2._delete):

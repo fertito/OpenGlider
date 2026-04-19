@@ -787,12 +787,14 @@ class Panel(object):
         - orthogonal: design cuts
         - singleskin-cut: start/end of a open singleskin-section (used for different rib-modifications)
         - 3d: 3d design cut
+        - hybrid_top: 3d type cut to connect hybrid
         """
 
         folded = "folded"
         orthogonal = "orthogonal"
         singleskin = "singleskin"
         cut_3d = "cut_3d"
+        hybrid_top = "hybrid_top"
 
     def __init__(self, cut_front, cut_back, material_code=None, name="unnamed", y_start=0.0, y_end=1.0):
         self.cut_front = cut_front  # (left, right, style(int))

@@ -16,6 +16,7 @@ class PatternConfig(Config):
     cut_design = cuts.ParallelCut
     cut_diagonal_fold = cuts.FoldedCut
     cut_3d = cuts.Cut3D
+    cut_hybrid = cuts.Cut3D
 
     midribs = 50
 

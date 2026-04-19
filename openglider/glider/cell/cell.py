@@ -675,7 +675,7 @@ class Cell(CachedObject):
             add_amount(panel.cut_front, amount_front)
             add_amount(panel.cut_back, amount_back)
 
-        cut_3d_types = ["cut_3d"]
+        cut_3d_types = ["cut_3d" or "hybrid_top"]
         for panel in panels:
             if panel.cut_front.get("type") in cut_3d_types:
                 panel.cut_front["amount_3d"] = get_amount(panel.cut_front)
@@ -685,3 +685,4 @@ class Cell(CachedObject):
                 panel.cut_back["amount_3d"] = get_amount(panel.cut_back)
             else:
                 panel.cut_back["amount_3d"] = [0] * (numribs + 2)
+
