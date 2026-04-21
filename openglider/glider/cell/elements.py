@@ -1167,7 +1167,7 @@ class Panel(object):
             cut_front_type = self.cut_front.get("type", "orthogonal")
             cut_back_type = self.cut_back.get("type", "orthogonal")
             
-            if cut_front_type != "cut_3d" and cut_back_type != "cut_3d":
+            if (cut_front_type != ("cut_3d" or "hybrid_top")) and (cut_back_type != ("cut_3d" or "hybrid_top")):
                 if abs(amount_front + amount_back) > abs(total):
                     normalization = abs(total / (amount_front + amount_back))
                     amount_front *= normalization

@@ -51,7 +51,7 @@ class DesignTool(BaseTool):
         self.x_values = None
         self._shape_lines = []  # Track shape lines for redraw
         
-        CutLine.cuts_to_lines(self.parametric_glider, symmetric_only=False)
+        CutLine.cuts_to_lines(self,self.parametric_glider, symmetric_only=False)
 
         self._add_mode = False
         
@@ -1017,10 +1017,10 @@ class DesignTool(BaseTool):
         self._save_design_paths()
         # Get cuts and handle symmetric mirroring if needed
         cuts = CutLine.get_cut_dict()
-        if self.parametric_glider.shape.has_center_cell:
-            if cuts[0]["cells"][0]==-1:
-                for cut in cuts :
-                    cut["cells"][0]=cut["cells"][0]+1
+        # if self.parametric_glider.shape.has_center_cell:
+            # if cuts[0]["cells"][0]==-1:
+            #     for cut in cuts :
+            #         cut["cells"][0]=cut["cells"][0]+1
         #TODO # need to add cuts in symmetric or it is removing the first point
         self.parametric_glider.elements["cuts"] = cuts
         super(DesignTool, self).accept()
@@ -1214,7 +1214,7 @@ class CutLine(Line):
         self.data.point.setValues(0, len(p), p)
 
     @classmethod
-    def cuts_to_lines(cls, parametric_glider, symmetric_only=True):
+    def cuts_to_lines(cls,tool, parametric_glider, symmetric_only=True):
         """Convert cut dictionary to visual CutLine objects.
         
         Args:
@@ -1226,27 +1226,84 @@ class CutLine(Line):
         CutLine.lower_point_set = set()
         CutLine.upper_line_list = []
         CutLine.lower_line_list = []
+        # for cut in parametric_glider.elements.get("cuts", []):
+        #     for cell_nr in cut["cells"]:
+        #         # Filter based on symmetric mode
+        #         if symmetric_only and cell_nr < 0:
+        #             continue  # Skip negative (left wing) cells in symmetric mode
+        #         try:
+        #             if parametric_glider.shape.has_center_cell==True:
+        #                 CutLine(
+        #                     CutPoint(cell_nr - 1, cut["left"], parametric_glider),
+        #                     CutPoint(cell_nr, cut["right"], parametric_glider),
+        #                     cut["type"],
+        #                 )
+        #             else :
+        #                 CutLine(
+        #                     CutPoint(cell_nr, cut["left"], parametric_glider),
+        #                     CutPoint(cell_nr + 1, cut["right"], parametric_glider),
+        #                     cut["type"],
+        #                 )
+        #         except (TypeError, IndexError):
+        #             # Skip if cell_nr is out of range
+        #             pass
+
+        cut_points = []
+        tool.update_shape_display()
+        # num_ribs = len(self.x_values)
+
         for cut in parametric_glider.elements.get("cuts", []):
             for cell_nr in cut["cells"]:
-                # Filter based on symmetric mode
-                if symmetric_only and cell_nr < 0:
-                    continue  # Skip negative (left wing) cells in symmetric mode
                 try:
-                    if parametric_glider.shape.has_center_cell==True:
-                        CutLine(
-                            CutPoint(cell_nr - 1, cut["left"], parametric_glider),
-                            CutPoint(cell_nr, cut["right"], parametric_glider),
-                            cut["type"],
-                        )
-                    else :
-                        CutLine(
-                            CutPoint(cell_nr, cut["left"], parametric_glider),
-                            CutPoint(cell_nr + 1, cut["right"], parametric_glider),
-                            cut["type"],
-                        )
-                except (TypeError, IndexError):
-                    # Skip if cell_nr is out of range
-                    pass
+                    # Get rib bounds and compute y position from percentage
+                    front_y, back_y = tool._get_rib_bounds(cell_nr)
+                    chord = front_y - back_y
+                    y_pos = front_y - cut["left"] * chord
+
+                    cp = tool._create_cut_point_at_list_idx(cell_nr, y_pos)
+                    cp1=cp
+
+                    front_y, back_y = tool._get_rib_bounds(cell_nr+1)
+                    chord = front_y - back_y
+                    y_pos = front_y - cut["right"] * chord
+                    cp = tool._create_cut_point_at_list_idx(cell_nr+1, y_pos)
+                    cp2=cp
+                    cut_points.append((cell_nr, cp))
+
+                    if cut["left"] <= 0.0:
+                        CutLine.upper_point_set.add(cp1)
+                        CutLine.upper_point_set.add(cp2)
+                    else:
+                        cp1.rib_pos=-cp1.rib_pos
+                        cp2.rib_pos=-cp2.rib_pos
+                        CutLine.lower_point_set.add(cp1)
+                        CutLine.lower_point_set.add(cp2)
+                    cut_line = CutLine(cp1, cp2, cut["type"])
+                    cut_line.replace_points_by_set()
+                    cut_line.update_Line()
+                    cut_line.setup_visuals()
+                    
+                except (IndexError, TypeError) as e:
+                    print(f"Skipping rib {cell_nr}: {e}")
+                    continue
+        
+        # # Create lines between consecutive points
+        # for (i1, cp1), (i2, cp2) in zip(cut_points[:-1], cut_points[1:]):
+        #     if abs(i1 - i2) == 1:  # Adjacent ribs
+        #         if tool.side == "upper":
+        #             CutLine.upper_point_set.add(cp1)
+        #             CutLine.upper_point_set.add(cp2)
+        #         else:
+        #             CutLine.lower_point_set.add(cp1)
+        #             CutLine.lower_point_set.add(cp2)
+                
+        #         cut_line = CutLine(cp1, cp2, cut["type"])
+        #         cut_line.replace_points_by_set()
+        #         cut_line.update_Line()
+        #         cut_line.setup_visuals()
+        #         # cls.event_separator += [cp1, cp2, cut_line]
+        
+        # tool.event_separator.color_selected()
         for l in cls.upper_line_list:
             l.replace_points_by_set()
             l.setup_visuals()
