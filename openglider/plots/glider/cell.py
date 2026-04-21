@@ -116,33 +116,34 @@ class PanelPlot(object):
                 len(shape_3d_amount_back),
             )
             shape_3d_amount_back = list(dist)
-        if self.panel.cut_front["type"] != "hybrid_top":
-            dist = np.linspace(
-                shape_3d_amount_front[0],
-                shape_3d_amount_front[-1],
-                len(shape_3d_amount_front),
-            )
-            shape_3d_amount_front = list(dist)
+        # if self.panel.cut_front["type"] != "hybrid_top":
+        #     dist = np.linspace(
+        #         shape_3d_amount_front[0],
+        #         shape_3d_amount_front[-1],
+        #         len(shape_3d_amount_front),
+        #     )
+        #     shape_3d_amount_front = list(dist)
 
-        if self.panel.cut_back["type"] != "hybrid_top":
-            dist = np.linspace(
-                shape_3d_amount_back[0],
-                shape_3d_amount_back[-1],
-                len(shape_3d_amount_back),
-            )
-            shape_3d_amount_back = list(dist)
+        # if self.panel.cut_back["type"] != "hybrid_top":
+        #     dist = np.linspace(
+        #         shape_3d_amount_back[0],
+        #         shape_3d_amount_back[-1],
+        #         len(shape_3d_amount_back),
+        #     )
+        #     shape_3d_amount_back = list(dist)
 
         # For cut_3d type, use outer_orig to avoid geometry mismatch from .check()
-        # outer_left = self.outer_orig[0] if self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d" else self.outer[0]
-        # outer_right = self.outer_orig[1] if self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d" else self.outer[1]
-        if (self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d") or (self.panel.cut_front["type"] == "hybrid_top" or self.panel.cut_back["type"] == "hybrid_top"):
-            outer_left = self.outer_orig[0]
-        else :
-            outer_left = self.outer[0]
-        if ( self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d") or (self.panel.cut_front["type"] == "hybrid_top" or self.panel.cut_back["type"] == "hybrid_top"):
-            outer_right = self.outer_orig[1]
-        else :
-            outer_right = self.outer[1]
+        outer_left = self.outer_orig[0] if self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d" else self.outer[0]
+        outer_right = self.outer_orig[1] if self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d" else self.outer[1]
+
+        # if (self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d") or (self.panel.cut_front["type"] == "hybrid_top" or self.panel.cut_back["type"] == "hybrid_top"):
+        #     outer_left = self.outer_orig[0]
+        # else :
+        #     outer_left = self.outer[0]
+        # if ( self.panel.cut_front["type"] == "cut_3d" or self.panel.cut_back["type"] == "cut_3d") or (self.panel.cut_front["type"] == "hybrid_top" or self.panel.cut_back["type"] == "hybrid_top"):
+        #     outer_right = self.outer_orig[1]
+        # else :
+        #     outer_right = self.outer[1]
 
 
         cut_front_result = cut_front.apply(
