@@ -795,6 +795,7 @@ class Panel(object):
         singleskin = "singleskin"
         cut_3d = "cut_3d"
         hybrid_top = "hybrid_top"
+        hybrid_bottom = "hybrid_bottom"
 
     def __init__(self, cut_front, cut_back, material_code=None, name="unnamed", y_start=0.0, y_end=1.0):
         self.cut_front = cut_front  # (left, right, style(int))
@@ -1167,7 +1168,7 @@ class Panel(object):
             cut_front_type = self.cut_front.get("type", "orthogonal")
             cut_back_type = self.cut_back.get("type", "orthogonal")
             
-            if (cut_front_type != ("cut_3d" or "hybrid_top")) and (cut_back_type != ("cut_3d" or "hybrid_top")):
+            if cut_front_type != "cut_3d" and cut_back_type != "cut_3d" and cut_front_type != "hybrid_top" and cut_back_type != "hybrid_top":
                 if abs(amount_front + amount_back) > abs(total):
                     normalization = abs(total / (amount_front + amount_back))
                     amount_front *= normalization

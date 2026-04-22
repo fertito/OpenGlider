@@ -348,12 +348,12 @@ class SingleSkinRib(Rib):
                           (rib_name and getattr(cell.rib2, "name", None) == rib_name))
             if rib1_match:
                 for panel in cell.panels:
-                    if panel.cut_back.get("type") == "singleskin":
+                    if panel.cut_back.get("type") == "singleskin" or panel.cut_back.get("type") == "hybrid_bottom":
                         singleskin_cut = panel.cut_back["left"]
                         break
             elif rib2_match:
                 for panel in cell.panels:
-                    if panel.cut_back.get("type") == "singleskin":
+                    if panel.cut_back.get("type") == "singleskin" or panel.cut_back.get("type") == "hybrid_bottom":
                         singleskin_cut = panel.cut_back["right"]
                         break
             if singleskin_cut is not None:

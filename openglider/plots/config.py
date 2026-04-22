@@ -31,6 +31,7 @@ sewing_config = {
         "parallel": 0.012,
         "orthogonal": 0.012,
         "singleskin": 0.012,
+        "hybrid_bottom": 0.012,
         "folded": 0.012,
         "general": 0.012,
         "diagonals": 0.012,

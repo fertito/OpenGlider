@@ -25,12 +25,6 @@ from openglider.vector import PolyLine2D, norm, normalize
 
 logging.getLogger(__file__)
 
-# import ptvsd
-# print("Waiting for debugger attach")
-# # 5678 is the default attach port in the VS Code debug configurations
-# ptvsd.enable_attach(address=('localhost', 5678), redirect_output=True)
-# ptvsd.wait_for_attach()
-
 
 class Cell(CachedObject):
     diagonal_naming_scheme = "{cell.name}d{diagonal_no}"
@@ -681,7 +675,7 @@ class Cell(CachedObject):
             add_amount(panel.cut_front, amount_front)
             add_amount(panel.cut_back, amount_back)
 
-        cut_3d_types = ["cut_3d" or "hybrid_top"]
+        cut_3d_types = ['cut_3d','hybrid_top']
         for panel in panels:
             if panel.cut_front.get("type") in cut_3d_types:
                 panel.cut_front["amount_3d"] = get_amount(panel.cut_front)

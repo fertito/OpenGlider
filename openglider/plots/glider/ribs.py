@@ -384,12 +384,12 @@ class SingleSkinRibPlot(RibPlot):
                 # maybe asserts no singleskin rib on stabilo
                 if cell.rib1 == self.rib:
                     for panel in cell.panels:
-                        if panel.cut_back["type"] == "singleskin":
+                        if panel.cut_back["type"] == "singleskin" or panel.cut_back["type"] == "hybrid_bottom":
                             singleskin_cut = panel.cut_back["left"]
                             break
                 if cell.rib2 == self.rib:
                     for panel in cell.panels:
-                        if panel.cut_back["type"] == "singleskin":
+                        if panel.cut_back["type"] == "singleskin" or panel.cut_back["type"] == "hybrid_bottom":
                             singleskin_cut = panel.cut_back["right"]
                             break
 

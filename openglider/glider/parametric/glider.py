@@ -25,6 +25,12 @@ from openglider.utils.table import Table
 from openglider.utils import ZipCmp
 from openglider.utils.geometry import is_inside_triangle
 
+# import ptvsd
+# print("Waiting for debugger attach")
+# # 5678 is the default attach port in the VS Code debug configurations
+# ptvsd.enable_attach(address=('localhost', 5678), redirect_output=True)
+# ptvsd.wait_for_attach()
+
 
 class ParametricGlider(object):
     """
@@ -1843,6 +1849,7 @@ class ParametricGlider(object):
                 if (
                     cut1["type"] == cut2["type"] == "folded"
                     or cut1["type"] == cut2["type"] == "singleskin"
+                    or cut1["type"] == cut2["type"] == "hybrid_bottom"
                 ):
                     # entry
                     continue
