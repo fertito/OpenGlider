@@ -389,6 +389,20 @@ class Profile2D(Polygon2D):
                 min_diff = diff
                 min_x_value = i_x
         return min_x_value
+    
+    def nearest_i_x_value(self, x):
+        min_x_value = None
+        min_diff = None
+        i=0
+        index=0
+        for i_x in self.x_values:
+            diff = abs(x - i_x)
+            if not min_x_value or diff < min_diff:
+                min_diff = diff
+                min_x_value = i_x
+                index=i
+            i+=1
+        return index
 
     def apply_function(self, foo):
         data = np.array(self.data)

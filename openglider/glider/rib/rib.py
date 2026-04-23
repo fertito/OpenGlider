@@ -178,6 +178,14 @@ class Rib(CachedObject):
         """returns the outer contour of the normalized mesh in form
         of a Polyline"""
         profile = copy.deepcopy(self.profile_2d)
+
+        index=0
+        while index < len(profile.data)-1:
+            if profile.data[index][0]==profile.data[index+1][0]:
+                value=profile.data[index+1][0]
+                # value=profile.data[index+1][0][0]
+                profile.data[index+1][0]=profile.data[index+1][0]+0.001
+            index+=1
         return profile
 
     @property

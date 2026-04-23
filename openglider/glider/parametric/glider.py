@@ -1795,6 +1795,43 @@ class ParametricGlider(object):
         factor = target_thickness / current_thickness
         new_data = [[x, y * factor] for x, y in base_profile.data]
         return Profile2D(new_data, name="thin_profile")
+    
+    def Apply_hybrid_to_panels(self,glider_3d=None):
+        if glider_3d is None:
+            cells = [[] for _ in range(self.shape.half_cell_num)]
+        else:
+            cells = [cell.panels for cell in glider_3d.cells]
+            for cell in cells:
+                cell = []
+
+        # look for any hybrid_cut in cell, if any troncate the rib profile
+        for cell_no, panel_lst in enumerate(cells):
+            _cuts = self.elements.get("cuts", [])
+            apply_hybrid=False
+            bottom_pos_rib1 = 0.0
+            top_pos_rib1 = 0.0
+            cuts = [cut.copy() for cut in _cuts if cell_no in cut["cells"]]
+            for cut in cuts:
+                cut.pop("cells")
+                if 'hybrid_bottom' in cut["type"]:
+                    if cut["left"]!=1.0:
+                        bottom_pos_rib1=cut["left"]
+                    apply_hybrid=True
+                if 'hybrid_top' in cut["type"]:
+                    top_pos_rib1=cut["left"]
+                    apply_hybrid=True
+
+            if apply_hybrid:
+                pt_len = len(glider_3d.cells[cell_no].rib1.profile_2d.data)
+                index_bottom = glider_3d.cells[cell_no].rib1.profile_2d.nearest_i_x_value(bottom_pos_rib1)
+                index_top = glider_3d.cells[cell_no].rib1.profile_2d.nearest_i_x_value(top_pos_rib1)
+                for i in range(1):
+                    glider_3d.cells[cell_no].rib1.profile_2d.data[index_bottom+i][0]=glider_3d.cells[cell_no].rib1.profile_2d.data[index_top-i][0]
+                    glider_3d.cells[cell_no].rib1.profile_2d.data[index_bottom+i][1]=glider_3d.cells[cell_no].rib1.profile_2d.data[index_top-i][1]-0.001
+                    glider_3d.cells[cell_no].rib2.profile_2d.data[index_bottom+i][0]=glider_3d.cells[cell_no].rib2.profile_2d.data[index_top-i][0]
+                    glider_3d.cells[cell_no].rib2.profile_2d.data[index_bottom+i][1]=glider_3d.cells[cell_no].rib2.profile_2d.data[index_top-i][1]-0.001
+
+        return glider_3d
 
     def get_panels(self, glider_3d=None):
         """
@@ -2140,7 +2177,7 @@ class ParametricGlider(object):
             cell_centers.insert(0, 0.0)
 
         glider.cells = []
-        for cell_no, (rib1, rib2) in enumerate(zip(ribs[:-1], ribs[1:])):
+        for cell_no, (rib1, rib2) in enumerate(zip(ribs[:-1], ribs[1:])): #TODO : change rib object for hybrid
             ballooning_factor = ballooning_merge_curve(cell_centers[cell_no])
             ballooning = self.merge_ballooning(ballooning_factor)
 
@@ -2155,6 +2192,7 @@ class ParametricGlider(object):
             print(f"[DEBUG] Skipping close_rib() because last_profile_enabled=True")
 
         # CELL-ELEMENTS
+        glider = self.Apply_hybrid_to_panels(glider)
         self.get_panels(glider)
         self.apply_diagonals(glider)
 

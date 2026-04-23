@@ -48,7 +48,9 @@ class RibPlot(object):
         prof2d = self.rib.get_hull(glider)
         self.x_values = prof2d.x_values
         self.inner = prof2d.copy().scale(self.rib.chord)
+    
         self.outer = self.inner.copy().add_stuff(self.config.allowance_general)
+
 
         self._insert_attachment_points(glider.attachment_points)
         self.insert_holes()
